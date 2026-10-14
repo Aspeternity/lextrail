@@ -4,7 +4,7 @@ use tauri::menu::{Menu, MenuEvent, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Runtime};
 
-const TRAY_ID: &str = "main";
+pub const TRAY_ID: &str = "main";
 
 /// Actions triggered from the tray menu, keyed by menu item id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

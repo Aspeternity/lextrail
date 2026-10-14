@@ -51,6 +51,18 @@ M0 第四项"Tauri 2 桌面应用骨架"已完成：
 - 根目录新增 `pnpm typecheck`，并加入 `pnpm check` 和 CI；CI 的 Windows 任务先构建前端再编译 Rust
 - 本机实测（release，粗测，不是正式性能报告）：启动后无可见窗口、无子进程；工作集约 13.6 MB；空闲 CPU ≈ 0；第二个实例 26 ms 内退出
 
+- 应用标识符 `io.github.aspeternity.lextrail` 已经项目负责人确认（2026-10-15）
+
+M0 第五项"全局快捷键注册"已完成（`apps/desktop/src-tauri/src/hotkey.rs`）：
+- 使用 `tauri-plugin-global-shortcut`（Windows 上是 `RegisterHotKey`）；`HotkeyAction` 枚举 + `Binding`（动作 → 快捷键字符串）
+- 目前只有一个动作"划词翻译"，默认 **Ctrl+Alt+X**（D014 暂定值）；绑定暂时取默认值，下一项"设置"完成后改为从配置文件读取
+- 某个快捷键失败不影响其他快捷键注册；失败分"格式无效"和"已被其他程序占用"两类
+- 失败提示：原生消息框（`tauri-plugin-dialog`，不加载 WebView）+ 托盘提示文字改为"LexTrail（快捷键注册失败）"；提示内容写明动作、快捷键和原因，并建议关闭占用的程序或在设置中更换
+- 按下快捷键目前只在 debug 构建的控制台打印一行；接取词和悬浮窗留到悬浮窗任务
+- 单元测试 6 个（默认值可解析且不重复、Ctrl+Alt+X、无效格式、提示文案）
+- 本机实测：模拟按下 Ctrl+Alt+X 能触发；先让另一个进程占用 Ctrl+Alt+X 再启动，会弹出警告框；无冲突时 release 工作集约 12.9 MB、无子进程
+- 注意：用 `Start-Process -WindowStyle Hidden` 启动时，消息框会被系统隐藏（Windows 把启动参数用在进程第一个显示的窗口上）。正常启动不受影响，只是自动化测试时要注意
+
 常用命令：
 - `pnpm check`：格式、lint、类型检查、测试
 - `pnpm --filter @lextrail/desktop tauri dev`：开发运行桌面端
@@ -61,14 +73,13 @@ M0 第四项"Tauri 2 桌面应用骨架"已完成：
 
 ## 下一步
 
-1. M0 第五项：全局快捷键注册，注册失败时提示。
+1. M0 第六项：设置的读写（本地配置文件），API Key 存入系统凭据管理器；快捷键绑定改为从设置读取。
 2. 主窗口骨架任务时：托盘菜单加"打开主窗口"，单实例回调唤起主窗口；考虑托盘图标左键直接打开主窗口。
 3. M0 期间评审 `ARCHITECTURE.md` 中标注为〔初稿〕的仓库结构部分。
 
 ## 遇到的问题 / 需要项目负责人决定
 
-- **请确认应用标识符** `io.github.aspeternity.lextrail`（`tauri.conf.json` 的 `identifier`）。它决定本地配置和数据目录的位置，发布后再改会很麻烦。如果你有自己的域名，可以换成对应的反向域名。
-- 托盘图标和"退出"菜单还需要你在本机目测确认一次（自动检查只能确认程序存活、托盘创建没有报错）。
+- 托盘图标和"退出"菜单请你在本机目测确认一次（自动检查只能确认程序存活、托盘创建没有报错）。
 
 - TypeScript 锁定在 `~6.0.3`：最新的 TypeScript 7.0 不被 `typescript-eslint` 8.x 支持（peer 要求 `<6.1.0`）。等生态支持 7.x 后再升级。
 

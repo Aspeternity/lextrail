@@ -17,7 +17,7 @@
 - [x] 代码规范：`rustfmt`、`clippy`、TypeScript strict、ESLint、Prettier
 - [x] GitHub Actions：每次推送自动运行格式检查、lint、测试、Windows 构建
 - [x] Tauri 2 桌面应用骨架：托盘图标、托盘菜单、开机不显示窗口
-- [ ] 全局快捷键注册，注册失败时提示
+- [x] 全局快捷键注册，注册失败时提示
 - [ ] 设置的读写（本地配置文件），API Key 存入系统凭据管理器
 - [ ] 悬浮窗：单独打包的轻量页面；在鼠标附近显示；Esc / 点击外部关闭
 - [ ] 悬浮窗生命周期：隐藏 → `TrySuspend` 挂起 → 快捷键 `Resume`；低内存通知时销毁；"内存优先"模式
