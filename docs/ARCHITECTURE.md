@@ -77,7 +77,8 @@ lextrail/
 │   ├── lextrail-core/        数据模型、op-log、合并逻辑、FSRS 封装（可编译为 WASM）
 │   ├── lextrail-dict/        词典访问、词形还原、义项拆分
 │   ├── lextrail-ai/          AI 适配器、提示词模板、分段标记流式解析
-│   └── lextrail-capture/     取词层（windows.rs，以后加 macos.rs）
+│   ├── lextrail-capture/     取词层（windows.rs，以后加 macos.rs）
+│   └── lextrail-config/      本地设置（TOML）与密钥存储（系统凭据管理器）（D035）
 ├── apps/
 │   ├── desktop/              Tauri 应用
 │   │   ├── src-tauri/        Rust 端：托盘、快捷键、窗口管理、调用各 crate

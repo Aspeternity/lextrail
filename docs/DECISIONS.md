@@ -265,6 +265,16 @@
 - 默认：Windows 系统自带的语音合成，稳定、离线可用。
 - 可选：Edge TTS，音质更好，但属于非官方接口，可能随时失效。失效时自动回退到系统 TTS。
 
+## 十一、本地设置
+
+### D035 ✅ 本地设置：独立的 `lextrail-config` crate，TOML 文件，密钥存系统凭据管理器（2026-10-15）
+- 代码放在 `crates/lextrail-config`：设置结构、默认值、读写、密钥存储都在这里，桌面端只负责调用（D006）。不放进 `lextrail-core`，因为 core 要编译成 WASM 给 PWA 用，而且本地设置不参与同步。
+- 文件：`%APPDATA%\io.github.aspeternity.lextrail\settings.toml`。用 TOML，因为方便手动编辑、可以写注释。
+- 带 `version` 字段（结构版本）。缺少的字段用默认值，不认识的字段忽略。如果文件是更新版本的 LexTrail 写的，可以读取，但不会覆盖它。
+- 写入是原子的（先写临时文件再改名）。文件损坏时改名为 `settings.toml.corrupt` 作为备份，恢复默认设置并提示用户，不阻止程序启动。
+- 密钥（AI API Key、同步 Token）通过 `SecretStore` 适配器存取（D007、D032）：Windows 上用凭据管理器，测试用内存实现。凭据名称固定为 `ai-api-key/<服务商 id>`、`sync-token`，服务名是应用标识符；发布后不能再改名，否则用户已保存的密钥会找不到。
+- 应用标识符 `io.github.aspeternity.lextrail` 已由项目负责人确认（2026-10-15）。
+
 ---
 
 ## 待确认事项
