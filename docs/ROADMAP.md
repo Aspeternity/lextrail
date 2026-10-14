@@ -15,7 +15,7 @@
 
 - [x] 初始化 monorepo：Cargo workspace、pnpm workspace、目录结构（见 `ARCHITECTURE.md` 第 3 节）
 - [x] 代码规范：`rustfmt`、`clippy`、TypeScript strict、ESLint、Prettier
-- [ ] GitHub Actions：每次推送自动运行格式检查、lint、测试、Windows 构建
+- [x] GitHub Actions：每次推送自动运行格式检查、lint、测试、Windows 构建
 - [ ] Tauri 2 桌面应用骨架：托盘图标、托盘菜单、开机不显示窗口
 - [ ] 全局快捷键注册，注册失败时提示
 - [ ] 设置的读写（本地配置文件），API Key 存入系统凭据管理器

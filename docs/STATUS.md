@@ -33,14 +33,19 @@ M0 第二项"代码规范"已完成：
 - 根目录脚本：`pnpm lint`、`pnpm format`、`pnpm format:check`、`pnpm test`、`pnpm check`（全部检查）
 - 已用临时文件验证 ESLint（TS 和 Vue）、`tsc` strict、Prettier 都能报出问题
 
+M0 第三项"GitHub Actions"已完成：`.github/workflows/ci.yml`，推送到任何分支、向 `main` 提 PR 时都会运行，同一分支的旧运行会被取消。
+- `Format & ESLint`（ubuntu）：`pnpm format:check`（Prettier + `cargo fmt --check`）、ESLint
+- `Clippy, test & build (Windows)`（windows-latest）：clippy `-D warnings`、`cargo test`、release 构建，都加了 `--locked`；在 Windows 上跑是为了覆盖 `cfg(target_os = "windows")` 的代码
+- 第一次运行全部通过
+
 ## 正在进行
 
 - 无。
 
 ## 下一步
 
-1. M0 第三项：GitHub Actions（格式检查、lint、测试、Windows 构建），直接调用 `pnpm check`。
-2. Tauri 骨架任务时：把 `apps/desktop/src-tauri` 加入 Cargo workspace 成员；加入 `vue-tsc` 做 `.vue` 文件的类型检查，并在根目录加 `typecheck` 脚本。
+1. M0 第四项：Tauri 2 桌面应用骨架（托盘图标、托盘菜单、开机不显示窗口）。
+2. Tauri 骨架任务时：把 `apps/desktop/src-tauri` 加入 Cargo workspace 成员；加入 `vue-tsc` 做 `.vue` 文件的类型检查，在根目录加 `typecheck` 脚本，并加进 CI；CI 的 Windows 任务需要先装 Node/pnpm 才能构建前端。
 3. M0 期间评审 `ARCHITECTURE.md` 中标注为〔初稿〕的仓库结构部分。
 
 ## 遇到的问题 / 需要项目负责人决定
