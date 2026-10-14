@@ -38,17 +38,37 @@ M0 第三项"GitHub Actions"已完成：`.github/workflows/ci.yml`，推送到�
 - `Clippy, test & build (Windows)`（windows-latest）：clippy `-D warnings`、`cargo test`、release 构建，都加了 `--locked`；在 Windows 上跑是为了覆盖 `cfg(target_os = "windows")` 的代码
 - 第一次运行全部通过
 
+M0 第四项"Tauri 2 桌面应用骨架"已完成：
+- `apps/desktop/src-tauri`（crate `lextrail-desktop`，已加入 Cargo workspace）：Tauri 2.12 + `tray-icon` 特性
+  - 启动时**不创建任何窗口**（`app.windows: []`），因此不加载 WebView2，符合"纯托盘状态无 WebView"的预算
+  - 托盘图标 + 菜单（目前只有"退出 LexTrail"）；菜单动作用 `TrayAction` 枚举按 id 分发，带单元测试
+  - `RunEvent::ExitRequested { code: None }` 时阻止退出：以后关闭/销毁主窗口不会退出程序，只有菜单"退出"会退出
+  - 单实例（`tauri-plugin-single-instance`，新增）：第二次启动会立即退出；回调里预留了"唤起主窗口"
+  - release 构建使用 `windows_subsystem = "windows"`，没有控制台窗口
+  - 图标是临时占位图（蓝底白色"L"），由 `pnpm tauri icon` 生成
+  - `bundle.active = false`，安装包留到 M6
+- `apps/desktop` 前端：Vite + Vue，两个独立入口 `src/popup/`、`src/main/`（目前只是占位页面），`vue-tsc` 类型检查
+- 根目录新增 `pnpm typecheck`，并加入 `pnpm check` 和 CI；CI 的 Windows 任务先构建前端再编译 Rust
+- 本机实测（release，粗测，不是正式性能报告）：启动后无可见窗口、无子进程；工作集约 13.6 MB；空闲 CPU ≈ 0；第二个实例 26 ms 内退出
+
+常用命令：
+- `pnpm check`：格式、lint、类型检查、测试
+- `pnpm --filter @lextrail/desktop tauri dev`：开发运行桌面端
+
 ## 正在进行
 
 - 无。
 
 ## 下一步
 
-1. M0 第四项：Tauri 2 桌面应用骨架（托盘图标、托盘菜单、开机不显示窗口）。
-2. Tauri 骨架任务时：把 `apps/desktop/src-tauri` 加入 Cargo workspace 成员；加入 `vue-tsc` 做 `.vue` 文件的类型检查，在根目录加 `typecheck` 脚本，并加进 CI；CI 的 Windows 任务需要先装 Node/pnpm 才能构建前端。
+1. M0 第五项：全局快捷键注册，注册失败时提示。
+2. 主窗口骨架任务时：托盘菜单加"打开主窗口"，单实例回调唤起主窗口；考虑托盘图标左键直接打开主窗口。
 3. M0 期间评审 `ARCHITECTURE.md` 中标注为〔初稿〕的仓库结构部分。
 
 ## 遇到的问题 / 需要项目负责人决定
+
+- **请确认应用标识符** `io.github.aspeternity.lextrail`（`tauri.conf.json` 的 `identifier`）。它决定本地配置和数据目录的位置，发布后再改会很麻烦。如果你有自己的域名，可以换成对应的反向域名。
+- 托盘图标和"退出"菜单还需要你在本机目测确认一次（自动检查只能确认程序存活、托盘创建没有报错）。
 
 - TypeScript 锁定在 `~6.0.3`：最新的 TypeScript 7.0 不被 `typescript-eslint` 8.x 支持（peer 要求 `<6.1.0`）。等生态支持 7.x 后再升级。
 

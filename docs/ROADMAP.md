@@ -16,13 +16,14 @@
 - [x] 初始化 monorepo：Cargo workspace、pnpm workspace、目录结构（见 `ARCHITECTURE.md` 第 3 节）
 - [x] 代码规范：`rustfmt`、`clippy`、TypeScript strict、ESLint、Prettier
 - [x] GitHub Actions：每次推送自动运行格式检查、lint、测试、Windows 构建
-- [ ] Tauri 2 桌面应用骨架：托盘图标、托盘菜单、开机不显示窗口
+- [x] Tauri 2 桌面应用骨架：托盘图标、托盘菜单、开机不显示窗口
 - [ ] 全局快捷键注册，注册失败时提示
 - [ ] 设置的读写（本地配置文件），API Key 存入系统凭据管理器
 - [ ] 悬浮窗：单独打包的轻量页面；在鼠标附近显示；Esc / 点击外部关闭
 - [ ] 悬浮窗生命周期：隐藏 → `TrySuspend` 挂起 → 快捷键 `Resume`；低内存通知时销毁；"内存优先"模式
 - [ ] 主窗口骨架：关闭时销毁
 - [ ] **性能测试**：按 `ARCHITECTURE.md` 第 10 节逐项实测，包括"挂起 2 小时后恢复"，输出报告到 `docs/specs/m0-benchmark.md`
+- [x] 单实例：第二次启动时直接退出（以后改为唤起主窗口）（新增）
 
 **完成标准**：性能报告完成，并在 `DECISIONS.md` 中记录"路线 A 确认"或"切换到路线 B"的结论。
 
@@ -113,6 +114,7 @@
 ## M6 · 发布 v1.0
 
 - [ ] 安装包（NSIS / MSI）
+- [ ] 正式应用图标与托盘图标（目前是占位图）（新增）
 - [ ] Tauri updater + GitHub Releases 自动更新
 - [ ] README（中英文）、帮助文档（含管理员权限限制、SmartScreen 警告、免费翻译 API 说明、PWA 添加到主屏幕步骤）
 - [ ] 隐私说明
