@@ -1,7 +1,7 @@
 //! Global hotkeys: registration and reporting registration failures (D014).
 
+use lextrail_config::HotkeySettings;
 use tauri::{AppHandle, Runtime};
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 /// Something a global hotkey can trigger.
@@ -12,16 +12,6 @@ pub enum HotkeyAction {
 }
 
 impl HotkeyAction {
-    pub const ALL: [Self; 1] = [Self::Lookup];
-
-    /// Provisional default (D014): one-handed with the left hand and clear of the most
-    /// common application shortcuts. The user confirms or changes it on first launch.
-    pub fn default_accelerator(self) -> &'static str {
-        match self {
-            Self::Lookup => "Ctrl+Alt+X",
-        }
-    }
-
     fn label(self) -> &'static str {
         match self {
             Self::Lookup => "划词翻译",
@@ -36,14 +26,13 @@ pub struct Binding {
     pub accelerator: String,
 }
 
-pub fn default_bindings() -> Vec<Binding> {
-    HotkeyAction::ALL
-        .into_iter()
-        .map(|action| Binding {
-            action,
-            accelerator: action.default_accelerator().to_owned(),
-        })
-        .collect()
+/// The bindings configured in the settings file.
+pub fn bindings_from(settings: &HotkeySettings) -> Vec<Binding> {
+    let HotkeySettings { lookup } = settings;
+    vec![Binding {
+        action: HotkeyAction::Lookup,
+        accelerator: lookup.clone(),
+    }]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,16 +125,16 @@ pub fn notify_failures<R: Runtime>(app: &AppHandle<R>, failures: &[Failure]) {
     if let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) {
         let _ = tray.set_tooltip(Some("LexTrail（快捷键注册失败）"));
     }
-    app.dialog()
-        .message(message)
-        .title("LexTrail 快捷键注册失败")
-        .kind(MessageDialogKind::Warning)
-        .show(|_| {});
+    crate::notice::warn(app, "LexTrail 快捷键注册失败", message);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn default_bindings() -> Vec<Binding> {
+        bindings_from(&HotkeySettings::default())
+    }
 
     #[test]
     fn default_accelerators_parse() {
@@ -160,21 +149,39 @@ mod tests {
 
     #[test]
     fn default_accelerators_are_unique() {
-        let mut ids: Vec<u32> = default_bindings()
+        let bindings = default_bindings();
+        let mut ids: Vec<u32> = bindings
             .iter()
             .map(|b| b.accelerator.parse::<Shortcut>().unwrap().id())
             .collect();
         ids.sort_unstable();
         ids.dedup();
-        assert_eq!(ids.len(), HotkeyAction::ALL.len());
+        assert_eq!(ids.len(), bindings.len());
     }
 
     #[test]
     fn lookup_default_is_ctrl_alt_x() {
         // D014: provisional default for lookup.
         let expected: Shortcut = "ctrl+alt+KeyX".parse().unwrap();
-        let actual: Shortcut = HotkeyAction::Lookup.default_accelerator().parse().unwrap();
-        assert_eq!(actual, expected);
+        let lookup = default_bindings()
+            .into_iter()
+            .find(|b| b.action == HotkeyAction::Lookup)
+            .unwrap();
+        assert_eq!(lookup.accelerator.parse::<Shortcut>().unwrap(), expected);
+    }
+
+    #[test]
+    fn bindings_follow_settings() {
+        let settings = HotkeySettings {
+            lookup: "Ctrl+Shift+F1".into(),
+        };
+        assert_eq!(
+            bindings_from(&settings),
+            vec![Binding {
+                action: HotkeyAction::Lookup,
+                accelerator: "Ctrl+Shift+F1".into(),
+            }]
+        );
     }
 
     #[test]

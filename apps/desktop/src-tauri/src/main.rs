@@ -2,6 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod hotkey;
+mod notice;
+mod settings;
 mod tray;
 
 use tauri::RunEvent;
@@ -17,8 +19,8 @@ fn main() {
         .setup(|app| {
             let handle = app.handle();
             tray::create(handle)?;
-            // TODO(M0 settings): read bindings from the settings file.
-            let failures = hotkey::register_all(handle, &hotkey::default_bindings());
+            let settings = settings::load(handle);
+            let failures = hotkey::register_all(handle, &hotkey::bindings_from(&settings.hotkeys));
             hotkey::notify_failures(handle, &failures);
             Ok(())
         })
