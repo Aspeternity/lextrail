@@ -10,3 +10,11 @@ repository = "https://github.com/Aspeternity/lextrail"
 publish = false
 
 [workspace.dependencies]
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"

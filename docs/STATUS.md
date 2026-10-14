@@ -24,19 +24,28 @@ M0 第一项"初始化 monorepo"已完成：
 - `apps/desktop`、`apps/server`、`apps/pwa`、`packages/ui`、`tools/dict-builder`、`tools/bench`、`docs/specs` 目前只放了 README 占位，说明用途和计划实现的里程碑
 - 目录结构完全按 `ARCHITECTURE.md` 第 3 节初稿，未作改动
 
+M0 第二项"代码规范"已完成：
+- Rust：`rustfmt.toml`（仅稳定选项）、`rust-toolchain.toml`（stable + rustfmt/clippy）、`Cargo.toml` 中的 `[workspace.lints]`（各 crate 通过 `[lints] workspace = true` 继承）
+- TypeScript：`tsconfig.base.json`（`strict` + `noUncheckedIndexedAccess`、`exactOptionalPropertyTypes` 等），各前端包以后 `extends` 它
+- ESLint：`eslint.config.mjs`（flat config：`@eslint/js` + `typescript-eslint` strict + `eslint-plugin-vue` recommended + `eslint-config-prettier`）
+- Prettier：`.prettierrc.json`；`.prettierignore` 排除了所有 `*.md`（中文文档和宽表格不让 Prettier 重排）
+- `.editorconfig`、`.vscode/extensions.json`
+- 根目录脚本：`pnpm lint`、`pnpm format`、`pnpm format:check`、`pnpm test`、`pnpm check`（全部检查）
+- 已用临时文件验证 ESLint（TS 和 Vue）、`tsc` strict、Prettier 都能报出问题
+
 ## 正在进行
 
 - 无。
 
 ## 下一步
 
-1. M0 第二项：代码规范（`rustfmt`、`clippy`、TypeScript strict、ESLint、Prettier）。
-2. Tauri 骨架任务时把 `apps/desktop/src-tauri` 加入 Cargo workspace 成员。
+1. M0 第三项：GitHub Actions（格式检查、lint、测试、Windows 构建），直接调用 `pnpm check`。
+2. Tauri 骨架任务时：把 `apps/desktop/src-tauri` 加入 Cargo workspace 成员；加入 `vue-tsc` 做 `.vue` 文件的类型检查，并在根目录加 `typecheck` 脚本。
 3. M0 期间评审 `ARCHITECTURE.md` 中标注为〔初稿〕的仓库结构部分。
 
 ## 遇到的问题 / 需要项目负责人决定
 
-- 无。
+- TypeScript 锁定在 `~6.0.3`：最新的 TypeScript 7.0 不被 `typescript-eslint` 8.x 支持（peer 要求 `<6.1.0`）。等生态支持 7.x 后再升级。
 
 ## 备注
 

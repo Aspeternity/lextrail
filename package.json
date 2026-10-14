@@ -5,5 +5,22 @@
   "engines": {
     "node": ">=24"
   },
-  "scripts": {}
+  "scripts": {
+    "lint": "eslint . && cargo clippy --workspace --all-targets -- -D warnings",
+    "format": "prettier --write . && cargo fmt --all",
+    "format:check": "prettier --check . && cargo fmt --all --check",
+    "test": "cargo test --workspace",
+    "check": "pnpm format:check && pnpm lint && pnpm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.12.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.11.1",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vue-eslint-parser": "^10.4.1"
+  }
 }

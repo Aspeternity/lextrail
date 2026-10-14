@@ -1,0 +1,8 @@
+# Docs are hand-written Chinese prose with wide tables; keep Prettier off them.
+*.md
+
+pnpm-lock.yaml
+target/
+dist/
+coverage/
+apps/desktop/src-tauri/gen/
