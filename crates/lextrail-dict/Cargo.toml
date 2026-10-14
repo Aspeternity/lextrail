@@ -1,0 +1,10 @@
+[package]
+name = "lextrail-dict"
+description = "LexTrail dictionary access, lemmatization and sense splitting."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]

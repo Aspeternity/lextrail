@@ -1,0 +1,10 @@
+[package]
+name = "lextrail-core"
+description = "LexTrail core: data model, op-log, sync merge logic and FSRS wrapper."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]

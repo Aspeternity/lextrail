@@ -1,0 +1,10 @@
+[package]
+name = "lextrail-capture"
+description = "LexTrail text capture layer with per-platform adapters."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]

@@ -4,7 +4,7 @@
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
 **最后更新**：2026-10-15
-**当前阶段**：规划完成，准备进入 M0
+**当前阶段**：M0 · 项目骨架与性能原型
 
 ---
 
@@ -15,7 +15,14 @@
 - `docs/ARCHITECTURE.md`
 - `docs/ROADMAP.md`
 
-GitHub 公开仓库已创建，规划文档已推送。尚未编写任何代码。
+GitHub 公开仓库已创建，规划文档已推送。
+
+M0 第一项"初始化 monorepo"已完成：
+- 根目录 `Cargo.toml`（workspace，成员 `crates/*`，edition 2024，统一 `workspace.package` 元数据，`publish = false`）
+- 根目录 `package.json` + `pnpm-workspace.yaml`（成员 `apps/desktop`、`apps/pwa`、`packages/*`，目前都还没有 `package.json`）
+- `crates/` 下四个空 crate：`lextrail-core`、`lextrail-dict`、`lextrail-ai`、`lextrail-capture`（只有模块文档注释，尚无代码和依赖）
+- `apps/desktop`、`apps/server`、`apps/pwa`、`packages/ui`、`tools/dict-builder`、`tools/bench`、`docs/specs` 目前只放了 README 占位，说明用途和计划实现的里程碑
+- 目录结构完全按 `ARCHITECTURE.md` 第 3 节初稿，未作改动
 
 ## 正在进行
 
@@ -23,8 +30,9 @@ GitHub 公开仓库已创建，规划文档已推送。尚未编写任何代码�
 
 ## 下一步
 
-1. 开始 M0 的第一项任务：初始化 monorepo（见 `ROADMAP.md`）。
-2. M0 期间评审 `ARCHITECTURE.md` 中标注为〔初稿〕的仓库结构部分。
+1. M0 第二项：代码规范（`rustfmt`、`clippy`、TypeScript strict、ESLint、Prettier）。
+2. Tauri 骨架任务时把 `apps/desktop/src-tauri` 加入 Cargo workspace 成员。
+3. M0 期间评审 `ARCHITECTURE.md` 中标注为〔初稿〕的仓库结构部分。
 
 ## 遇到的问题 / 需要项目负责人决定
 
