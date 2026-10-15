@@ -19,7 +19,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![popup::hide_popup])
+        .invoke_handler(tauri::generate_handler![popup::hide_popup, popup::popup_ready])
         .setup(|app| {
             let handle = app.handle();
             tray::create(handle)?;

@@ -22,7 +22,6 @@ use std::time::Duration;
 
 use lextrail_capture::{CaptureTrace, TextCapture, result_label};
 use lextrail_config::PopupMode;
-use tauri::webview::PageLoadEvent;
 use tauri::window::Color;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, Runtime, WebviewUrl, WebviewWindow,
@@ -177,6 +176,16 @@ pub fn on_low_memory<R: Runtime>(app: &AppHandle<R>) {
     dispatch(app, Event::LowMemory);
 }
 
+/// Called by the popup page once it has subscribed to content events (or failed to,
+/// in which case `error` says why). Only then may the window be revealed.
+#[tauri::command]
+pub fn popup_ready<R: Runtime>(app: AppHandle<R>, error: Option<String>) {
+    if let Some(error) = error {
+        eprintln!("popup page could not subscribe to content events: {error}");
+    }
+    dispatch(&app, Event::PageReady);
+}
+
 /// Called by the popup page when the user presses Esc.
 #[tauri::command]
 pub fn hide_popup<R: Runtime>(app: AppHandle<R>) {
@@ -302,13 +311,9 @@ fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         .skip_taskbar(true)
         .shadow(true)
         .background_color(BACKGROUND)
+        // Shown only after the page calls `popup_ready`, i.e. once it can receive
+        // content events; a finished page load alone is not enough.
         .visible(false)
-        // Show only once the page has rendered, so the first appearance is complete.
-        .on_page_load(|window, payload| {
-            if payload.event() == PageLoadEvent::Finished {
-                dispatch(window.app_handle(), Event::PageLoaded);
-            }
-        })
         .build()?;
 
     window.on_window_event({

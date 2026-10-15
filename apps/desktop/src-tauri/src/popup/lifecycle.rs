@@ -2,7 +2,7 @@
 //! and carries out the returned actions, so every transition is unit-testable.
 //!
 //! ```text
-//! Absent ─show─▶ Creating ─page loaded─▶ Visible ─hide─▶ Hidden ─timer─▶ Suspending ─▶ Suspended
+//! Absent ─show─▶ Creating ─page ready─▶ Visible ─hide─▶ Hidden ─timer─▶ Suspending ─▶ Suspended
 //!                                           ▲                │                             │
 //!                                           └────────show────┴─────────────show────────────┘
 //! ```
@@ -19,7 +19,7 @@ pub const SUSPEND_DELAY: Duration = Duration::from_secs(5);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     Absent,
-    /// Window created, waiting for the page to finish loading before it is shown.
+    /// Window created, waiting for the page to report it is ready before it is shown.
     Creating,
     Visible,
     /// Hidden; suspended when the timer with this generation fires.
@@ -33,7 +33,8 @@ pub enum State {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {
     ShowRequested,
-    PageLoaded,
+    /// The page has loaded and subscribed to content events (`popup_ready`).
+    PageReady,
     /// Esc, or focus moved elsewhere.
     HideRequested,
     SuspendTimerFired {
@@ -96,7 +97,7 @@ impl Lifecycle {
             (S::Absent, E::ShowRequested) => (S::Creating, vec![A::Create]),
             // Already on its way; it is shown when the page has loaded.
             (S::Creating, E::ShowRequested) => (S::Creating, vec![]),
-            (S::Creating, E::PageLoaded) => (S::Visible, vec![A::Reveal { resume: false }]),
+            (S::Creating, E::PageReady) => (S::Visible, vec![A::Reveal { resume: false }]),
             (S::Visible | S::Hidden { .. }, E::ShowRequested) => {
                 (S::Visible, vec![A::Reveal { resume: false }])
             }
@@ -167,7 +168,7 @@ mod tests {
     fn visible() -> Lifecycle {
         let mut lc = Lifecycle::new();
         lc.handle(Event::ShowRequested, R);
-        lc.handle(Event::PageLoaded, R);
+        lc.handle(Event::PageReady, R);
         assert_eq!(lc.state(), State::Visible);
         lc
     }
@@ -202,7 +203,7 @@ mod tests {
         assert_eq!(lc.handle(Event::ShowRequested, R), vec![Action::Create]);
         assert_eq!(lc.state(), State::Creating);
         assert_eq!(
-            lc.handle(Event::PageLoaded, R),
+            lc.handle(Event::PageReady, R),
             vec![Action::Reveal { resume: false }]
         );
         assert_eq!(lc.state(), State::Visible);
@@ -409,5 +410,35 @@ mod tests {
     fn suspend_delay_is_a_few_seconds() {
         // D009: "隐藏（几秒）→ 挂起".
         assert!((1..=10).contains(&SUSPEND_DELAY.as_secs()));
+    }
+
+    #[test]
+    fn page_ready_outside_creation_is_ignored() {
+        // E.g. the WebView reloaded the page after a crash: the window state stays.
+        let mut lc = visible();
+        assert_eq!(lc.handle(Event::PageReady, R), vec![]);
+        assert_eq!(lc.state(), State::Visible);
+
+        let mut lc = suspended();
+        assert_eq!(lc.handle(Event::PageReady, R), vec![]);
+        assert_eq!(lc.state(), State::Suspended);
+
+        let mut lc = Lifecycle::new();
+        assert_eq!(lc.handle(Event::PageReady, R), vec![]);
+        assert_eq!(lc.state(), State::Absent);
+    }
+
+    #[test]
+    fn recreated_window_waits_for_page_ready_again() {
+        let mut lc = visible();
+        lc.handle(Event::HideRequested, M); // memory saver: destroyed
+        assert_eq!(lc.state(), State::Absent);
+        assert_eq!(lc.handle(Event::ShowRequested, M), vec![Action::Create]);
+        // Nothing is revealed until the new page reports ready.
+        assert_eq!(lc.handle(Event::ShowRequested, M), vec![]);
+        assert_eq!(
+            lc.handle(Event::PageReady, M),
+            vec![Action::Reveal { resume: false }]
+        );
     }
 }

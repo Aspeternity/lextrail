@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { listen } from '@tauri-apps/api/event';
 import { computed, onMounted, ref } from 'vue';
-import { CONTENT_EVENT, UNAVAILABLE_MESSAGES, type Content } from './content';
+import { UNAVAILABLE_MESSAGES, type Content } from './content';
+import { subscribe } from './ipc';
 
 const content = ref<Content>({ kind: 'empty' });
 
@@ -10,8 +10,8 @@ const unavailable = computed(() =>
 );
 
 onMounted(() => {
-  void listen<Content>(CONTENT_EVENT, (event) => {
-    content.value = event.payload;
+  void subscribe((next) => {
+    content.value = next;
   });
 });
 </script>
