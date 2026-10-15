@@ -4,13 +4,15 @@
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
 **最后更新**：2026-10-15
-**当前阶段**：M0 已完成；下一个里程碑是 M1 · 取词与词典（尚未开始）
+**当前阶段**：M1 · 取词与词典（进行中：数据模型公共部分已评审）
 
 ---
 
 ## 当前状态
 
-M0 的十项任务全部完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷键、设置读写、悬浮窗、悬浮窗生命周期、主窗口骨架、**性能测试（路线 A 已确认，D036）**。M0 收尾时评审了 `ARCHITECTURE.md` 第 3 节（仓库结构），已对照实际代码更新，并新增决定 D037（本地数据库放在 `lextrail-store`）、D038（dict-builder 用 Rust，词典数据不进仓库，构建时下载固定版本并校验哈希）、D039（M1 开始时先评审数据模型公共部分，倾向 HLC）。
+M0 的十项任务全部完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷键、设置读写、悬浮窗、悬浮窗生命周期、主窗口骨架、**性能测试（路线 A 已确认，D036）**。M0 收尾时评审了 `ARCHITECTURE.md` 第 3 节（仓库结构），已对照实际代码更新，并新增决定 D037（本地数据库放在 `lextrail-store`）、D038（dict-builder 用 Rust，词典数据不进仓库，构建时下载固定版本并校验哈希）、D039（M1 开始时评审数据模型公共部分）。
+
+M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同步元数据字段、HLC 时间戳格式（小写十六进制定宽文本，按字符串比较）、`lookups` 表的结构都已确定，写在 `ARCHITECTURE.md` 6.1–6.3；推迟到 M3/M4 的问题记在 6.5，并已加入 `ROADMAP.md`。本地表不带 `user_id`，`device_id` 存在数据库 `meta` 表中。
 
 代码现状（详见各文件）：
 - `crates/lextrail-config`（D035）：`Settings`（`version`、`hotkeys.lookup`、`popup.mode`）+ `SettingsFile`（TOML、原子写入、损坏时备份为 `.corrupt` 并恢复默认、更新版本写的文件不覆盖）+ `SecretStore` 适配器（`WindowsCredentialStore` / `MemorySecretStore`）。17 个测试，其中 1 个真实读写 Windows 凭据管理器（用临时 key，测完删除）
@@ -53,8 +55,8 @@ M0 的十项任务全部完成：monorepo、代码规范、CI、Tauri 托盘骨�
 
 ## 下一步
 
-1. 进入 M1。第一步按 D039 评审 `ARCHITECTURE.md` 第 6 节的公共部分：同步元数据字段、HLC 时间戳格式、`lookups`（查询历史）表，评审结果写回第 6 节和 `DECISIONS.md`。
-2. 然后创建 `lextrail-store`（D037），再按 `ROADMAP.md` 做取词、dict-builder（D038）、词典等任务。
+1. 创建 `lextrail-store`（D037）：本地 SQLite、迁移机制、`meta` 表（`device_id`、最近一次 HLC）、`lookups` 表（按 `ARCHITECTURE.md` 6.3）。同时在 `lextrail-core` 实现 HLC（6.2，含溢出、回拨等测试）。
+2. 然后按 `ROADMAP.md` 做取词、dict-builder（D038）、词典等任务。
 3. M1、M2、M3、M6 都有"重测性能预算"任务，结果追加到 `docs/specs/m0-benchmark.md` 第 7 节。
 
 ## 遇到的问题 / 需要项目负责人决定

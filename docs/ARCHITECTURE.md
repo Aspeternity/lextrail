@@ -213,30 +213,99 @@ pub trait AiProvider {
 
 ---
 
-## 6. 数据模型 〔初稿〕
+## 6. 数据模型
 
-> 评审安排（D039）：同步元数据公共字段、时间戳格式（倾向 HLC）和 `lookups` 表在 M1 开始时评审；其余表在 M3 评审。本地 SQLite 的读写与迁移在 `lextrail-store`（D037），`lextrail-core` 不依赖 SQLite。
+> 评审状态：公共字段、HLC 时间戳和 `lookups` 表已在 M1 开始时评审确定（D039）；其余表在 M3 评审，仍为初稿。本地 SQLite 的读写与迁移在 `lextrail-store`（D037），`lextrail-core` 不依赖 SQLite。
 
-所有可同步的表都带有同步元数据（D024）：
+### 6.1 同步元数据公共字段（D024、D039）
 
-| 字段 | 说明 |
-|---|---|
-| `id` | UUID（建议使用 UUIDv7，按时间有序，便于排序和分页） |
-| `user_id` | 本地只有一个用户，但字段保留，与服务端一致 |
-| `created_at` / `updated_at` | 建议使用混合逻辑时钟（HLC），避免不同设备的系统时间不一致导致"最后修改者优先"判断错误 〔待评审〕 |
-| `device_id` | 最后修改的设备 |
-| `deleted` | 软删除标记 |
+所有可同步的表都带以下字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | TEXT | UUIDv7，小写、带连字符的标准格式。用文本是为了与 PWA 的 IndexedDB、JSON 保持一致，也便于调试 |
+| `created_at` | INTEGER | 本机系统时间（Unix 毫秒）。只用于显示和排序，**不参与冲突判断** |
+| `updated_at` | TEXT | HLC 时间戳（见 6.2）。"最后修改者优先"只比较这个字段 |
+| `device_id` | TEXT | 最后修改这条记录的设备 |
+| `deleted` | INTEGER | 软删除标记，`0` / `1`。已删除的记录暂时永久保留，清理规则在 M4 确定 |
+
+- **本地表不带 `user_id`**：用户可以先离线使用、以后再登录，本地记录带 `user_id` 会导致登录时要改写全部记录。服务端按登录账号区分用户，服务端的表保留 `user_id`。
+- **`device_id`**：第一次启动时生成一个 UUIDv7，保存在 `lextrail-store` 的本地 `meta` 表中（不同步），不放在 `settings.toml`，这样只拷贝设置文件不会让两台设备共用同一个 ID。
+- **合并粒度**：按整行合并，`updated_at` 大的一行整体胜出。按字段合并留到 M3 评审 `vocab_items` 时再考虑。
+
+### 6.2 HLC 时间戳（D039）
+
+**格式**：固定宽度文本 `<物理毫秒>-<计数器>-<device_id>`
+
+| 部分 | 宽度 | 说明 |
+|---|---|---|
+| 物理毫秒 | 12 位十六进制 | Unix 毫秒，左侧补 0 |
+| 计数器 | 4 位十六进制 | 同一毫秒内的序号，0–`ffff` |
+| `device_id` | 36 字符 | 产生该时间戳的设备，UUID 标准格式 |
+
+示例：`019a1b2c3d4e-0000-019a1b2c-3d4e-7abc-8def-0123456789ab`
+
+- 十六进制**统一使用小写**。解析时严格校验：长度、分隔符位置、字符集（只允许 `0-9a-f`），不符合的一律拒绝，不做大小写转换。
+- 按字符串比较即为时间先后，SQLite、IndexedDB、JSON 中行为一致；不用 64 位整数，避免 JS 数字超过 2^53 时丢失精度。
+- 时间戳中带有 `device_id`，不同设备的时间戳不会相等。
+
+**时钟规则**（标准 HLC，纯逻辑，放在 `lextrail-core`，WASM 也能用）：
+
+- 本机产生新时间戳：物理部分取 max(系统时间, 上次物理部分)；与上次相同时计数器 +1，否则计数器归 0。
+- 收到其他设备的时间戳：本机时钟推进到同时大于本机上次值和对方值。
+- **计数器溢出**：计数器已是 `ffff` 还需要 +1 时，物理部分 +1 ms、计数器归 0。
+- 最近一次的 HLC 保存在 `meta` 表中，系统时间往回调或重启后，时间戳仍然只增不减。
+- 必须有单元测试：格式化与解析往返、大写和非法字符被拒绝、单调递增、系统时间回拨、接收远端时间戳、计数器溢出。
+- 对方时钟快得离谱时的处理（超过某个阈值时拒绝还是只记警告）在 M4 确定。
+
+### 6.3 `lookups`（查询历史，D039）
+
+```sql
+CREATE TABLE lookups (
+  id          TEXT    PRIMARY KEY,
+  created_at  INTEGER NOT NULL,
+  updated_at  TEXT    NOT NULL,
+  device_id   TEXT    NOT NULL,
+  deleted     INTEGER NOT NULL DEFAULT 0 CHECK (deleted IN (0, 1)),
+  query       TEXT    NOT NULL,  -- 选中的文字，合并连续空白，最多 2000 字符
+  kind        TEXT    NOT NULL CHECK (kind IN ('word', 'phrase', 'sentence')),
+  lemma       TEXT,              -- 词形还原后的原形；句子或词典中查不到时为 NULL
+  context     TEXT,              -- 所在句子，最多 2000 字符
+  source_app  TEXT,              -- 进程名，如 chrome.exe
+  url         TEXT,              -- 预留，浏览器扩展提供
+  method      TEXT    NOT NULL CHECK (method IN ('uia', 'clipboard', 'clipboard_double_copy', 'ocr'))
+);
+CREATE INDEX lookups_lemma_created ON lookups (lemma, created_at);
+CREATE INDEX lookups_created ON lookups (created_at);
+```
+
+- **只新增、只软删除，不修改**（与 `review_logs` 一样，合并不会冲突）。AI 结果（使用的模型、语境含义）与查询记录的关联在 M2/M3 设计"你见过 N 次"时确定，通过迁移增加字段或表。
+- **不保存窗口标题**：窗口标题常含邮件主题、文件名等隐私内容，而查询历史会同步到服务器。取词时仍可读取窗口标题（例如判断是否为终端），但不写入数据库。
+- **`url`**：接入浏览器扩展时再评审隐私处理（例如是否只保存域名、是否允许关闭）。
+- **去重**：同一 `query` + 同一 `context` 在 30 秒内重复查询只记一次。去重逻辑放在 `lextrail-core` / `lextrail-store`，不放在界面层。
+- **"不记录查询历史"开关**：打开后不写入 `lookups`。应用黑名单中的程序本来就不会产生查询（D032）。
+- **`lemma` 依赖词典版本**：词典或词形还原规则更新后，旧记录的 `lemma` 可能与新结果不一致。以后做"查过 N 次"等统计时，可能需要按当前词典重新归一化（重新计算或在查询时归一）。
+
+### 6.4 其余表〔初稿，M3 评审〕
 
 | 表 | 是否同步 | 内容 |
 |---|---|---|
 | `vocab_items` | 是 | 收藏的词条：lemma、`type`（word/phrase）、词典快照、AI 解析快照（含例句）、标签 |
 | `encounters` | 是 | 遇见记录：词条 ID、原句、来源软件、网址、当时的语境含义 |
-| `lookups` | 是 | 查询历史：查询文本、lemma、上下文、来源、使用的模型（用于"查过 N 次"提示和个人词义标注） |
 | `review_logs` | 是 | 复习日志，**只追加** |
 | `cards` | 由日志计算 | FSRS 状态（稳定性、难度、下次复习时间），可在本地缓存，但以 `review_logs` 为准 |
 | `sentences` | 是 | 句子收藏（预留，第一版不做界面） |
 | `ai_cache` | 否 | AI 结果缓存，仅本地 |
 | `outbox` | 否 | 待上传的 op-log 记录 |
+| `meta` | 否 | 本机键值信息：`device_id`、最近一次 HLC 等 |
+
+### 6.5 待定事项
+
+- **M3**：删除与修改并发时的规则——一台设备删除、另一台设备在之后修改时，记录是否会"复活"。
+- **M4**：换账号（登出后登录另一个账号）时，本地已有数据归属哪个账号、如何处理。
+- **M4**：重复 `device_id` 的检测（例如整个数据目录被拷贝到另一台电脑），以及检测到后如何重新生成。
+- **M4**：远端时钟超前过多时的处理阈值（见 6.2）。
+- **M4**：已删除记录的清理规则（见 6.1）。
 
 ---
 
