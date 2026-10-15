@@ -4,13 +4,13 @@
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
 **最后更新**：2026-10-15
-**当前阶段**：M0 · 项目骨架与性能原型（已完成 7 / 10 项）
+**当前阶段**：M0 · 项目骨架与性能原型（已完成 8 / 10 项）
 
 ---
 
 ## 当前状态
 
-M0 已完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷键、设置读写、悬浮窗。
+M0 已完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷键、设置读写、悬浮窗、悬浮窗生命周期。
 
 代码现状（详见各文件）：
 - `crates/lextrail-config`（D035）：`Settings`（`version`、`hotkeys.lookup`、`popup.mode`）+ `SettingsFile`（TOML、原子写入、损坏时备份为 `.corrupt` 并恢复默认、更新版本写的文件不覆盖）+ `SecretStore` 适配器（`WindowsCredentialStore` / `MemorySecretStore`）。17 个测试，其中 1 个真实读写 Windows 凭据管理器（用临时 key，测完删除）
@@ -21,6 +21,11 @@ M0 已完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷�
   - 全局快捷键从设置读取（默认 Ctrl+Alt+X，D014）；注册失败时弹原生提示框，托盘提示文字也会改；按下后显示悬浮窗
   - 悬浮窗（`src/popup/`）：
     - 第一次按快捷键时才创建（只有托盘时不加载 WebView2），之后隐藏、复用，不重新加载（D010）
+    - 生命周期（D009）：`popup/lifecycle.rs` 是纯状态机（Absent → Creating → Visible → Hidden → Suspending → Suspended，18 个测试），`popup/mod.rs` 执行它返回的动作
+      - 隐藏 5 秒后（`SUSPEND_DELAY`）`SetIsVisible(false)` + `TrySuspend`；再次显示时 `Resume` + `SetIsVisible(true)` 后再显示窗口（`popup/webview.rs`）
+      - "内存优先"（`popup.mode = "memory_saver"`）：隐藏即销毁窗口
+      - 低内存：`memory.rs` 后台线程阻塞等待 `CreateMemoryResourceNotification(Low)`（不轮询；只在内存一直很低时每 60 秒复查一次）；悬浮窗不在屏幕上时销毁，正在显示时不动
+      - debug 构建会在控制台打印每次状态转换（`popup: 事件 -> [动作]`）
     - 第一次显示等页面加载完成（`PageLoadEvent::Finished`）后再显示，避免出现白屏
     - 位置：默认在光标右下方 12 逻辑像素处，右边或下边放不下时翻到左边或上边，最后限制在光标所在显示器的工作区内（`popup/placement.rs`，纯函数，9 个测试，含负坐标副屏、比工作区还大等情况）
     - 关闭：页面里按 Esc 调用 `hide_popup` 命令；失去焦点（点击外部）时由 Rust 端隐藏
@@ -31,7 +36,10 @@ M0 已完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷�
 
 本机实测（`tauri build` 的 release 版，粗测，不是正式性能报告；4K 屏 150% 缩放）：
 - 只有托盘时：无可见窗口、无子进程，工作集约 13 MB，空闲 CPU ≈ 0
-- 悬浮窗冷启动（第一次按快捷键到显示）约 320 ms；之后再显示约 15–20 ms；Esc / 点击外部后约 10–25 ms 隐藏
+- 悬浮窗冷启动（第一次按快捷键到显示）约 300 ms；隐藏不到 5 秒再显示约 15–35 ms；**挂起后恢复显示约 20–30 ms**；Esc / 点击外部后约 10–25 ms 隐藏
+- "内存优先"模式：隐藏后 0.5 秒内 WebView2 进程全部退出；每次显示都是冷启动，约 270–290 ms
+- ⚠️ **内存提前预警**：悬浮窗创建后 WebView2 进程树有 6 个进程，私有内存约 150 MB（工作集相加约 290–320 MB，有重复计算），**挂起后没有明显下降**。性能预算是"挂起时总内存 < 100 MB"。这是粗测，统计方法还要在性能测试任务里定清楚，但很可能不达标，到时要按 D008 决定是否切换路线 B
+- 低内存通知路径没法在本机真实触发：它和"内存优先"共用同一个销毁动作（已实测），状态转换有单元测试覆盖
 以上功能都在本机手动验证过；托盘图标已由项目负责人目测确认。
 
 常用命令：
@@ -46,8 +54,8 @@ M0 已完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷�
 
 ## 下一步
 
-1. M0 第八项：悬浮窗生命周期（隐藏 → `TrySuspend` 挂起 → 快捷键时 `Resume`；收到低内存通知时销毁；"内存优先"模式，对应设置 `popup.mode`）。入口在 `popup::hide` / `popup::show_at_cursor`。
-2. 主窗口骨架任务时：托盘菜单加"打开主窗口"，单实例回调唤起主窗口；考虑托盘图标左键直接打开主窗口。
+1. M0 第九项：主窗口骨架（关闭时销毁）。托盘菜单加"打开主窗口"，单实例回调唤起主窗口；考虑托盘图标左键直接打开主窗口。注意 D010：悬浮窗和主窗口共用同一个 WebView2 环境。
+2. M0 第十项：性能测试（`tools/bench`），输出 `docs/specs/m0-benchmark.md`，并在 DECISIONS 中写"路线 A 确认 / 切换到路线 B"。本次的手动测试方法可以直接复用：PowerShell 调用 `keybd_event` 模拟快捷键、`FindWindow("Tauri Window", "LexTrail")` 找悬浮窗、`SetProcessDpiAwarenessContext(-4)` 拿物理坐标、按父进程统计 `msedgewebview2.exe` 进程树。要先定好内存统计口径（私有内存 / 工作集 / 提交大小）。
 3. M0 期间评审 `ARCHITECTURE.md` 中标注为〔初稿〕的仓库结构部分（第 3 节已加入 `lextrail-config`）。
 
 ## 遇到的问题 / 需要项目负责人决定
