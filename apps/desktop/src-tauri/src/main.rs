@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod hotkey;
+mod memory;
 mod notice;
 mod popup;
 mod settings;
@@ -22,6 +23,11 @@ fn main() {
             let handle = app.handle();
             tray::create(handle)?;
             let settings = settings::load(handle);
+            popup::init(handle, settings.popup.mode);
+            memory::watch({
+                let handle = handle.clone();
+                move || popup::on_low_memory(&handle)
+            });
             let failures = hotkey::register_all(handle, &hotkey::bindings_from(&settings.hotkeys));
             hotkey::notify_failures(handle, &failures);
             Ok(())

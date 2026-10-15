@@ -1,8 +1,15 @@
 //! The lookup popup: a single reusable window (D010), created on first use so the
-//! tray-only state never loads a WebView.
+//! tray-only state never loads a WebView. Its lifecycle (D009) lives in [`lifecycle`];
+//! this module turns the lifecycle's actions into window and WebView2 calls.
 
+mod lifecycle;
 mod placement;
+mod webview;
 
+use std::sync::Mutex;
+use std::thread;
+
+use lextrail_config::PopupMode;
 use tauri::webview::PageLoadEvent;
 use tauri::window::Color;
 use tauri::{
@@ -10,6 +17,7 @@ use tauri::{
     WindowEvent,
 };
 
+use lifecycle::{Action, Event, Lifecycle};
 use placement::{Point, Rect, Size};
 
 pub const LABEL: &str = "popup";
@@ -22,37 +30,100 @@ const CURSOR_GAP: f64 = 12.0;
 /// Matches the page background so the window never flashes white.
 const BACKGROUND: Color = Color(255, 255, 255, 255);
 
-/// Shows the popup next to the mouse cursor, creating it on first use.
-pub fn show_at_cursor<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let cursor = app.cursor_position()?;
-    let cursor = Point {
-        x: cursor.x.round() as i32,
-        y: cursor.y.round() as i32,
-    };
-    match app.get_webview_window(LABEL) {
-        Some(window) => {
-            move_near(&window, cursor)?;
-            reveal(&window)
-        }
-        None => create(app, cursor),
-    }
+/// Shared popup state, managed by Tauri.
+struct PopupState {
+    lifecycle: Mutex<Lifecycle>,
+    mode: PopupMode,
+    /// Cursor position of the latest show request; used when the popup is revealed.
+    cursor: Mutex<Option<Point>>,
 }
 
-/// Hides the popup (Esc, click outside). The window is kept for reuse.
-pub fn hide<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    match app.get_webview_window(LABEL) {
-        Some(window) => window.hide(),
-        None => Ok(()),
-    }
+/// Registers the popup state. Call once during setup.
+pub fn init<R: Runtime>(app: &AppHandle<R>, mode: PopupMode) {
+    app.manage(PopupState {
+        lifecycle: Mutex::new(Lifecycle::new()),
+        mode,
+        cursor: Mutex::new(None),
+    });
+}
+
+/// Shows the popup next to the mouse cursor (creating or resuming it as needed).
+pub fn show_at_cursor<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+    let cursor = app.cursor_position()?;
+    *lock(&app.state::<PopupState>().cursor) = Some(Point {
+        x: cursor.x.round() as i32,
+        y: cursor.y.round() as i32,
+    });
+    dispatch(app, Event::ShowRequested);
+    Ok(())
+}
+
+/// Hides the popup (Esc, click outside).
+pub fn hide<R: Runtime>(app: &AppHandle<R>) {
+    dispatch(app, Event::HideRequested);
+}
+
+/// The system reported low memory: drop the popup unless it is on screen.
+pub fn on_low_memory<R: Runtime>(app: &AppHandle<R>) {
+    dispatch(app, Event::LowMemory);
 }
 
 /// Called by the popup page when the user presses Esc.
 #[tauri::command]
-pub fn hide_popup<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    hide(&app).map_err(|e| e.to_string())
+pub fn hide_popup<R: Runtime>(app: AppHandle<R>) {
+    hide(&app);
 }
 
-fn create<R: Runtime>(app: &AppHandle<R>, cursor: Point) -> tauri::Result<()> {
+fn dispatch<R: Runtime>(app: &AppHandle<R>, event: Event) {
+    let state = app.state::<PopupState>();
+    // Decide under the lock, act outside it: actions may call back into `dispatch`.
+    let actions = lock(&state.lifecycle).handle(event, state.mode);
+    #[cfg(debug_assertions)]
+    eprintln!("popup: {event:?} -> {actions:?}");
+    for action in actions {
+        if let Err(e) = perform(app, action) {
+            eprintln!("popup action {action:?} failed: {e}");
+        }
+    }
+}
+
+fn perform<R: Runtime>(app: &AppHandle<R>, action: Action) -> tauri::Result<()> {
+    let window = app.get_webview_window(LABEL);
+    match (action, window) {
+        (Action::Create, _) => create(app),
+        (Action::Reveal { resume }, Some(window)) => {
+            if let Some(cursor) = *lock(&app.state::<PopupState>().cursor) {
+                move_near(&window, cursor)?;
+            }
+            if resume {
+                webview::resume_then(&window, reveal)
+            } else {
+                reveal(&window)
+            }
+        }
+        (Action::Hide, Some(window)) => window.hide(),
+        (Action::ScheduleSuspend { generation, after }, _) => {
+            // One short-lived timer per hide; a newer hide makes this one stale.
+            let app = app.clone();
+            thread::spawn(move || {
+                thread::sleep(after);
+                dispatch(&app, Event::SuspendTimerFired { generation });
+            });
+            Ok(())
+        }
+        (Action::Suspend, Some(window)) => {
+            let app = app.clone();
+            webview::suspend(&window, move |suspended| {
+                dispatch(&app, Event::SuspendFinished { suspended });
+            })
+        }
+        (Action::Destroy, Some(window)) => window.destroy(),
+        // The window is already gone; nothing to act on.
+        (_, None) => Ok(()),
+    }
+}
+
+fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("popup/index.html".into()))
         .title("LexTrail")
         .inner_size(WIDTH, HEIGHT)
@@ -67,10 +138,8 @@ fn create<R: Runtime>(app: &AppHandle<R>, cursor: Point) -> tauri::Result<()> {
         .visible(false)
         // Show only once the page has rendered, so the first appearance is complete.
         .on_page_load(|window, payload| {
-            if payload.event() == PageLoadEvent::Finished
-                && let Err(e) = reveal(&window)
-            {
-                eprintln!("cannot show popup: {e}");
+            if payload.event() == PageLoadEvent::Finished {
+                dispatch(window.app_handle(), Event::PageLoaded);
             }
         })
         .build()?;
@@ -78,13 +147,16 @@ fn create<R: Runtime>(app: &AppHandle<R>, cursor: Point) -> tauri::Result<()> {
     window.on_window_event({
         let window = window.clone();
         move |event| {
-            // Clicking anywhere outside the popup moves focus away.
-            if let WindowEvent::Focused(false) = event {
-                let _ = window.hide();
+            // Clicking anywhere outside the popup moves focus away. WebView2 also moves
+            // focus around while a hidden window initialises; ignore that.
+            if let WindowEvent::Focused(false) = event
+                && window.is_visible().unwrap_or(false)
+            {
+                hide(window.app_handle());
             }
         }
     });
-    move_near(&window, cursor)
+    Ok(())
 }
 
 fn reveal<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
@@ -116,4 +188,9 @@ fn move_near<R: Runtime>(window: &WebviewWindow<R>, cursor: Point) -> tauri::Res
     let gap = (CURSOR_GAP * scale).round() as i32;
     let at = placement::place(cursor, size, work_area, gap);
     window.set_position(PhysicalPosition::new(at.x, at.y))
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    // State stays consistent even if a panic happened while it was held.
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
