@@ -121,14 +121,14 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     dispatch(app, Event::ShowRequested);
 
     let timer_app = app.clone();
-    thread::spawn(move || {
+    spawn("popup-delay", move || {
         thread::sleep(request::LOADING_DELAY);
         dispatch_request(&timer_app, request::Event::DelayElapsed { id });
     });
 
     let capture_app = app.clone();
     let capture = Arc::clone(&state.capture);
-    thread::spawn(move || {
+    spawn("popup-capture", move || {
         let source_app = target
             .as_ref()
             .ok()
@@ -222,7 +222,7 @@ fn perform<R: Runtime>(app: &AppHandle<R>, action: Action) -> tauri::Result<()> 
         (Action::ScheduleSuspend { generation, after }, _) => {
             // One short-lived timer per hide; a newer hide makes this one stale.
             let app = app.clone();
-            thread::spawn(move || {
+            spawn("popup-suspend-timer", move || {
                 thread::sleep(after);
                 dispatch(&app, Event::SuspendTimerFired { generation });
             });
@@ -372,7 +372,7 @@ fn activate<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<R>) -> tauri:
     })?;
     let app = app.clone();
     let window = window.clone();
-    thread::spawn(move || {
+    spawn("popup-activation", move || {
         // Report as soon as the popup has focus; give up after ACTIVATION_CHECK.
         let deadline = std::time::Instant::now() + ACTIVATION_CHECK;
         let ok = loop {
@@ -441,6 +441,14 @@ fn move_near<R: Runtime>(window: &WebviewWindow<R>, cursor: Point) -> tauri::Res
     let gap = (CURSOR_GAP * scale).round() as i32;
     let at = placement::place(cursor, size, work_area, gap);
     window.set_position(PhysicalPosition::new(at.x, at.y))
+}
+
+/// Starts a short-lived helper thread. Thread creation can fail (e.g. while the process
+/// is being terminated); that is logged instead of panicking like `thread::spawn`.
+fn spawn(name: &str, f: impl FnOnce() + Send + 'static) {
+    if let Err(e) = thread::Builder::new().name(name.to_owned()).spawn(f) {
+        eprintln!("cannot start thread {name}: {e}");
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
