@@ -50,17 +50,21 @@ M0 已完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷�
 
 ## 正在进行
 
-- 无。
+- **M0 第十项：性能测试**（经项目负责人同意，先于第九项"主窗口骨架"进行，因为结果会影响路线 A / B 的选择）。分支 `feat/m0-benchmark`：
+  - 已完成：测试工具 `tools/bench`（`lextrail-bench`，Rust，12 个测试）；快速测试已跑完；报告草稿 `docs/specs/m0-benchmark.md`
+  - 进行中：挂起 2 小时后恢复的长时间测试（`lextrail-bench long --wait-mins 120`，2026-10-15 开始）
+  - 待办：把长时间测试结果填进报告；请项目负责人确定内存预算的统计口径，然后在 DECISIONS 中记录路线 A / B 的结论；合并到 `main`
 
 ## 下一步
 
-1. M0 第九项：主窗口骨架（关闭时销毁）。托盘菜单加"打开主窗口"，单实例回调唤起主窗口；考虑托盘图标左键直接打开主窗口。注意 D010：悬浮窗和主窗口共用同一个 WebView2 环境。
-2. M0 第十项：性能测试（`tools/bench`），输出 `docs/specs/m0-benchmark.md`，并在 DECISIONS 中写"路线 A 确认 / 切换到路线 B"。本次的手动测试方法可以直接复用：PowerShell 调用 `keybd_event` 模拟快捷键、`FindWindow("Tauri Window", "LexTrail")` 找悬浮窗、`SetProcessDpiAwarenessContext(-4)` 拿物理坐标、按父进程统计 `msedgewebview2.exe` 进程树。要先定好内存统计口径（私有内存 / 工作集 / 提交大小）。
+1. 完成第十项（见"正在进行"）。
+2. M0 第九项：主窗口骨架（关闭时销毁）。托盘菜单加"打开主窗口"，单实例回调唤起主窗口；考虑托盘图标左键直接打开主窗口。注意 D010：悬浮窗和主窗口共用同一个 WebView2 环境。
 3. M0 期间评审 `ARCHITECTURE.md` 中标注为〔初稿〕的仓库结构部分（第 3 节已加入 `lextrail-config`）。
 
 ## 遇到的问题 / 需要项目负责人决定
 
-- 无待决定事项。
+- **内存预算的统计口径**：挂起时 WebView2 进程树合计，私有工作集 82.8 MiB（< 100 MB），私有提交 159.0 MiB（> 100 MB）。详见 `docs/specs/m0-benchmark.md` 第 4 节。
+- 低优先级问题：冷启动后 0–100 ms 内按 Esc 可能无效（WebView 稍晚拿到键盘焦点），见报告 4.5 节。
 
 已知情况（不需要处理）：
 - GitHub Dependabot 有 1 个中等级别提醒，应该是 `glib 0.18.5`（RUSTSEC-2024-0429，unsound）。它只经由 Tauri 的 Linux GTK 托盘依赖引入，**Windows 构建里没有这个 crate**（已用 `cargo tree --target x86_64-pc-windows-msvc` 确认）。Tauri 2 锁定了 gtk 0.18，我们无法单独升级；做 macOS/Linux 支持时再看。可以在 GitHub 上把这条提醒标记为"不影响"（tolerable risk）。`cargo audit` 另有一条 `proc-macro-error` unmaintained 警告，同样只在 Linux 上用到。

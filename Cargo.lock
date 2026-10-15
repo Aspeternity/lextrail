@@ -1928,6 +1928,15 @@ name = "lextrail-ai"
 version = "0.0.0"
 
 [[package]]
+name = "lextrail-bench"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "lextrail-config",
+ "windows",
+]
+
+[[package]]
 name = "lextrail-capture"
 version = "0.0.0"
 
