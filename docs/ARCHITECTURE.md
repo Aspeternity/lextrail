@@ -61,9 +61,9 @@ LexTrail 是一款常驻后台的桌面翻译与词汇学习工具：
 
 ---
 
-## 3. 仓库结构 〔初稿〕
+## 3. 仓库结构
 
-单一仓库（monorepo）：Rust 部分是一个 Cargo workspace，前端部分是一个 pnpm workspace。
+单一仓库（monorepo）：Rust 部分是一个 Cargo workspace（根 `Cargo.toml`，成员为 `crates/*`、`apps/desktop/src-tauri`、`tools/bench`），前端部分是一个 pnpm workspace（`pnpm-workspace.yaml`，成员为 `apps/desktop`、`apps/pwa`、`packages/*`）。M0 评审时已对照实际代码更新（2026-10-15）；标注"占位"的目录目前只有 README 或空的 `lib.rs`，在对应里程碑实现。
 
 ```
 lextrail/
@@ -71,25 +71,32 @@ lextrail/
 ├── CLAUDE.md                 指向 AGENTS.md
 ├── README.md
 ├── LICENSE                   MIT（客户端及共用模块）
-├── Cargo.toml                Rust workspace
-├── package.json              pnpm workspace
+├── Cargo.toml                Rust workspace；共用的 package 字段与 lint 规则
+├── rust-toolchain.toml       固定 Rust 工具链
+├── package.json              根脚本（pnpm check / lint / format / test）与共用开发依赖
+├── pnpm-workspace.yaml       pnpm workspace
+├── .github/workflows/ci.yml  CI：ubuntu 跑格式、ESLint、类型检查；Windows 跑 clippy、测试、tauri build
 ├── crates/
-│   ├── lextrail-core/        数据模型、op-log、合并逻辑、FSRS 封装（可编译为 WASM）
-│   ├── lextrail-dict/        词典访问、词形还原、义项拆分
-│   ├── lextrail-ai/          AI 适配器、提示词模板、分段标记流式解析
-│   ├── lextrail-capture/     取词层（windows.rs，以后加 macos.rs）
+│   ├── lextrail-core/        数据模型、op-log、合并逻辑、FSRS 封装（可编译为 WASM）（占位，M3）
+│   ├── lextrail-dict/        词典访问、词形还原、义项拆分（占位，M1）
+│   ├── lextrail-ai/          AI 适配器、提示词模板、分段标记流式解析（占位，M2）
+│   ├── lextrail-capture/     取词层（占位，M1；计划按平台分 windows.rs，以后加 macos.rs）
 │   └── lextrail-config/      本地设置（TOML）与密钥存储（系统凭据管理器）（D035）
 ├── apps/
-│   ├── desktop/              Tauri 应用
-│   │   ├── src-tauri/        Rust 端：托盘、快捷键、窗口管理、调用各 crate
-│   │   └── src/              Vue 前端：popup/（悬浮窗，独立轻量入口）、main/（主窗口）
-│   ├── server/               同步服务端（LICENSE：AGPL-3.0）
-│   └── pwa/                  手机端复习 PWA（构建后嵌入服务端）
+│   ├── desktop/              Tauri 应用（npm 包 @lextrail/desktop）
+│   │   ├── src-tauri/        Rust 端（crate lextrail-desktop），只做调用和窗口管理：
+│   │   │                       main.rs（启动、插件、单实例）、tray.rs、hotkey.rs、settings.rs、
+│   │   │                       notice.rs（原生提示框）、memory.rs（低内存通知）、
+│   │   │                       popup/（悬浮窗：lifecycle 状态机、placement 定位、webview 挂起与恢复）、
+│   │   │                       main_window.rs（主窗口，关闭即销毁）
+│   │   └── src/              Vue 前端：popup/（悬浮窗，独立轻量入口）、main/（主窗口）；两个 Vite 入口
+│   ├── server/               同步服务端（占位，M4；LICENSE：AGPL-3.0）
+│   └── pwa/                  手机端复习 PWA（占位，M4；构建后嵌入服务端）
 ├── packages/
-│   └── ui/                   桌面端主窗口与 PWA 共用的 Vue 组件（复习卡片等）
+│   └── ui/                   桌面端主窗口与 PWA 共用的 Vue 组件（复习卡片等）（占位，M3）
 ├── tools/
-│   ├── dict-builder/         ECDICT 预处理：生成精简词典、拆分义项
-│   └── bench/                性能测试脚本（M0）
+│   ├── dict-builder/         ECDICT 预处理：生成精简词典、拆分义项（占位，M1）
+│   └── bench/                性能测试工具（crate lextrail-bench，仅 Windows），见 docs/specs/m0-benchmark.md
 └── docs/
     ├── STATUS.md             进度交接单
     ├── ROADMAP.md            里程碑与任务清单
@@ -98,7 +105,12 @@ lextrail/
     └── specs/                各模块的详细规格（按里程碑补充）
 ```
 
-> 包名注意：crates.io 和 PyPI 上已有名为 `lextrail` 的包（D001），本项目的 crate 一律使用带后缀的名称。
+**命名**（D001）：crates.io、PyPI 上已有名为 `lextrail` 的包，因此：
+- Rust crate 一律用 `lextrail-<模块>`（如 `lextrail-core`、`lextrail-desktop`、`lextrail-bench`）；
+- npm 包一律用 `@lextrail/<模块>` 作用域（如 `@lextrail/desktop`）；根 `package.json` 名为 `lextrail-monorepo`，`private`，不发布；
+- 所有包目前都不发布（`publish = false` / `private`）。
+
+**许可证**：workspace 默认 `license = "MIT"`；`apps/server` 使用 AGPL-3.0，带独立的 `LICENSE` 文件（D026）。
 
 ---
 
