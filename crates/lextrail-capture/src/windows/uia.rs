@@ -48,6 +48,10 @@ const MAX_SELECTION_UTF16: i32 = 4000;
 const MAX_CONTEXT_UTF16: i32 = 8000;
 /// How far up the tree to look for an element with a text pattern.
 const MAX_PARENT_STEPS: usize = 8;
+/// Chromium windows: pause between attempts while the accessibility tree is being built.
+const CHROMIUM_RETRY_INTERVAL: Duration = Duration::from_millis(30);
+/// Time kept free at the end of the budget, so a retry never makes the caller give up.
+const RETRY_MARGIN: Duration = Duration::from_millis(20);
 
 const RPC_S_SERVER_UNAVAILABLE: u32 = 0x8007_06ba;
 
@@ -66,6 +70,8 @@ struct Worker {
 }
 
 struct Job {
+    /// When the caller handed the job over; retries stay within the budget from here.
+    queued_at: Instant,
     target: CaptureTarget,
     reply: SyncSender<StepOutput>,
 }
@@ -147,6 +153,7 @@ impl CaptureStep for UiaStep {
 
         let (reply, result) = mpsc::sync_channel(1);
         let job = Job {
+            queued_at: Instant::now(),
             target: target.clone(),
             reply,
         };
@@ -212,7 +219,7 @@ fn run_worker(
 
     for job in jobs {
         let output = match &automation {
-            Ok(automation) => read(automation, &job.target),
+            Ok(automation) => read_with_retry(automation, &job, budget),
             Err(e) => Err(e.clone()).into(),
         };
         *lock(busy) = None;
@@ -265,12 +272,44 @@ fn classify(e: &windows::core::Error) -> Result<CaptureOutcome, CaptureError> {
     }
 }
 
+/// Chromium-based windows (Chrome, Edge, Electron apps such as VS Code) turn on their
+/// accessibility tree only after they notice a UIA client, so the first request to a fresh
+/// process finds no text element ("unsupported"). Asking again about 30 ms later works
+/// (verified with Edge: the second attempt reads the selection). Such windows are retried
+/// while the budget allows.
+fn read_with_retry(automation: &IUIAutomation2, job: &Job, budget: Duration) -> StepOutput {
+    let deadline = job.queued_at + budget.saturating_sub(RETRY_MARGIN);
+    let mut output = read(automation, &job.target);
+    while is_chromium(&job.target)
+        && output.result == Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported))
+        && Instant::now() + CHROMIUM_RETRY_INTERVAL < deadline
+    {
+        thread::sleep(CHROMIUM_RETRY_INTERVAL);
+        let attempts = output.attempts + 1;
+        output = read(automation, &job.target);
+        output.attempts = attempts;
+    }
+    output
+}
+
+fn is_chromium(target: &CaptureTarget) -> bool {
+    target
+        .window
+        .as_ref()
+        .and_then(|w| w.class_name.as_deref())
+        .is_some_and(|c| c.starts_with("Chrome_WidgetWin_"))
+}
+
 fn read(automation: &IUIAutomation2, target: &CaptureTarget) -> StepOutput {
     let process_id = target.window.as_ref().map_or(0, |w| w.process_id);
     let mut element = None;
     let result =
         read_selection(automation, target, process_id, &mut element).or_else(|e| classify(&e));
-    StepOutput { result, element }
+    StepOutput {
+        result,
+        element,
+        attempts: 1,
+    }
 }
 
 /// Tries the focused element (if it belongs to the target process), then the elements of
@@ -479,5 +518,19 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn chromium_windows_are_recognised_by_class() {
+        let with_class = |class: Option<&str>| {
+            let mut window = WindowInfo::for_tests("app.exe");
+            window.class_name = class.map(str::to_owned);
+            CaptureTarget::for_tests(Some(window))
+        };
+        assert!(is_chromium(&with_class(Some("Chrome_WidgetWin_1"))));
+        assert!(is_chromium(&with_class(Some("Chrome_WidgetWin_0"))));
+        assert!(!is_chromium(&with_class(Some("Notepad"))));
+        assert!(!is_chromium(&with_class(None)));
+        assert!(!is_chromium(&CaptureTarget::for_tests(None)));
     }
 }

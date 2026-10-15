@@ -22,11 +22,12 @@ fn main() {
     let start = Instant::now();
     let target = capture.snapshot().expect("snapshot");
     let snapshot_time = start.elapsed();
-    let outcome = capture.capture(&target);
+    let (outcome, trace) = capture.capture_traced(&target);
     let capture_time = start.elapsed() - snapshot_time;
 
     println!("window: {:#?}", target.window);
     println!("snapshot: {snapshot_time:?}, capture: {capture_time:?}");
+    println!("trace: {trace}");
     match outcome {
         Ok(CaptureOutcome::Captured(selection)) => {
             println!("selection: {:?} ({:?})", selection.text, selection.method);

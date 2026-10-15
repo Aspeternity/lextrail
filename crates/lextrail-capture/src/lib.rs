@@ -239,6 +239,8 @@ pub struct StepOutput {
     pub result: Result<CaptureOutcome, CaptureError>,
     /// The element the result came from, when the step knows it.
     pub element: Option<ElementSource>,
+    /// How many times the step tried (more than 1 when it retried within its budget).
+    pub attempts: u32,
 }
 
 impl From<Result<CaptureOutcome, CaptureError>> for StepOutput {
@@ -246,6 +248,7 @@ impl From<Result<CaptureOutcome, CaptureError>> for StepOutput {
         Self {
             result,
             element: None,
+            attempts: 1,
         }
     }
 }
@@ -265,6 +268,7 @@ pub struct StepTrace {
     pub result: &'static str,
     pub elapsed: Duration,
     pub element: Option<ElementSource>,
+    pub attempts: u32,
 }
 
 /// A short, text-free label for a capture result: `captured`, `no_selection`, ..., `error`.
@@ -289,7 +293,8 @@ impl Unavailable {
 }
 
 impl fmt::Display for CaptureTrace {
-    /// e.g. `uia=captured 21.3ms (uia_focus); total 21.4ms` or `precheck=elevated; total 0.0ms`.
+    /// e.g. `uia=captured 21.3ms (uia_focus); total 21.4ms`, `uia=captured 48.0ms x2 ...`
+    /// (retried once) or `precheck=elevated; total 0.0ms`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
         if let Some(u) = self.precheck {
@@ -297,6 +302,9 @@ impl fmt::Display for CaptureTrace {
         }
         for step in &self.steps {
             write!(f, "{}={} {:.1}ms", step.step, step.result, ms(step.elapsed))?;
+            if step.attempts > 1 {
+                write!(f, " x{}", step.attempts)?;
+            }
             if let Some(element) = step.element {
                 write!(f, " ({})", element.label())?;
             }
