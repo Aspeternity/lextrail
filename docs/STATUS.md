@@ -4,19 +4,20 @@
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
 **最后更新**：2026-10-15
-**当前阶段**：M0 · 项目骨架与性能原型（已完成 9 / 10 项，只剩第九项"主窗口骨架"）
+**当前阶段**：M0 · 项目骨架与性能原型（10 / 10 项已完成，只剩评审 `ARCHITECTURE.md` 初稿部分）
 
 ---
 
 ## 当前状态
 
-M0 已完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷键、设置读写、悬浮窗、悬浮窗生命周期、**性能测试（路线 A 已确认，D036）**。第十项经项目负责人同意先于第九项完成。
+M0 的十项任务全部完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷键、设置读写、悬浮窗、悬浮窗生命周期、主窗口骨架、**性能测试（路线 A 已确认，D036）**。
 
 代码现状（详见各文件）：
 - `crates/lextrail-config`（D035）：`Settings`（`version`、`hotkeys.lookup`、`popup.mode`）+ `SettingsFile`（TOML、原子写入、损坏时备份为 `.corrupt` 并恢复默认、更新版本写的文件不覆盖）+ `SecretStore` 适配器（`WindowsCredentialStore` / `MemorySecretStore`）。17 个测试，其中 1 个真实读写 Windows 凭据管理器（用临时 key，测完删除）
 - `apps/desktop/src-tauri`：
-  - 启动时不创建任何窗口（不加载 WebView2），只有托盘；托盘菜单目前只有"退出 LexTrail"
-  - 单实例；关闭窗口不退出，只有菜单"退出"会退出
+  - 启动时不创建任何窗口（不加载 WebView2），只有托盘；托盘图标左键单击打开主窗口，右键弹出菜单（"打开主窗口"、"退出 LexTrail"）
+  - 单实例：第二次启动时唤起主窗口；关闭窗口不退出，只有菜单"退出"会退出
+  - 主窗口（`main_window.rs`）：按需创建，960×640 逻辑像素、居中，页面加载完成后再显示；已打开时恢复最小化并置前；关闭即销毁，关闭后 WebView2 进程全部退出（已实测）。与悬浮窗共用同一个 WebView2 环境（D010，Tauri 默认共用数据目录）
   - 启动时从 `%APPDATA%\io.github.aspeternity.lextrail\settings.toml` 读设置（第一次启动会创建）；读取出问题时弹原生提示框，并用默认设置继续运行
   - 全局快捷键从设置读取（默认 Ctrl+Alt+X，D014）；注册失败时弹原生提示框，托盘提示文字也会改；按下后显示悬浮窗
   - 悬浮窗（`src/popup/`）：
@@ -31,7 +32,7 @@ M0 已完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷�
     - 关闭：页面里按 Esc 调用 `hide_popup` 命令；失去焦点（点击外部）时由 Rust 端隐藏
     - 尺寸暂定 380×260 逻辑像素，只有浅色主题，页面是占位内容
   - 提示框统一走 `notice::warn`（`tauri-plugin-dialog`，不加载 WebView）
-- `apps/desktop/src`：Vite + Vue，`popup/`、`main/` 两个入口。悬浮窗页面只有 Esc 处理和占位内容（JS 0.6 kB + CSS 0.5 kB，Vue 运行时在公共 chunk 里）；主窗口还是占位页面
+- `apps/desktop/src`：Vite + Vue，`popup/`、`main/` 两个入口。悬浮窗页面只有 Esc 处理和占位内容（JS 0.6 kB + CSS 0.5 kB，Vue 运行时在公共 chunk 里）；主窗口页面还是占位内容
 - `tools/bench`（`lextrail-bench`）：性能测试工具，`quick` 约 6 分钟，`long --wait-mins N` 测挂起 N 分钟后恢复；运行时会模拟按键、移动鼠标。报告和方法见 `docs/specs/m0-benchmark.md`
 - CI（`.github/workflows/ci.yml`）：ubuntu 跑格式、ESLint、类型检查；Windows 跑 clippy、测试，并用 `tauri build --no-bundle` 做 release 构建
 
@@ -52,9 +53,8 @@ M0 已完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷�
 
 ## 下一步
 
-1. M0 第九项（M0 最后一项）：主窗口骨架（关闭时销毁）。托盘菜单加"打开主窗口"，单实例回调唤起主窗口；考虑托盘图标左键直接打开主窗口。注意 D010：悬浮窗和主窗口共用同一个 WebView2 环境。
-2. M0 完成前评审 `ARCHITECTURE.md` 中标注为〔初稿〕的仓库结构部分（第 3 节已加入 `lextrail-config`；`tools/bench` 已按初稿实现）。
-3. 之后进入 M1。M1、M2、M3、M6 都有"重测性能预算"任务（新增），结果追加到 `docs/specs/m0-benchmark.md` 第 7 节。
+1. M0 完成前评审 `ARCHITECTURE.md` 中标注为〔初稿〕的仓库结构部分（第 3 节已加入 `lextrail-config`；`tools/bench` 已按初稿实现）。
+2. 之后进入 M1。M1、M2、M3、M6 都有"重测性能预算"任务（新增），结果追加到 `docs/specs/m0-benchmark.md` 第 7 节。
 
 ## 遇到的问题 / 需要项目负责人决定
 

@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod hotkey;
+mod main_window;
 mod memory;
 mod notice;
 mod popup;
@@ -13,8 +14,8 @@ use tauri::RunEvent;
 fn main() {
     tauri::Builder::default()
         // Must be registered first so a second launch exits before doing any work.
-        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {
-            // TODO(M0 main window): bring the main window to the front.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            main_window::open(app);
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())

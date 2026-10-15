@@ -1,28 +1,33 @@
 //! System tray icon and menu.
 
 use tauri::menu::{Menu, MenuEvent, MenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Runtime};
+
+use crate::main_window;
 
 pub const TRAY_ID: &str = "main";
 
 /// Actions triggered from the tray menu, keyed by menu item id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TrayAction {
+    OpenMainWindow,
     Quit,
 }
 
 impl TrayAction {
-    const ALL: [Self; 1] = [Self::Quit];
+    const ALL: [Self; 2] = [Self::OpenMainWindow, Self::Quit];
 
     fn id(self) -> &'static str {
         match self {
+            Self::OpenMainWindow => "open_main_window",
             Self::Quit => "quit",
         }
     }
 
     fn label(self) -> &'static str {
         match self {
+            Self::OpenMainWindow => "打开主窗口",
             Self::Quit => "退出 LexTrail",
         }
     }
@@ -44,7 +49,10 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip("LexTrail")
         .menu(&menu)
-        .on_menu_event(handle_menu_event);
+        // Left click opens the main window; the menu is on right click only.
+        .show_menu_on_left_click(false)
+        .on_menu_event(handle_menu_event)
+        .on_tray_icon_event(handle_icon_event);
     if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());
     }
@@ -54,8 +62,20 @@ pub fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
 fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
     match TrayAction::from_id(event.id().as_ref()) {
+        Some(TrayAction::OpenMainWindow) => main_window::open(app),
         Some(TrayAction::Quit) => app.exit(0),
         None => {}
+    }
+}
+
+fn handle_icon_event<R: Runtime>(tray: &TrayIcon<R>, event: TrayIconEvent) {
+    if let TrayIconEvent::Click {
+        button: MouseButton::Left,
+        button_state: MouseButtonState::Up,
+        ..
+    } = event
+    {
+        main_window::open(tray.app_handle());
     }
 }
 
