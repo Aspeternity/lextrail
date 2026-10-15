@@ -51,6 +51,12 @@ pub struct CaptureTarget {
 }
 
 impl CaptureTarget {
+    /// The platform handle of the foreground window (`HWND` on Windows), 0 if none.
+    /// Lets the caller ignore events about the window it is reading from.
+    pub fn native_window(&self) -> isize {
+        self.platform.hwnd
+    }
+
     /// A target with no platform handles, for tests of code that consumes targets.
     /// Platform adapters treat it as having no focused element.
     pub fn for_tests(window: Option<WindowInfo>) -> Self {
@@ -61,12 +67,36 @@ impl CaptureTarget {
     }
 }
 
+/// Adapter for platforms without capture support yet: always [`Unavailable::Unsupported`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UnsupportedCapture;
+
+impl TextCapture for UnsupportedCapture {
+    fn snapshot(&self) -> Result<CaptureTarget, CaptureError> {
+        Ok(CaptureTarget {
+            window: None,
+            platform: PlatformTarget::default(),
+        })
+    }
+
+    fn capture(&self, _target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError> {
+        Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported))
+    }
+
+    fn capture_context(
+        &self,
+        _target: &CaptureTarget,
+        _selected_text: &str,
+    ) -> Result<Option<RawContext>, CaptureError> {
+        Ok(None)
+    }
+}
+
 /// Platform-specific handles captured by [`TextCapture::snapshot`].
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PlatformTarget {
     /// Raw `HWND` values: top-level window, focused window and caret window of the
     /// foreground thread (`GetGUIThreadInfo`). 0 = none.
-    #[cfg_attr(not(windows), allow(dead_code))]
     pub hwnd: isize,
     #[cfg_attr(not(windows), allow(dead_code))]
     pub hwnd_focus: isize,

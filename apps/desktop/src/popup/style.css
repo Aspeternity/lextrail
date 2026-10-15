@@ -32,3 +32,20 @@ body {
   margin: 4px 0;
   color: #656d76;
 }
+
+.popup__title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.popup__sentence {
+  margin: 4px 0 8px;
+  line-height: 1.5;
+}
+
+.popup__source {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #8c959f;
+}

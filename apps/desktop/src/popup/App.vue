@@ -1,7 +1,39 @@
+<script setup lang="ts">
+import { listen } from '@tauri-apps/api/event';
+import { computed, onMounted, ref } from 'vue';
+import { CONTENT_EVENT, UNAVAILABLE_MESSAGES, type Content } from './content';
+
+const content = ref<Content>({ kind: 'empty' });
+
+const unavailable = computed(() =>
+  content.value.kind === 'unavailable' ? UNAVAILABLE_MESSAGES[content.value.reason] : null,
+);
+
+onMounted(() => {
+  void listen<Content>(CONTENT_EVENT, (event) => {
+    content.value = event.payload;
+  });
+});
+</script>
+
 <template>
   <main class="popup">
-    <header class="popup__header">LexTrail</header>
-    <p class="popup__hint">悬浮窗占位页面：取词与词典结果在 M1 接入。</p>
-    <p class="popup__hint">按 Esc 或点击窗口外部关闭。</p>
+    <template v-if="content.kind === 'loading'">
+      <p class="popup__hint">正在取词…</p>
+    </template>
+    <template v-else-if="content.kind === 'selection'">
+      <header class="popup__header">{{ content.text }}</header>
+      <p v-if="content.sentence" class="popup__sentence">{{ content.sentence }}</p>
+      <p class="popup__hint">词典结果稍后接入。</p>
+      <p v-if="content.source_app" class="popup__source">来自 {{ content.source_app }}</p>
+    </template>
+    <template v-else-if="unavailable">
+      <header class="popup__title">{{ unavailable.title }}</header>
+      <p v-if="unavailable.hint" class="popup__hint">{{ unavailable.hint }}</p>
+    </template>
+    <template v-else-if="content.kind === 'error'">
+      <header class="popup__title">取词出错</header>
+      <p class="popup__hint">{{ content.message }}</p>
+    </template>
   </main>
 </template>

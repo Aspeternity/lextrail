@@ -18,22 +18,19 @@ pub fn suspend<R: Runtime>(
     })
 }
 
-/// Resumes a suspended WebView, makes it visible again, then runs `then` (show the
-/// window) on the UI thread, so the page is live before the window appears.
+/// Resumes a suspended WebView and makes it visible again, then runs `then` on the UI
+/// thread, so the page is live before the window appears.
 #[cfg(windows)]
 pub fn resume_then<R: Runtime>(
     window: &WebviewWindow<R>,
-    then: fn(&WebviewWindow<R>) -> tauri::Result<()>,
+    then: impl FnOnce() + Send + 'static,
 ) -> tauri::Result<()> {
-    let target = window.clone();
     window.with_webview(move |webview| {
         // SAFETY: called on the UI thread that owns the WebView2 controller.
         if let Err(e) = unsafe { windows_impl::resume(&webview.controller()) } {
             eprintln!("Resume failed: {e}");
         }
-        if let Err(e) = then(&target) {
-            eprintln!("cannot show popup: {e}");
-        }
+        then();
     })
 }
 
@@ -49,10 +46,11 @@ pub fn suspend<R: Runtime>(
 
 #[cfg(not(windows))]
 pub fn resume_then<R: Runtime>(
-    window: &WebviewWindow<R>,
-    then: fn(&WebviewWindow<R>) -> tauri::Result<()>,
+    _window: &WebviewWindow<R>,
+    then: impl FnOnce() + Send + 'static,
 ) -> tauri::Result<()> {
-    then(window)
+    then();
+    Ok(())
 }
 
 #[cfg(windows)]

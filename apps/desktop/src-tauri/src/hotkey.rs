@@ -83,10 +83,9 @@ fn on_triggered<R: Runtime>(app: &AppHandle<R>, action: HotkeyAction) {
     #[cfg(debug_assertions)]
     eprintln!("hotkey triggered: {action:?}");
     match action {
-        // Text capture (M1) will run before the popup is shown.
         HotkeyAction::Lookup => {
-            if let Err(e) = crate::popup::show_at_cursor(app) {
-                eprintln!("cannot show popup: {e}");
+            if let Err(e) = crate::popup::lookup(app) {
+                eprintln!("cannot start lookup: {e}");
             }
         }
     }

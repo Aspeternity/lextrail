@@ -2002,7 +2002,11 @@ dependencies = [
 name = "lextrail-desktop"
 version = "0.0.0"
 dependencies = [
+ "lextrail-capture",
  "lextrail-config",
+ "lextrail-core",
+ "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
