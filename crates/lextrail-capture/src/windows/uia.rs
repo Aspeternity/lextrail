@@ -282,6 +282,9 @@ fn read_with_retry(automation: &IUIAutomation2, job: &Job, budget: Duration) -> 
     let mut output = read(automation, &job.target);
     while is_chromium(&job.target)
         && output.result == Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported))
+        // A note means "unsupported" was decided on purpose (e.g. a PDF), not a tree
+        // that is still being built.
+        && output.note.is_none()
         && Instant::now() + CHROMIUM_RETRY_INTERVAL < deadline
     {
         thread::sleep(CHROMIUM_RETRY_INTERVAL);
@@ -303,12 +306,14 @@ fn is_chromium(target: &CaptureTarget) -> bool {
 fn read(automation: &IUIAutomation2, target: &CaptureTarget) -> StepOutput {
     let process_id = target.window.as_ref().map_or(0, |w| w.process_id);
     let mut element = None;
-    let result =
-        read_selection(automation, target, process_id, &mut element).or_else(|e| classify(&e));
+    let mut note = None;
+    let result = read_selection(automation, target, process_id, &mut element, &mut note)
+        .or_else(|e| classify(&e));
     StepOutput {
         result,
         element,
         attempts: 1,
+        note,
     }
 }
 
@@ -319,6 +324,7 @@ fn read_selection(
     target: &CaptureTarget,
     process_id: u32,
     used: &mut Option<ElementSource>,
+    note: &mut Option<&'static str>,
 ) -> windows::core::Result<CaptureOutcome> {
     let p = &target.platform;
     // SAFETY: COM calls on an MTA thread with valid arguments.
@@ -346,9 +352,17 @@ fn read_selection(
     // text pattern (where "no selection" was decided).
     let mut found_pattern = false;
     for (source, element) in candidates {
-        let Some(pattern) = text_pattern(automation, element, process_id)? else {
+        let Some((holder, pattern)) = text_pattern(automation, element, process_id)? else {
             continue;
         };
+        if is_chromium(target) && in_chromium_pdf(automation, &holder) {
+            // Edge / Chrome's PDF viewer reports selection ranges shifted by a varying
+            // number of characters (and paragraphs that start mid-paragraph): its text
+            // would be wrong, which is worse than none. Leave PDFs to the other methods.
+            *used = Some(source);
+            *note = Some("chromium_pdf");
+            return Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported));
+        }
         if !found_pattern {
             *used = Some(source);
             found_pattern = true;
@@ -370,12 +384,13 @@ fn same_process(element: &IUIAutomationElement, process_id: u32) -> bool {
     unsafe { element.CurrentProcessId() }.is_ok_and(|p| p as u32 == process_id)
 }
 
-/// The text pattern of `element` or its nearest ancestor in the same process.
+/// The text pattern of `element` or its nearest ancestor in the same process, with the
+/// element that has it.
 fn text_pattern(
     automation: &IUIAutomation2,
     mut element: IUIAutomationElement,
     process_id: u32,
-) -> windows::core::Result<Option<IUIAutomationTextPattern>> {
+) -> windows::core::Result<Option<(IUIAutomationElement, IUIAutomationTextPattern)>> {
     // SAFETY: COM calls on an MTA thread with valid arguments.
     unsafe {
         let walker = automation.ControlViewWalker()?;
@@ -383,7 +398,7 @@ fn text_pattern(
             if let Ok(pattern) =
                 element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
             {
-                return Ok(Some(pattern));
+                return Ok(Some((element, pattern)));
             }
             match walker.GetParentElement(&element) {
                 Ok(parent) if same_process(&parent, process_id) => element = parent,
@@ -392,6 +407,37 @@ fn text_pattern(
         }
     }
     Ok(None)
+}
+
+/// Whether `element` is inside the PDF viewer of a Chromium browser. Its document root
+/// (`RootWebArea`) is named "PDF Document" (not localised), and the page around it is
+/// named after the `.pdf` file.
+fn in_chromium_pdf(automation: &IUIAutomation2, element: &IUIAutomationElement) -> bool {
+    // SAFETY: COM calls on an MTA thread with valid arguments.
+    unsafe {
+        let Ok(walker) = automation.ControlViewWalker() else {
+            return false;
+        };
+        let mut node = Some(element.clone());
+        for _ in 0..4 {
+            let Some(e) = node else { break };
+            let id = e
+                .CurrentAutomationId()
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            let name = e.CurrentName().map(|s| s.to_string()).unwrap_or_default();
+            if is_pdf_root(&id, &name) {
+                return true;
+            }
+            node = walker.GetParentElement(&e).ok();
+        }
+    }
+    false
+}
+
+fn is_pdf_root(automation_id: &str, name: &str) -> bool {
+    automation_id == "RootWebArea"
+        && (name == "PDF Document" || name.to_ascii_lowercase().ends_with(".pdf"))
 }
 
 fn selection_of(pattern: &IUIAutomationTextPattern) -> windows::core::Result<Option<Selection>> {
@@ -532,5 +578,18 @@ mod tests {
         assert!(!is_chromium(&with_class(Some("Notepad"))));
         assert!(!is_chromium(&with_class(None)));
         assert!(!is_chromium(&CaptureTarget::for_tests(None)));
+    }
+
+    #[test]
+    fn chromium_pdf_roots_are_recognised() {
+        assert!(is_pdf_root("RootWebArea", "PDF Document"));
+        assert!(is_pdf_root("RootWebArea", "1706.03762v7.pdf"));
+        assert!(is_pdf_root("RootWebArea", "Report.PDF"));
+        assert!(!is_pdf_root(
+            "RootWebArea",
+            "Attention Is All You Need - Wikipedia"
+        ));
+        assert!(!is_pdf_root("RootWebArea", ""));
+        assert!(!is_pdf_root("", "PDF Document"));
     }
 }

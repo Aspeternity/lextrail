@@ -497,4 +497,22 @@ mod tests {
         let p = "The answer is 42. Next item here.";
         assert_eq!(sentence_around(p, "item", None), Some("Next item here."));
     }
+
+    #[test]
+    fn hint_whose_text_differs_from_the_selection_is_ignored() {
+        // As reported by Edge's PDF viewer: the offset points 3 characters too far, at
+        // "ween di", while the selection is "between".
+        let p = "This makes it more difficult to learn dependencies between distant \
+                 positions [12]. In the Transformer this is reduced.";
+        let real = p.find("between").unwrap();
+        let shifted = real + 3..real + 3 + "between".len();
+        assert_eq!(&p[shifted.clone()], "ween di");
+        assert_eq!(
+            sentence_around(p, "between", Some(shifted)),
+            Some(
+                "This makes it more difficult to learn dependencies between distant \
+                 positions [12]."
+            )
+        );
+    }
 }

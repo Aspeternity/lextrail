@@ -95,6 +95,7 @@ impl Pipeline {
                 elapsed: start.elapsed(),
                 element: output.element,
                 attempts: output.attempts,
+                note: output.note,
             });
             match output.result {
                 Ok(CaptureOutcome::Captured(selection)) => {
@@ -158,6 +159,7 @@ mod tests {
                 result: self.result.clone(),
                 element: Some(ElementSource::HwndFocus),
                 attempts: 1,
+                note: None,
             }
         }
     }

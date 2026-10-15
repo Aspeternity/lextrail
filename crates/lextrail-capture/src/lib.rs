@@ -241,6 +241,8 @@ pub struct StepOutput {
     pub element: Option<ElementSource>,
     /// How many times the step tried (more than 1 when it retried within its budget).
     pub attempts: u32,
+    /// Why the step decided as it did, when that is not obvious (e.g. `chromium_pdf`).
+    pub note: Option<&'static str>,
 }
 
 impl From<Result<CaptureOutcome, CaptureError>> for StepOutput {
@@ -249,6 +251,7 @@ impl From<Result<CaptureOutcome, CaptureError>> for StepOutput {
             result,
             element: None,
             attempts: 1,
+            note: None,
         }
     }
 }
@@ -269,6 +272,7 @@ pub struct StepTrace {
     pub elapsed: Duration,
     pub element: Option<ElementSource>,
     pub attempts: u32,
+    pub note: Option<&'static str>,
 }
 
 /// A short, text-free label for a capture result: `captured`, `no_selection`, ..., `error`.
@@ -307,6 +311,9 @@ impl fmt::Display for CaptureTrace {
             }
             if let Some(element) = step.element {
                 write!(f, " ({})", element.label())?;
+            }
+            if let Some(note) = step.note {
+                write!(f, " [{note}]")?;
             }
             f.write_str("; ")?;
         }
