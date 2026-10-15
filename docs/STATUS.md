@@ -25,9 +25,14 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
 - **句子带列表符号**：`sentence_around` 去掉开头的 •、-、*、1.、(2)、a)、一、、① 等；行首的 "1." 不再被当作句末。
 - 顺带修了悬浮窗中间多出一条横线（`#app` 没有高度）。
 
+手动测试第 1 节（浏览器）通过（Firefox 未安装）。第 2 节（Edge 内置 PDF）发现并处理（2026-10-16）：
+- **选中文字错位**：用 `examples/uia_dump.rs` 打印原始数据确认，是 **Edge 的 PDF 阅读器本身**报告的选区范围错位（选区 range 的 `GetText()` 就是错的，如 "between" → "ween di"），不是 LexTrail 用偏移截取文字；报告的"段落"也会从段落中间开始（句子缺开头同一原因）。无法判断哪次可信，所以检测到 Chromium PDF 时 UIA 返回 `unsupported [chromium_pdf]`，等剪贴板兜底接手。补了"偏移与文字不一致"的单元测试（原有逻辑已会退回按文字查找）。
+- **刚打开 PDF 时 no_selection**：PDF 现在一律不走 UIA。评估后**不在 no_selection 时重试**（实测重试拿不到早于无障碍树的选区，只会耗尽预算），留到剪贴板兜底时决定是否用剪贴板确认（已加入 ROADMAP）。
+- 句子开头的省略号、过长上下文的截取：已加入 ROADMAP（低优先级）。
+
 代码现状（详见各文件）：
-- `crates/lextrail-core`：`text::sentence_around`（从段落切出选中文字所在的句子；处理缩写、小数、省略号、引号、中文标点、硬换行、开头的列表符号；位置提示无效时退回按文字查找）；`Hlc`（定宽小写文本、严格解析、按字符串比较即为先后）+ `HlcClock`（本地 `now`、收到远端 `receive`、计数器溢出借 1 ms、`restore` 回滚）+ 可注入的 `Clock`（`SystemClock` / 测试用 `ManualClock`）；`lookup` 模块：`LookupKind`、`CaptureMethod`、文本规范化（合并空白、最多 2000 字符）、30 秒去重判定。42 个测试
-- `crates/lextrail-capture`（D041）：`TextCapture`（`snapshot` / `capture` / `capture_context`）、`CaptureOutcome` / `Unavailable`（取不到）与 `CaptureError`（出错，平台无关）；`Pipeline` 按顺序尝试各步骤（与平台无关，有测试）；`WindowsCapture`：`snapshot` 只做 Win32 调用（前台窗口、进程名、类名、标题、权限级别、`GetGUIThreadInfo` 的 hwndFocus / hwndCaret），UIA 在专用 MTA 线程上（预算 180 ms、卡死 5 秒放弃重建、最多 2 个被放弃的线程）；`capture_context` 目前返回 `None`（连按两次 Ctrl+C 时实现）；Chromium 窗口在预算内重试。19 个测试；`examples/capture_probe.rs` 用于手动测试真实窗口。`capture_traced` 返回 `CaptureTrace`（每一步的方式、结果、耗时、焦点元素来源，不含文字）；debug 构建每次取词打印一行，如 `capture #2: captured | uia=captured 3.1ms (uia_focus); total 3.1ms`
+- `crates/lextrail-core`：`text::sentence_around`（从段落切出选中文字所在的句子；处理缩写、小数、省略号、引号、中文标点、硬换行、开头的列表符号；位置提示无效时退回按文字查找）；`Hlc`（定宽小写文本、严格解析、按字符串比较即为先后）+ `HlcClock`（本地 `now`、收到远端 `receive`、计数器溢出借 1 ms、`restore` 回滚）+ 可注入的 `Clock`（`SystemClock` / 测试用 `ManualClock`）；`lookup` 模块：`LookupKind`、`CaptureMethod`、文本规范化（合并空白、最多 2000 字符）、30 秒去重判定。43 个测试
+- `crates/lextrail-capture`（D041）：`TextCapture`（`snapshot` / `capture` / `capture_context`）、`CaptureOutcome` / `Unavailable`（取不到）与 `CaptureError`（出错，平台无关）；`Pipeline` 按顺序尝试各步骤（与平台无关，有测试）；`WindowsCapture`：`snapshot` 只做 Win32 调用（前台窗口、进程名、类名、标题、权限级别、`GetGUIThreadInfo` 的 hwndFocus / hwndCaret），UIA 在专用 MTA 线程上（预算 180 ms、卡死 5 秒放弃重建、最多 2 个被放弃的线程）；`capture_context` 目前返回 `None`（连按两次 Ctrl+C 时实现）；Chromium 窗口在预算内重试，Chromium PDF 不走 UIA。20 个测试；`examples/capture_probe.rs` 用于手动测试真实窗口。`capture_traced` 返回 `CaptureTrace`（每一步的方式、结果、耗时、焦点元素来源，不含文字）；debug 构建每次取词打印一行，如 `capture #2: captured | uia=captured 3.1ms (uia_focus); total 3.1ms`
 - `crates/lextrail-store`（D037、D040）：`Store::open_in_dir`（创建目录、`lextrail.db`）/ `open_in_memory_with_clock`；`user_version` 迁移（`src/migrations/0001_init.sql`：`meta`、`lookups`，STRICT 表）；版本更高时拒绝打开且不改文件；WAL、`synchronous=NORMAL`、`foreign_keys`、`busy_timeout` 5 秒；`meta` 存 `device_id`（UUIDv7）和最近一次 HLC，与数据写入同一事务；`record_lookup`（规范化、去重、空查询忽略）、`delete_lookup`（软删除）、`lookup`、`recent_lookups`。20 个测试。**桌面端尚未接入**
 - `crates/lextrail-config`（D035）：`Settings`（`version`、`hotkeys.lookup`、`popup.mode`）+ `SettingsFile`（TOML、原子写入、损坏时备份为 `.corrupt` 并恢复默认、更新版本写的文件不覆盖）+ `SecretStore` 适配器（`WindowsCredentialStore` / `MemorySecretStore`）。17 个测试，其中 1 个真实读写 Windows 凭据管理器（用临时 key，测完删除）
 - `apps/desktop/src-tauri`：
@@ -71,7 +76,7 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
 
 ## 下一步
 
-1. **项目负责人正在**按 `docs/specs/m1-capture-manual-tests.md` 手动测试五类软件，修复上述问题后从 1.1 重新开始（debug 版看日志，release 版看最终效果，构建命令在清单第 0 节），测完会把填好的清单发回来；之后根据结果修正取词问题。
+1. **项目负责人正在**按 `docs/specs/m1-capture-manual-tests.md` 手动测试五类软件，从第 2 节重新开始（Edge PDF 现在应显示"这个窗口暂时无法取词"），然后第 3 节 Word（debug 版看日志，release 版看最终效果，构建命令在清单第 0 节），测完会把填好的清单发回来；之后根据结果修正取词问题。
 2. 剪贴板兜底（D011）：完成后在 `WindowsCapture` 的 `Pipeline` 中加在 UIA 之后，并验证取词完成后悬浮窗仍能获得焦点（清单 6.10）。
 3. 然后做连按两次 Ctrl+C（实现 `capture_context`）、dict-builder（D038）、词典等任务。
 4. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。
