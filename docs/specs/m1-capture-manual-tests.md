@@ -6,7 +6,27 @@
 
 ## 0. 准备
 
-- 用 `pnpm --filter @lextrail/desktop tauri build --debug --no-bundle` 构建带日志的版本，在终端里运行 `target\debug\lextrail-desktop.exe`，日志中可以看到 `capture #N: ...` 和 `request: ...`。
+- 测试前先退出正在运行的 LexTrail（托盘菜单"退出"），否则单实例会让新启动的程序直接退出。
+- **debug 版**（带日志，手动测试用这个）：
+
+  ```bash
+  pnpm --filter @lextrail/desktop tauri build --debug --no-bundle
+  ```
+
+  生成 `target\debug\lextrail-desktop.exe`。在终端里运行它，控制台会打印日志。每次取词打印一行（不含取到的文字）：
+
+  ```text
+  capture #2: captured | uia=captured 3.1ms (uia_focus); total 3.1ms
+  ```
+
+  依次是：结果类型（`captured` / `no_selection` / `elevated` / `no_foreground_window` / `unsupported` / `timed_out` / `error`）、每一步的取词方式、结果和耗时、焦点元素来源（`uia_focus` = UIA 焦点元素，`hwnd_focus` / `hwnd_caret` = `GetGUIThreadInfo` 的焦点 / 光标窗口，`foreground_window` = 前台窗口），最后是总耗时。前置检查直接决定结果时显示为 `precheck=elevated; total 0.0ms`。另外还有 `request: ...`（悬浮窗显示与焦点）和 `popup: ...`（窗口生命周期）两类日志。
+- **release 版**（与发布一致，测性能、看最终效果用这个；没有控制台日志）：
+
+  ```bash
+  pnpm --filter @lextrail/desktop tauri build --no-bundle
+  ```
+
+  生成 `target\release\lextrail-desktop.exe`。注意不要用 `cargo build --release`，那样得到的程序会去加载开发服务器的页面。
 - 只测某个窗口能不能取到词时，可以用探针，不必启动整个应用：
 
   ```bash

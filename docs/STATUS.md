@@ -20,7 +20,7 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
 
 代码现状（详见各文件）：
 - `crates/lextrail-core`：`text::sentence_around`（从段落切出选中文字所在的句子；处理缩写、小数、省略号、引号、中文标点、硬换行；位置提示无效时退回按文字查找）；`Hlc`（定宽小写文本、严格解析、按字符串比较即为先后）+ `HlcClock`（本地 `now`、收到远端 `receive`、计数器溢出借 1 ms、`restore` 回滚）+ 可注入的 `Clock`（`SystemClock` / 测试用 `ManualClock`）；`lookup` 模块：`LookupKind`、`CaptureMethod`、文本规范化（合并空白、最多 2000 字符）、30 秒去重判定。37 个测试
-- `crates/lextrail-capture`（D041）：`TextCapture`（`snapshot` / `capture` / `capture_context`）、`CaptureOutcome` / `Unavailable`（取不到）与 `CaptureError`（出错，平台无关）；`Pipeline` 按顺序尝试各步骤（与平台无关，有测试）；`WindowsCapture`：`snapshot` 只做 Win32 调用（前台窗口、进程名、类名、标题、权限级别、`GetGUIThreadInfo` 的 hwndFocus / hwndCaret），UIA 在专用 MTA 线程上（预算 180 ms、卡死 5 秒放弃重建、最多 2 个被放弃的线程）；`capture_context` 目前返回 `None`（连按两次 Ctrl+C 时实现）。16 个测试；`examples/capture_probe.rs` 用于手动测试真实窗口
+- `crates/lextrail-capture`（D041）：`TextCapture`（`snapshot` / `capture` / `capture_context`）、`CaptureOutcome` / `Unavailable`（取不到）与 `CaptureError`（出错，平台无关）；`Pipeline` 按顺序尝试各步骤（与平台无关，有测试）；`WindowsCapture`：`snapshot` 只做 Win32 调用（前台窗口、进程名、类名、标题、权限级别、`GetGUIThreadInfo` 的 hwndFocus / hwndCaret），UIA 在专用 MTA 线程上（预算 180 ms、卡死 5 秒放弃重建、最多 2 个被放弃的线程）；`capture_context` 目前返回 `None`（连按两次 Ctrl+C 时实现）。18 个测试；`examples/capture_probe.rs` 用于手动测试真实窗口。`capture_traced` 返回 `CaptureTrace`（每一步的方式、结果、耗时、焦点元素来源，不含文字）；debug 构建每次取词打印一行，如 `capture #2: captured | uia=captured 3.1ms (uia_focus); total 3.1ms`
 - `crates/lextrail-store`（D037、D040）：`Store::open_in_dir`（创建目录、`lextrail.db`）/ `open_in_memory_with_clock`；`user_version` 迁移（`src/migrations/0001_init.sql`：`meta`、`lookups`，STRICT 表）；版本更高时拒绝打开且不改文件；WAL、`synchronous=NORMAL`、`foreign_keys`、`busy_timeout` 5 秒；`meta` 存 `device_id`（UUIDv7）和最近一次 HLC，与数据写入同一事务；`record_lookup`（规范化、去重、空查询忽略）、`delete_lookup`（软删除）、`lookup`、`recent_lookups`。20 个测试。**桌面端尚未接入**
 - `crates/lextrail-config`（D035）：`Settings`（`version`、`hotkeys.lookup`、`popup.mode`）+ `SettingsFile`（TOML、原子写入、损坏时备份为 `.corrupt` 并恢复默认、更新版本写的文件不覆盖）+ `SecretStore` 适配器（`WindowsCredentialStore` / `MemorySecretStore`）。17 个测试，其中 1 个真实读写 Windows 凭据管理器（用临时 key，测完删除）
 - `apps/desktop/src-tauri`：
@@ -43,7 +43,7 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
     - 尺寸暂定 380×260 逻辑像素，只有浅色主题；页面显示取到的文字、所在句子和来源软件，或"没有选中文字""无法读取以管理员身份运行的程序"等提示（词典结果待接入）
   - 提示框统一走 `notice::warn`（`tauri-plugin-dialog`，不加载 WebView）
 - `apps/desktop/src`：Vite + Vue，`popup/`、`main/` 两个入口。悬浮窗页面监听 `popup:content` 事件显示内容（`popup/content.ts` 与 Rust 端的 `Content` 对应），Esc 关闭；前端还没有测试框架；主窗口页面还是占位内容
-- `tools/bench`（`lextrail-bench`）：性能测试工具，`quick` 约 6 分钟，`long --wait-mins N` 测挂起 N 分钟后恢复；运行时会模拟按键、移动鼠标。报告和方法见 `docs/specs/m0-benchmark.md`
+- `tools/bench`（`lextrail-bench`）：性能测试工具，`quick` 约 6 分钟，`long --wait-mins N` 测挂起 N 分钟后恢复；运行时会模拟按键、移动鼠标。启动应用时设置 `LEXTRAIL_BENCH_TIMINGS`，应用把每次查词的分项时间（只有数字）写进该文件，bench 据此分开报告取词耗时和窗口显示耗时。报告和方法见 `docs/specs/m0-benchmark.md`
 - CI（`.github/workflows/ci.yml`）：ubuntu 跑格式、ESLint、类型检查；Windows 跑 clippy、测试，并用 `tauri build --no-bundle` 做 release 构建
 
 正式性能测试结果（`docs/specs/m0-benchmark.md`，口径见 D036）：托盘 1.6 MiB；挂起 15 秒 82.8 MiB、2 小时后 13.0 MiB；冷启动显示 288 ms；挂起后恢复 11.7 ms，挂起 2 小时后恢复 44.7 ms；空闲 CPU ≈ 0。全部达标，但刚挂起时距离 100 MB 只剩约 17 MB，后续里程碑都要重测。
@@ -63,7 +63,7 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
 
 ## 下一步
 
-1. 按 `docs/specs/m1-capture-manual-tests.md` 在浏览器、PDF 阅读器、Word、VS Code、终端中手动测试 UIA 取词并记录结果（需要项目负责人在本机操作，或指定时间由 AI 驱动）。
+1. **项目负责人正在**按 `docs/specs/m1-capture-manual-tests.md` 手动测试五类软件（debug 版看日志，release 版看最终效果，构建命令在清单第 0 节），测完会把填好的清单发回来；之后根据结果修正取词问题。
 2. 剪贴板兜底（D011）：完成后在 `WindowsCapture` 的 `Pipeline` 中加在 UIA 之后，并验证取词完成后悬浮窗仍能获得焦点（清单 6.10）。
 3. 然后做连按两次 Ctrl+C（实现 `capture_context`）、dict-builder（D038）、词典等任务。
 4. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。
@@ -72,7 +72,7 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
 ## 遇到的问题 / 需要项目负责人决定
 
 - 无需要现在决定的事项。服务端许可证写法和 `apps/server` 是否加入 Cargo workspace 推迟到 M4（见 `DECISIONS.md` 待确认事项）。
-- 需要关注：接入 UIA 取词后重测（`m0-benchmark.md` 第 7 节），冷启动中位数 351 ms、p90 381 ms，离 400 ms 预算只剩约 50 ms（M0 为 288 ms）；挂起内存 83.3 MiB、恢复 20.2 ms 仍达标。接入词典结果后要再测，必要时分析冷启动中取词和页面加载各占多少。
+- 需要关注：冷启动两次重测分别为 351 ms 和 281 ms（预算 400 ms），波动较大。分项计时（`m0-benchmark.md` 7.1）显示冷启动几乎全部是窗口创建和页面加载（约 274 ms），取词约 13 ms 且与之并行；热显示和挂起后恢复的显示时间由取词决定（7–11 ms）。接入词典结果后要再测，看趋势时多测几次。
 - 低优先级问题：冷启动后 0–100 ms 内按 Esc 可能无效（WebView 稍晚拿到键盘焦点），见报告 4.5 节。
 
 已知情况（不需要处理）：
