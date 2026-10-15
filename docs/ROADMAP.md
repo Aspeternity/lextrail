@@ -31,11 +31,14 @@
 
 ## M1 · 取词与词典（可以离线查单词）
 
+- [ ] 评审数据模型公共部分：同步元数据字段、HLC 时间戳格式、`lookups` 表（D039）（新增）
+- [ ] 创建 `lextrail-store`：本地 SQLite、迁移机制（D037）（新增）
 - [ ] `lextrail-capture` 统一接口 + Windows 实现：UI Automation 取词（含上下文）
 - [ ] 剪贴板兜底：修饰键等待、序列号确认、恢复原内容、终端使用 Ctrl+Insert
 - [ ] 连按两次 Ctrl+C（默认关闭）：剪贴板变化监听、50–500 ms 判定、UIA 补充上下文
 - [ ] 来源软件识别（进程名 / 窗口标题）
 - [ ] `tools/dict-builder`：ECDICT → 精简版 SQLite；义项拆分；索引
+- [ ] `dict-builder` 下载固定版本 ECDICT 并校验 SHA-256；CI 缓存下载与生成结果（D038）（新增）
 - [ ] `lextrail-dict`：查询、词形还原、单词 / 短语 / 句子分类
 - [ ] 悬浮窗显示词典结果：音标、词性、释义、考试标签
 - [ ] 快捷键设置界面与冲突提示；整理常用软件快捷键清单，确定默认快捷键（D014）
@@ -90,6 +93,7 @@
 
 ## M4 · 同步与手机端
 
+- [ ] 决定服务端许可证写法（AGPL-3.0-only / or-later）及 `apps/server` 是否加入 Cargo workspace（新增）
 - [ ] op-log：本地 `outbox`、op 生成、幂等应用、合并规则
 - [ ] `apps/server`：多用户架构、Token 认证、`/api/v1` 接口、SQLite
 - [ ] 自建版默认单账号；初始化管理员账号的方式

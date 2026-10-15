@@ -4,13 +4,13 @@
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
 **最后更新**：2026-10-15
-**当前阶段**：M0 · 项目骨架与性能原型（10 / 10 项已完成，只剩评审 `ARCHITECTURE.md` 初稿部分）
+**当前阶段**：M0 已完成；下一个里程碑是 M1 · 取词与词典（尚未开始）
 
 ---
 
 ## 当前状态
 
-M0 的十项任务全部完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷键、设置读写、悬浮窗、悬浮窗生命周期、主窗口骨架、**性能测试（路线 A 已确认，D036）**。
+M0 的十项任务全部完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷键、设置读写、悬浮窗、悬浮窗生命周期、主窗口骨架、**性能测试（路线 A 已确认，D036）**。M0 收尾时评审了 `ARCHITECTURE.md` 第 3 节（仓库结构），已对照实际代码更新，并新增决定 D037（本地数据库放在 `lextrail-store`）、D038（dict-builder 用 Rust，词典数据不进仓库，构建时下载固定版本并校验哈希）、D039（M1 开始时先评审数据模型公共部分，倾向 HLC）。
 
 代码现状（详见各文件）：
 - `crates/lextrail-config`（D035）：`Settings`（`version`、`hotkeys.lookup`、`popup.mode`）+ `SettingsFile`（TOML、原子写入、损坏时备份为 `.corrupt` 并恢复默认、更新版本写的文件不覆盖）+ `SecretStore` 适配器（`WindowsCredentialStore` / `MemorySecretStore`）。17 个测试，其中 1 个真实读写 Windows 凭据管理器（用临时 key，测完删除）
@@ -53,12 +53,13 @@ M0 的十项任务全部完成：monorepo、代码规范、CI、Tauri 托盘骨�
 
 ## 下一步
 
-1. M0 完成前评审 `ARCHITECTURE.md` 中标注为〔初稿〕的仓库结构部分（第 3 节已加入 `lextrail-config`；`tools/bench` 已按初稿实现）。
-2. 之后进入 M1。M1、M2、M3、M6 都有"重测性能预算"任务（新增），结果追加到 `docs/specs/m0-benchmark.md` 第 7 节。
+1. 进入 M1。第一步按 D039 评审 `ARCHITECTURE.md` 第 6 节的公共部分：同步元数据字段、HLC 时间戳格式、`lookups`（查询历史）表，评审结果写回第 6 节和 `DECISIONS.md`。
+2. 然后创建 `lextrail-store`（D037），再按 `ROADMAP.md` 做取词、dict-builder（D038）、词典等任务。
+3. M1、M2、M3、M6 都有"重测性能预算"任务，结果追加到 `docs/specs/m0-benchmark.md` 第 7 节。
 
 ## 遇到的问题 / 需要项目负责人决定
 
-- 无待决定事项。
+- 无需要现在决定的事项。服务端许可证写法和 `apps/server` 是否加入 Cargo workspace 推迟到 M4（见 `DECISIONS.md` 待确认事项）。
 - 低优先级问题：冷启动后 0–100 ms 内按 Esc 可能无效（WebView 稍晚拿到键盘焦点），见报告 4.5 节。
 
 已知情况（不需要处理）：

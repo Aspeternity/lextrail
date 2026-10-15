@@ -63,7 +63,7 @@ LexTrail 是一款常驻后台的桌面翻译与词汇学习工具：
 
 ## 3. 仓库结构
 
-单一仓库（monorepo）：Rust 部分是一个 Cargo workspace（根 `Cargo.toml`，成员为 `crates/*`、`apps/desktop/src-tauri`、`tools/bench`），前端部分是一个 pnpm workspace（`pnpm-workspace.yaml`，成员为 `apps/desktop`、`apps/pwa`、`packages/*`）。M0 评审时已对照实际代码更新（2026-10-15）；标注"占位"的目录目前只有 README 或空的 `lib.rs`，在对应里程碑实现。
+单一仓库（monorepo）：Rust 部分是一个 Cargo workspace（根 `Cargo.toml`，成员为 `crates/*`、`apps/desktop/src-tauri`、`tools/bench`），前端部分是一个 pnpm workspace（`pnpm-workspace.yaml`，成员为 `apps/desktop`、`apps/pwa`、`packages/*`）。`tools/dict-builder` 在 M1 加入 Cargo workspace；`apps/server` 是否加入在 M4 决定。M0 评审时已对照实际代码更新（2026-10-15）；标注"占位"的目录目前只有 README 或空的 `lib.rs`，在对应里程碑实现。
 
 ```
 lextrail/
@@ -81,6 +81,7 @@ lextrail/
 │   ├── lextrail-dict/        词典访问、词形还原、义项拆分（占位，M1）
 │   ├── lextrail-ai/          AI 适配器、提示词模板、分段标记流式解析（占位，M2）
 │   ├── lextrail-capture/     取词层（占位，M1；计划按平台分 windows.rs，以后加 macos.rs）
+│   ├── lextrail-store/       桌面端本地 SQLite 读写与迁移（M1 创建，D037；core 不依赖 SQLite）
 │   └── lextrail-config/      本地设置（TOML）与密钥存储（系统凭据管理器）（D035）
 ├── apps/
 │   ├── desktop/              Tauri 应用（npm 包 @lextrail/desktop）
@@ -95,7 +96,7 @@ lextrail/
 ├── packages/
 │   └── ui/                   桌面端主窗口与 PWA 共用的 Vue 组件（复习卡片等）（占位，M3）
 ├── tools/
-│   ├── dict-builder/         ECDICT 预处理：生成精简词典、拆分义项（占位，M1）
+│   ├── dict-builder/         ECDICT 预处理：生成精简词典、拆分义项（占位，M1；Rust，crate lextrail-dict-builder，D038）
 │   └── bench/                性能测试工具（crate lextrail-bench，仅 Windows），见 docs/specs/m0-benchmark.md
 └── docs/
     ├── STATUS.md             进度交接单
@@ -110,7 +111,9 @@ lextrail/
 - npm 包一律用 `@lextrail/<模块>` 作用域（如 `@lextrail/desktop`）；根 `package.json` 名为 `lextrail-monorepo`，`private`，不发布；
 - 所有包目前都不发布（`publish = false` / `private`）。
 
-**许可证**：workspace 默认 `license = "MIT"`；`apps/server` 使用 AGPL-3.0，带独立的 `LICENSE` 文件（D026）。
+**许可证**：workspace 默认 `license = "MIT"`；`apps/server` 使用 AGPL-3.0，带独立的 `LICENSE` 文件（D026）。具体写法（only / or-later）在 M4 决定。
+
+**词典数据**（D038）：ECDICT 原始数据和生成的词典不提交到仓库；构建时由 `dict-builder` 下载固定版本并校验 SHA-256，CI 缓存。
 
 ---
 
@@ -165,7 +168,7 @@ pub trait TextCapture {
 ### 5.2 词典（lextrail-dict，D015、D019、D021）
 
 - 数据源：ECDICT（MIT）。
-- `tools/dict-builder` 负责预处理：
+- `tools/dict-builder`（Rust，D038）负责预处理；构建时下载固定版本的 ECDICT 并校验哈希，数据不提交到仓库：
   - 生成**精简版**核心词典（约十几万词条，只保留需要的字段），打包进安装包；
   - 把中文释义拆分为独立义项（注意：逗号分隔的近义说法属于同一义项）；
   - 建立索引，查询时按需从磁盘读取，不整体载入内存。
@@ -211,6 +214,8 @@ pub trait AiProvider {
 ---
 
 ## 6. 数据模型 〔初稿〕
+
+> 评审安排（D039）：同步元数据公共字段、时间戳格式（倾向 HLC）和 `lookups` 表在 M1 开始时评审；其余表在 M3 评审。本地 SQLite 的读写与迁移在 `lextrail-store`（D037），`lextrail-core` 不依赖 SQLite。
 
 所有可同步的表都带有同步元数据（D024）：
 
