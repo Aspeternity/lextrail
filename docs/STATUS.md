@@ -4,13 +4,13 @@
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
 **最后更新**：2026-10-15
-**当前阶段**：M0 · 项目骨架与性能原型（已完成 8 / 10 项）
+**当前阶段**：M0 · 项目骨架与性能原型（已完成 9 / 10 项，只剩第九项"主窗口骨架"）
 
 ---
 
 ## 当前状态
 
-M0 已完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷键、设置读写、悬浮窗、悬浮窗生命周期。
+M0 已完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷键、设置读写、悬浮窗、悬浮窗生命周期、**性能测试（路线 A 已确认，D036）**。第十项经项目负责人同意先于第九项完成。
 
 代码现状（详见各文件）：
 - `crates/lextrail-config`（D035）：`Settings`（`version`、`hotkeys.lookup`、`popup.mode`）+ `SettingsFile`（TOML、原子写入、损坏时备份为 `.corrupt` 并恢复默认、更新版本写的文件不覆盖）+ `SecretStore` 适配器（`WindowsCredentialStore` / `MemorySecretStore`）。17 个测试，其中 1 个真实读写 Windows 凭据管理器（用临时 key，测完删除）
@@ -32,14 +32,11 @@ M0 已完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷�
     - 尺寸暂定 380×260 逻辑像素，只有浅色主题，页面是占位内容
   - 提示框统一走 `notice::warn`（`tauri-plugin-dialog`，不加载 WebView）
 - `apps/desktop/src`：Vite + Vue，`popup/`、`main/` 两个入口。悬浮窗页面只有 Esc 处理和占位内容（JS 0.6 kB + CSS 0.5 kB，Vue 运行时在公共 chunk 里）；主窗口还是占位页面
+- `tools/bench`（`lextrail-bench`）：性能测试工具，`quick` 约 6 分钟，`long --wait-mins N` 测挂起 N 分钟后恢复；运行时会模拟按键、移动鼠标。报告和方法见 `docs/specs/m0-benchmark.md`
 - CI（`.github/workflows/ci.yml`）：ubuntu 跑格式、ESLint、类型检查；Windows 跑 clippy、测试，并用 `tauri build --no-bundle` 做 release 构建
 
-本机实测（`tauri build` 的 release 版，粗测，不是正式性能报告；4K 屏 150% 缩放）：
-- 只有托盘时：无可见窗口、无子进程，工作集约 13 MB，空闲 CPU ≈ 0
-- 悬浮窗冷启动（第一次按快捷键到显示）约 300 ms；隐藏不到 5 秒再显示约 15–35 ms；**挂起后恢复显示约 20–30 ms**；Esc / 点击外部后约 10–25 ms 隐藏
-- "内存优先"模式：隐藏后 0.5 秒内 WebView2 进程全部退出；每次显示都是冷启动，约 270–290 ms
-- ⚠️ **内存提前预警**：悬浮窗创建后 WebView2 进程树有 6 个进程，私有内存约 150 MB（工作集相加约 290–320 MB，有重复计算），**挂起后没有明显下降**。性能预算是"挂起时总内存 < 100 MB"。这是粗测，统计方法还要在性能测试任务里定清楚，但很可能不达标，到时要按 D008 决定是否切换路线 B
-- 低内存通知路径没法在本机真实触发：它和"内存优先"共用同一个销毁动作（已实测），状态转换有单元测试覆盖
+正式性能测试结果（`docs/specs/m0-benchmark.md`，口径见 D036）：托盘 1.6 MiB；挂起 15 秒 82.8 MiB、2 小时后 13.0 MiB；冷启动显示 288 ms；挂起后恢复 11.7 ms，挂起 2 小时后恢复 44.7 ms；空闲 CPU ≈ 0。全部达标，但刚挂起时距离 100 MB 只剩约 17 MB，后续里程碑都要重测。
+"内存优先"模式：隐藏后 0.5 秒内 WebView2 进程全部退出，每次显示都是冷启动（约 270–290 ms）。
 以上功能都在本机手动验证过；托盘图标已由项目负责人目测确认。
 
 常用命令：
@@ -47,23 +44,21 @@ M0 已完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷�
 - `pnpm --filter @lextrail/desktop tauri dev`：开发运行桌面端
 - `pnpm --filter @lextrail/desktop tauri build --no-bundle`：构建真正的 release 版。**注意**：直接 `cargo build --release` 得到的仍是开发模式（加载 `devUrl` http://localhost:1420），手动测试和性能测试都必须用 `tauri build`
 - `cargo audit`：依赖漏洞检查（本机已装 cargo-audit）
+- `cargo run -p lextrail-bench --release -- quick`：性能测试（先用 `tauri build` 构建；运行时不要操作电脑）
 
 ## 正在进行
 
-- **M0 第十项：性能测试**（经项目负责人同意，先于第九项"主窗口骨架"进行，因为结果会影响路线 A / B 的选择）。分支 `feat/m0-benchmark`：
-  - 已完成：测试工具 `tools/bench`（`lextrail-bench`，Rust，12 个测试）；快速测试已跑完；报告草稿 `docs/specs/m0-benchmark.md`
-  - 进行中：挂起 2 小时后恢复的长时间测试（`lextrail-bench long --wait-mins 120`，2026-10-15 开始）
-  - 待办：把长时间测试结果填进报告；请项目负责人确定内存预算的统计口径，然后在 DECISIONS 中记录路线 A / B 的结论；合并到 `main`
+- 无。
 
 ## 下一步
 
-1. 完成第十项（见"正在进行"）。
-2. M0 第九项：主窗口骨架（关闭时销毁）。托盘菜单加"打开主窗口"，单实例回调唤起主窗口；考虑托盘图标左键直接打开主窗口。注意 D010：悬浮窗和主窗口共用同一个 WebView2 环境。
-3. M0 期间评审 `ARCHITECTURE.md` 中标注为〔初稿〕的仓库结构部分（第 3 节已加入 `lextrail-config`）。
+1. M0 第九项（M0 最后一项）：主窗口骨架（关闭时销毁）。托盘菜单加"打开主窗口"，单实例回调唤起主窗口；考虑托盘图标左键直接打开主窗口。注意 D010：悬浮窗和主窗口共用同一个 WebView2 环境。
+2. M0 完成前评审 `ARCHITECTURE.md` 中标注为〔初稿〕的仓库结构部分（第 3 节已加入 `lextrail-config`；`tools/bench` 已按初稿实现）。
+3. 之后进入 M1。M1、M2、M3、M6 都有"重测性能预算"任务（新增），结果追加到 `docs/specs/m0-benchmark.md` 第 7 节。
 
 ## 遇到的问题 / 需要项目负责人决定
 
-- **内存预算的统计口径**：挂起时 WebView2 进程树合计，私有工作集 82.8 MiB（< 100 MB），私有提交 159.0 MiB（> 100 MB）。详见 `docs/specs/m0-benchmark.md` 第 4 节。
+- 无待决定事项。
 - 低优先级问题：冷启动后 0–100 ms 内按 Esc 可能无效（WebView 稍晚拿到键盘焦点），见报告 4.5 节。
 
 已知情况（不需要处理）：
