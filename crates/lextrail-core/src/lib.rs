@@ -7,6 +7,7 @@ mod clock;
 mod hlc;
 mod id;
 pub mod lookup;
+pub mod text;
 
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use hlc::{ENCODED_LEN as HLC_ENCODED_LEN, Hlc, HlcClock, HlcError, HlcParseError, MAX_MILLIS};
