@@ -1972,6 +1972,11 @@ dependencies = [
 [[package]]
 name = "lextrail-capture"
 version = "0.0.0"
+dependencies = [
+ "lextrail-core",
+ "thiserror 2.0.21",
+ "windows",
+]
 
 [[package]]
 name = "lextrail-config"
