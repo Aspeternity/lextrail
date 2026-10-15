@@ -79,12 +79,15 @@ fn register<R: Runtime>(app: &AppHandle<R>, binding: &Binding) -> Result<(), Fai
         .map_err(|e| failure(FailureReason::Unavailable, e.to_string()))
 }
 
-fn on_triggered<R: Runtime>(_app: &AppHandle<R>, action: HotkeyAction) {
+fn on_triggered<R: Runtime>(app: &AppHandle<R>, action: HotkeyAction) {
+    #[cfg(debug_assertions)]
+    eprintln!("hotkey triggered: {action:?}");
     match action {
-        // Wired to capture and the popup in the popup task.
+        // Text capture (M1) will run before the popup is shown.
         HotkeyAction::Lookup => {
-            #[cfg(debug_assertions)]
-            eprintln!("hotkey triggered: {action:?}");
+            if let Err(e) = crate::popup::show_at_cursor(app) {
+                eprintln!("cannot show popup: {e}");
+            }
         }
     }
 }
