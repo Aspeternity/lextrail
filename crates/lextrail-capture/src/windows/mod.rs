@@ -6,7 +6,9 @@ mod window;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::{CaptureError, CaptureOutcome, CaptureTarget, Pipeline, RawContext, TextCapture};
+use crate::{
+    CaptureError, CaptureOutcome, CaptureTarget, CaptureTrace, Pipeline, RawContext, TextCapture,
+};
 use uia::UiaStep;
 
 pub struct WindowsCapture {
@@ -40,8 +42,11 @@ impl TextCapture for WindowsCapture {
         Ok(target)
     }
 
-    fn capture(&self, target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError> {
-        self.pipeline.run(target)
+    fn capture_traced(
+        &self,
+        target: &CaptureTarget,
+    ) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace) {
+        self.pipeline.run_traced(target)
     }
 
     fn capture_context(

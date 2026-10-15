@@ -16,6 +16,7 @@ mod windows;
 
 use std::fmt;
 use std::ops::Range;
+use std::time::Duration;
 
 pub use lextrail_core::lookup::CaptureMethod;
 pub use pipeline::{CaptureStep, Pipeline};
@@ -31,7 +32,16 @@ pub trait TextCapture: Send + Sync {
 
     /// Reads the selected text and its context from `target`. Blocks for up to about the
     /// time budget; never call it on the UI thread.
-    fn capture(&self, target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError>;
+    fn capture(&self, target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError> {
+        self.capture_traced(target).0
+    }
+
+    /// [`TextCapture::capture`] plus what each method did and how long it took, for
+    /// diagnostics. The trace holds no captured text.
+    fn capture_traced(
+        &self,
+        target: &CaptureTarget,
+    ) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace);
 
     /// Reads only the context around `selected_text` (already known, e.g. from a double
     /// Ctrl+C, D012). `Ok(None)` when no context is available.
@@ -79,8 +89,14 @@ impl TextCapture for UnsupportedCapture {
         })
     }
 
-    fn capture(&self, _target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError> {
-        Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported))
+    fn capture_traced(
+        &self,
+        _target: &CaptureTarget,
+    ) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace) {
+        (
+            Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported)),
+            CaptureTrace::default(),
+        )
     }
 
     fn capture_context(
@@ -194,6 +210,100 @@ pub struct RawContext {
     /// boundaries. Adapters convert from their native units (UTF-16 on Windows) with
     /// [`utf16_range_to_utf8`]. `None` when unknown.
     pub selection: Option<Range<usize>>,
+}
+
+/// Where a capture step found the element it read from (Windows UIA: the UIA focus, or
+/// the `GetGUIThreadInfo` focus / caret window, or the foreground window).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElementSource {
+    UiaFocus,
+    HwndFocus,
+    HwndCaret,
+    ForegroundWindow,
+}
+
+impl ElementSource {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::UiaFocus => "uia_focus",
+            Self::HwndFocus => "hwnd_focus",
+            Self::HwndCaret => "hwnd_caret",
+            Self::ForegroundWindow => "foreground_window",
+        }
+    }
+}
+
+/// What one [`CaptureStep`] returned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepOutput {
+    pub result: Result<CaptureOutcome, CaptureError>,
+    /// The element the result came from, when the step knows it.
+    pub element: Option<ElementSource>,
+}
+
+impl From<Result<CaptureOutcome, CaptureError>> for StepOutput {
+    fn from(result: Result<CaptureOutcome, CaptureError>) -> Self {
+        Self {
+            result,
+            element: None,
+        }
+    }
+}
+
+/// Diagnostics for one capture: each step that ran, in order. Contains no captured text.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CaptureTrace {
+    pub steps: Vec<StepTrace>,
+    /// Set when a pre-check decided the result without running any step.
+    pub precheck: Option<Unavailable>,
+    pub total: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepTrace {
+    pub step: &'static str,
+    pub result: &'static str,
+    pub elapsed: Duration,
+    pub element: Option<ElementSource>,
+}
+
+/// A short, text-free label for a capture result: `captured`, `no_selection`, ..., `error`.
+pub fn result_label(result: &Result<CaptureOutcome, CaptureError>) -> &'static str {
+    match result {
+        Ok(CaptureOutcome::Captured(_)) => "captured",
+        Ok(CaptureOutcome::Unavailable(u)) => u.label(),
+        Err(_) => "error",
+    }
+}
+
+impl Unavailable {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NoSelection => "no_selection",
+            Self::Elevated => "elevated",
+            Self::NoForegroundWindow => "no_foreground_window",
+            Self::Unsupported => "unsupported",
+            Self::TimedOut => "timed_out",
+        }
+    }
+}
+
+impl fmt::Display for CaptureTrace {
+    /// e.g. `uia=captured 21.3ms (uia_focus); total 21.4ms` or `precheck=elevated; total 0.0ms`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        if let Some(u) = self.precheck {
+            write!(f, "precheck={}; ", u.label())?;
+        }
+        for step in &self.steps {
+            write!(f, "{}={} {:.1}ms", step.step, step.result, ms(step.elapsed))?;
+            if let Some(element) = step.element {
+                write!(f, " ({})", element.label())?;
+            }
+            f.write_str("; ")?;
+        }
+        write!(f, "total {:.1}ms", ms(self.total))
+    }
 }
 
 impl fmt::Display for Unavailable {

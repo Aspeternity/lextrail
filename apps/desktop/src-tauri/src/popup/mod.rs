@@ -12,6 +12,7 @@ mod foreground;
 mod lifecycle;
 mod placement;
 mod request;
+mod timing;
 mod webview;
 
 use std::sync::atomic::{AtomicIsize, AtomicU64, Ordering};
@@ -19,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use lextrail_capture::TextCapture;
+use lextrail_capture::{CaptureTrace, TextCapture, result_label};
 use lextrail_config::PopupMode;
 use tauri::webview::PageLoadEvent;
 use tauri::window::Color;
@@ -32,6 +33,7 @@ use content::Content;
 use lifecycle::{Action, Event, Lifecycle};
 use placement::{Point, Rect, Size};
 use request::Request;
+use timing::Timings;
 
 pub const LABEL: &str = "popup";
 
@@ -42,7 +44,7 @@ const HEIGHT: f64 = 260.0;
 const CURSOR_GAP: f64 = 12.0;
 /// Matches the page background so the window never flashes white.
 const BACKGROUND: Color = Color(255, 255, 255, 255);
-/// How long after asking for focus the result is checked.
+/// How long to wait for the popup to get focus before reporting failure.
 const ACTIVATION_CHECK: Duration = Duration::from_millis(50);
 
 /// Shared popup state, managed by Tauri.
@@ -56,6 +58,8 @@ struct PopupState {
     next_request: AtomicU64,
     /// Native handle of the window being read; its own foreground events are ignored.
     target_window: AtomicIsize,
+    /// Benchmark timings, when `LEXTRAIL_BENCH_TIMINGS` is set.
+    timings: Option<Timings>,
 }
 
 /// Registers the popup state. Call once during setup.
@@ -68,6 +72,7 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, mode: PopupMode) {
         capture: platform_capture(),
         next_request: AtomicU64::new(0),
         target_window: AtomicIsize::new(0),
+        timings: Timings::from_env(),
     });
     foreground::init({
         let app = app.clone();
@@ -94,6 +99,10 @@ fn platform_capture() -> Arc<dyn TextCapture> {
 /// change anything, then captures in the background while the popup gets ready.
 pub fn lookup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     let state = app.state::<PopupState>();
+    let id = state.next_request.fetch_add(1, Ordering::SeqCst) + 1;
+    if let Some(t) = &state.timings {
+        t.start(id);
+    }
     let target = state.capture.snapshot();
     // M5: the application blacklist is checked here, after the snapshot and before
     // the capture (ARCHITECTURE.md 4.1).
@@ -103,7 +112,6 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         x: cursor.x.round() as i32,
         y: cursor.y.round() as i32,
     });
-    let id = state.next_request.fetch_add(1, Ordering::SeqCst) + 1;
     state.target_window.store(
         target.as_ref().map_or(0, |t| t.native_window()),
         Ordering::SeqCst,
@@ -127,12 +135,20 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
             .and_then(|t| t.window.as_ref())
             .and_then(|w| w.process_name.clone());
         debug_capture_delay();
-        let result = target.and_then(|t| capture.capture(&t));
+        let (result, trace) = match target {
+            Ok(t) => capture.capture_traced(&t),
+            Err(e) => (Err(e), CaptureTrace::default()),
+        };
         if let Err(e) = &result {
             eprintln!("capture failed: {e}");
         }
+        // One line per capture, without the captured text: method, result, time and
+        // where the element came from.
         #[cfg(debug_assertions)]
-        eprintln!("capture #{id}: {result:?}");
+        eprintln!("capture #{id}: {} | {trace}", result_label(&result));
+        if let Some(t) = &capture_app.state::<PopupState>().timings {
+            t.capture(id, trace.total);
+        }
         let content = Content::from_capture(result, source_app);
         dispatch_request(&capture_app, request::Event::Captured { id, content });
     });
@@ -230,6 +246,13 @@ fn perform<R: Runtime>(app: &AppHandle<R>, action: Action) -> tauri::Result<()> 
 
 fn dispatch_request<R: Runtime>(app: &AppHandle<R>, event: request::Event) {
     let state = app.state::<PopupState>();
+    if let Some(t) = &state.timings {
+        match &event {
+            request::Event::WindowReady => t.window_ready(),
+            request::Event::Activated { ok } => t.focused(*ok),
+            _ => {}
+        }
+    }
     #[cfg(debug_assertions)]
     let label = format!("{event:?}");
     let actions = lock(&state.request).handle(event);
@@ -247,7 +270,12 @@ fn perform_request<R: Runtime>(app: &AppHandle<R>, action: &request::Action) -> 
     match action {
         A::SetContent(content) => app.emit_to(LABEL, content::EVENT, content),
         A::ShowInactive => match app.get_webview_window(LABEL) {
-            Some(window) => show_inactive(&window),
+            Some(window) => {
+                if let Some(t) = &app.state::<PopupState>().timings {
+                    t.shown();
+                }
+                show_inactive(&window)
+            }
             None => Ok(()),
         },
         A::Activate => match app.get_webview_window(LABEL) {
@@ -345,8 +373,17 @@ fn activate<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<R>) -> tauri:
     let app = app.clone();
     let window = window.clone();
     thread::spawn(move || {
-        thread::sleep(ACTIVATION_CHECK);
-        let ok = is_foreground(&window);
+        // Report as soon as the popup has focus; give up after ACTIVATION_CHECK.
+        let deadline = std::time::Instant::now() + ACTIVATION_CHECK;
+        let ok = loop {
+            if is_foreground(&window) {
+                break true;
+            }
+            if std::time::Instant::now() >= deadline {
+                break false;
+            }
+            thread::sleep(Duration::from_millis(2));
+        };
         #[cfg(debug_assertions)]
         eprintln!("popup: activated = {ok}");
         dispatch_request(&app, request::Event::Activated { ok });

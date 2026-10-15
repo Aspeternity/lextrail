@@ -29,8 +29,8 @@ use windows::Win32::UI::Accessibility::{
 
 use super::window::hwnd;
 use crate::{
-    CaptureError, CaptureMethod, CaptureOutcome, CaptureStep, CaptureTarget, RawContext, Selection,
-    Unavailable, utf16_range_to_utf8,
+    CaptureError, CaptureMethod, CaptureOutcome, CaptureStep, CaptureTarget, ElementSource,
+    RawContext, Selection, StepOutput, Unavailable, utf16_range_to_utf8,
 };
 
 /// Time the caller waits for UIA before falling back (150–200 ms, D011).
@@ -67,7 +67,7 @@ struct Worker {
 
 struct Job {
     target: CaptureTarget,
-    reply: SyncSender<Result<CaptureOutcome, CaptureError>>,
+    reply: SyncSender<StepOutput>,
 }
 
 impl UiaStep {
@@ -120,20 +120,21 @@ impl CaptureStep for UiaStep {
         "uia"
     }
 
-    fn try_capture(&self, target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError> {
+    fn try_capture(&self, target: &CaptureTarget) -> StepOutput {
+        let unavailable = |u| StepOutput::from(Ok(CaptureOutcome::Unavailable(u)));
         if target.platform.hwnd == 0 {
-            return Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported));
+            return unavailable(Unavailable::Unsupported);
         }
         let (jobs, busy, wait) = {
             let mut slot = lock(&self.worker);
             // UIA disabled (too many stuck workers): let the next method try.
             let Some(w) = self.ensure_worker(&mut slot) else {
-                return Ok(CaptureOutcome::Unavailable(Unavailable::TimedOut));
+                return unavailable(Unavailable::TimedOut);
             };
             let mut busy = lock(&w.busy_since);
             if busy.is_some() {
                 // The previous request is still running (slow target): skip UIA.
-                return Ok(CaptureOutcome::Unavailable(Unavailable::TimedOut));
+                return unavailable(Unavailable::TimedOut);
             }
             *busy = Some(Instant::now());
             let wait = if w.ready.load(Ordering::SeqCst) {
@@ -158,14 +159,12 @@ impl CaptureStep for UiaStep {
             {
                 *slot = None;
             }
-            return Err(worker_stopped());
+            return Err(worker_stopped()).into();
         }
         match result.recv_timeout(wait) {
-            Ok(outcome) => outcome,
-            Err(RecvTimeoutError::Timeout) => {
-                Ok(CaptureOutcome::Unavailable(Unavailable::TimedOut))
-            }
-            Err(RecvTimeoutError::Disconnected) => Err(worker_stopped()),
+            Ok(output) => output,
+            Err(RecvTimeoutError::Timeout) => unavailable(Unavailable::TimedOut),
+            Err(RecvTimeoutError::Disconnected) => Err(worker_stopped()).into(),
         }
     }
 }
@@ -212,13 +211,13 @@ fn run_worker(
     ready.store(true, Ordering::SeqCst);
 
     for job in jobs {
-        let outcome = match &automation {
+        let output = match &automation {
             Ok(automation) => read(automation, &job.target),
-            Err(e) => Err(e.clone()),
+            Err(e) => Err(e.clone()).into(),
         };
         *lock(busy) = None;
         // The caller may have stopped waiting; that is fine.
-        let _ = job.reply.send(outcome);
+        let _ = job.reply.send(output);
     }
 
     drop(automation);
@@ -266,12 +265,12 @@ fn classify(e: &windows::core::Error) -> Result<CaptureOutcome, CaptureError> {
     }
 }
 
-fn read(
-    automation: &IUIAutomation2,
-    target: &CaptureTarget,
-) -> Result<CaptureOutcome, CaptureError> {
+fn read(automation: &IUIAutomation2, target: &CaptureTarget) -> StepOutput {
     let process_id = target.window.as_ref().map_or(0, |w| w.process_id);
-    read_selection(automation, target, process_id).or_else(|e| classify(&e))
+    let mut element = None;
+    let result =
+        read_selection(automation, target, process_id, &mut element).or_else(|e| classify(&e));
+    StepOutput { result, element }
 }
 
 /// Tries the focused element (if it belongs to the target process), then the elements of
@@ -280,32 +279,43 @@ fn read_selection(
     automation: &IUIAutomation2,
     target: &CaptureTarget,
     process_id: u32,
+    used: &mut Option<ElementSource>,
 ) -> windows::core::Result<CaptureOutcome> {
     let p = &target.platform;
     // SAFETY: COM calls on an MTA thread with valid arguments.
-    let mut candidates: Vec<IUIAutomationElement> = Vec::new();
+    let mut candidates: Vec<(ElementSource, IUIAutomationElement)> = Vec::new();
     unsafe {
         if let Ok(focused) = automation.GetFocusedElement()
             && same_process(&focused, process_id)
         {
-            candidates.push(focused);
+            candidates.push((ElementSource::UiaFocus, focused));
         }
-        for raw in [p.hwnd_focus, p.hwnd_caret, p.hwnd] {
+        for (source, raw) in [
+            (ElementSource::HwndFocus, p.hwnd_focus),
+            (ElementSource::HwndCaret, p.hwnd_caret),
+            (ElementSource::ForegroundWindow, p.hwnd),
+        ] {
             if raw != 0
                 && let Ok(element) = automation.ElementFromHandle(hwnd(raw))
             {
-                candidates.push(element);
+                candidates.push((source, element));
             }
         }
     }
 
+    // Reports the element that produced the selection, or else the first one with a
+    // text pattern (where "no selection" was decided).
     let mut found_pattern = false;
-    for element in candidates {
+    for (source, element) in candidates {
         let Some(pattern) = text_pattern(automation, element, process_id)? else {
             continue;
         };
-        found_pattern = true;
+        if !found_pattern {
+            *used = Some(source);
+            found_pattern = true;
+        }
         if let Some(selection) = selection_of(&pattern)? {
+            *used = Some(source);
             return Ok(CaptureOutcome::Captured(selection));
         }
     }
@@ -419,8 +429,8 @@ mod tests {
         let step = UiaStep::new(BUDGET);
         let target = CaptureTarget::for_tests(Some(WindowInfo::for_tests("x.exe")));
         assert_eq!(
-            step.try_capture(&target).unwrap(),
-            CaptureOutcome::Unavailable(Unavailable::Unsupported)
+            step.try_capture(&target).result,
+            Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported))
         );
     }
 
@@ -437,7 +447,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        let outcome = step.try_capture(&target);
+        let outcome = step.try_capture(&target).result;
         assert!(
             matches!(outcome, Ok(CaptureOutcome::Unavailable(_))),
             "{outcome:?}"

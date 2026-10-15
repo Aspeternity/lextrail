@@ -11,6 +11,7 @@
 
 mod procs;
 mod stats;
+mod timings;
 #[cfg(windows)]
 mod ui;
 
@@ -27,6 +28,7 @@ fn main() {
 
 #[cfg(windows)]
 mod run {
+    use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use std::process::{Child, Command};
@@ -38,6 +40,7 @@ mod run {
 
     use crate::procs::{self, Memory, TreeSample, mib};
     use crate::stats::{Summary, cpu_percent, ms};
+    use crate::timings::{self, Timing};
     use crate::ui;
 
     const APP_NAME: &str = "lextrail-desktop.exe";
@@ -123,6 +126,7 @@ mod run {
     fn quick(options: &Options, cpus: usize) -> Result<()> {
         // 1. Cold start: a fresh app each time, first sample discarded as warm-up.
         let mut cold = Vec::new();
+        let mut cold_split = Vec::new();
         for i in 0..=options.cold {
             let app = App::launch(options)?;
             if i == 0 {
@@ -131,14 +135,17 @@ mod run {
                 report_cpu("idle CPU", &app, cpus)?;
             }
             let t = app.show()?;
+            app.hide()?;
+            let split = app.timing()?;
             if i > 0 {
                 cold.push(t);
+                cold_split.push(split);
             }
-            app.hide()?;
             app.quit()?;
         }
         section("cold start: hotkey -> popup visible (fresh app each time)");
         print_summary(&cold);
+        print_split(&cold_split);
 
         // 2. One app for warm, visible and suspended measurements.
         let app = App::launch(options)?;
@@ -147,18 +154,23 @@ mod run {
         section("popup visible");
         report_tree("memory", &app.sample()?);
         app.hide()?;
+        app.timing()?;
 
         let mut warm = Vec::new();
+        let mut warm_split = Vec::new();
         for _ in 0..options.samples {
             sleep(Duration::from_secs(1));
             warm.push(app.show()?);
             sleep(Duration::from_millis(300));
             app.hide()?;
+            warm_split.push(app.timing()?);
         }
         section("warm show: hidden ~1 s, not yet suspended");
         print_summary(&warm);
+        print_split(&warm_split);
 
         let mut resumed = Vec::new();
+        let mut resumed_split = Vec::new();
         for i in 0..options.samples {
             sleep(SUSPEND_SETTLE);
             if i == 0 {
@@ -169,9 +181,11 @@ mod run {
             resumed.push(app.show()?);
             sleep(Duration::from_millis(300));
             app.hide()?;
+            resumed_split.push(app.timing()?);
         }
         section("show after suspend (hidden 15 s)");
         print_summary(&resumed);
+        print_split(&resumed_split);
         app.quit()
     }
 
@@ -207,16 +221,46 @@ mod run {
 
     struct App {
         child: Child,
+        /// File the app appends one timing line per lookup to.
+        timings: PathBuf,
+        timings_read: Cell<usize>,
     }
 
     impl App {
         fn launch(options: &Options) -> Result<Self> {
             kill_all()?;
+            let timings = std::env::temp_dir().join("lextrail-bench-timings.txt");
+            let _ = std::fs::remove_file(&timings);
             let child = Command::new(&options.app)
+                .env(timings::ENV, &timings)
                 .spawn()
                 .with_context(|| format!("cannot start {}", options.app.display()))?;
             sleep(STARTUP_SETTLE);
-            Ok(Self { child })
+            Ok(Self {
+                child,
+                timings,
+                timings_read: Cell::new(0),
+            })
+        }
+
+        /// The app's own timings for the next lookup not read yet. The app writes the
+        /// line once the popup has focus, so call this after [`App::hide`].
+        fn timing(&self) -> Result<Timing> {
+            let start = Instant::now();
+            loop {
+                let text = std::fs::read_to_string(&self.timings).unwrap_or_default();
+                if let Some(line) = text.lines().nth(self.timings_read.get()) {
+                    self.timings_read.set(self.timings_read.get() + 1);
+                    return Ok(timings::parse_line(line));
+                }
+                if start.elapsed() > SHOW_TIMEOUT {
+                    bail!(
+                        "no timing line in {} (is the app new enough?)",
+                        self.timings.display()
+                    );
+                }
+                sleep(Duration::from_millis(20));
+            }
         }
 
         fn pid(&self) -> u32 {
@@ -289,6 +333,24 @@ mod run {
         match Summary::of(samples) {
             Some(s) => println!("  {s}"),
             None => println!("  (no samples)"),
+        }
+    }
+
+    /// The app's own split of each show: capture vs. window.
+    fn print_split(timings: &[Timing]) {
+        type Field = fn(&Timing) -> Option<Duration>;
+        let rows: [(&str, Field); 4] = [
+            ("capture (in app)", |t| t.capture),
+            ("window ready (from hotkey)", |t| t.window_ready),
+            ("window shown (from hotkey)", |t| t.shown),
+            ("focused (from hotkey)", |t| t.focused),
+        ];
+        for (label, get) in rows {
+            let samples: Vec<Duration> = timings.iter().filter_map(get).collect();
+            match Summary::of(&samples) {
+                Some(s) => println!("    {label:<27} {s}"),
+                None => println!("    {label:<27} (no samples)"),
+            }
         }
     }
 

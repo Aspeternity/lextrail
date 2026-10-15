@@ -1,13 +1,18 @@
 //! Tries capture methods in order (D011). Platform-independent, so the ordering and
 //! result rules are unit-tested without any real windows.
 
-use crate::{CaptureError, CaptureOutcome, CaptureTarget, Integrity, Unavailable};
+use std::time::Instant;
+
+use crate::{
+    CaptureError, CaptureOutcome, CaptureTarget, CaptureTrace, Integrity, StepOutput, StepTrace,
+    Unavailable, result_label,
+};
 
 /// One capture method (UI Automation, clipboard, ...). Each step enforces its own time
 /// budget and reports running out of it as [`Unavailable::TimedOut`].
 pub trait CaptureStep: Send + Sync {
     fn name(&self) -> &'static str;
-    fn try_capture(&self, target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError>;
+    fn try_capture(&self, target: &CaptureTarget) -> StepOutput;
 }
 
 impl<T: CaptureStep + ?Sized> CaptureStep for std::sync::Arc<T> {
@@ -15,7 +20,7 @@ impl<T: CaptureStep + ?Sized> CaptureStep for std::sync::Arc<T> {
         (**self).name()
     }
 
-    fn try_capture(&self, target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError> {
+    fn try_capture(&self, target: &CaptureTarget) -> StepOutput {
         (**self).try_capture(target)
     }
 }
@@ -48,21 +53,49 @@ impl Pipeline {
     }
 
     pub fn run(&self, target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError> {
+        self.run_traced(target).0
+    }
+
+    /// [`Pipeline::run`] plus a [`CaptureTrace`] of the steps that ran.
+    pub fn run_traced(
+        &self,
+        target: &CaptureTarget,
+    ) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace) {
+        let start = Instant::now();
+        let mut trace = CaptureTrace::default();
+        let result = self.run_steps(target, &mut trace);
+        trace.total = start.elapsed();
+        (result, trace)
+    }
+
+    fn run_steps(
+        &self,
+        target: &CaptureTarget,
+        trace: &mut CaptureTrace,
+    ) -> Result<CaptureOutcome, CaptureError> {
         let unavailable = |u| Ok(CaptureOutcome::Unavailable(u));
-        let Some(window) = &target.window else {
-            return unavailable(Unavailable::NoForegroundWindow);
+        let precheck = match &target.window {
+            None => Some(Unavailable::NoForegroundWindow),
+            Some(w) if w.process_id == self.own_process_id => Some(Unavailable::Unsupported),
+            Some(w) if w.integrity == Integrity::Higher => Some(Unavailable::Elevated),
+            Some(_) => None,
         };
-        if window.process_id == self.own_process_id {
-            return unavailable(Unavailable::Unsupported);
-        }
-        if window.integrity == Integrity::Higher {
-            return unavailable(Unavailable::Elevated);
+        if let Some(u) = precheck {
+            trace.precheck = Some(u);
+            return unavailable(u);
         }
 
         let mut best: Option<Result<Unavailable, CaptureError>> = None;
         for step in &self.steps {
-            let result = step.try_capture(target);
-            match result {
+            let start = Instant::now();
+            let output = step.try_capture(target);
+            trace.steps.push(StepTrace {
+                step: step.name(),
+                result: result_label(&output.result),
+                elapsed: start.elapsed(),
+                element: output.element,
+            });
+            match output.result {
                 Ok(CaptureOutcome::Captured(selection)) => {
                     return Ok(CaptureOutcome::Captured(selection));
                 }
@@ -106,7 +139,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
-    use crate::{CaptureMethod, Selection, WindowInfo};
+    use crate::{CaptureMethod, ElementSource, Selection, WindowInfo};
 
     struct Fixed {
         result: Result<CaptureOutcome, CaptureError>,
@@ -118,9 +151,12 @@ mod tests {
             "fixed"
         }
 
-        fn try_capture(&self, _: &CaptureTarget) -> Result<CaptureOutcome, CaptureError> {
+        fn try_capture(&self, _: &CaptureTarget) -> StepOutput {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            self.result.clone()
+            StepOutput {
+                result: self.result.clone(),
+                element: Some(ElementSource::HwndFocus),
+            }
         }
     }
 
@@ -259,5 +295,51 @@ mod tests {
         window.integrity = Integrity::Unknown;
         let (outcome, _) = run_with(&CaptureTarget::for_tests(Some(window)), vec![captured("a")]);
         assert_eq!(outcome, captured("a"));
+    }
+
+    #[test]
+    fn trace_records_each_step_without_text() {
+        let steps: Vec<Box<dyn CaptureStep>> = vec![
+            Box::new(Fixed {
+                result: unavailable(Unavailable::TimedOut),
+                calls: Arc::default(),
+            }),
+            Box::new(Fixed {
+                result: captured("secret text"),
+                calls: Arc::default(),
+            }),
+        ];
+        let (result, trace) = Pipeline::with_own_process_id(steps, 1).run_traced(&target());
+        assert_eq!(result, captured("secret text"));
+        assert_eq!(trace.precheck, None);
+        let labels: Vec<_> = trace
+            .steps
+            .iter()
+            .map(|s| (s.step, s.result, s.element))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                ("fixed", "timed_out", Some(ElementSource::HwndFocus)),
+                ("fixed", "captured", Some(ElementSource::HwndFocus)),
+            ]
+        );
+        let line = trace.to_string();
+        assert!(line.starts_with("fixed=timed_out "), "{line}");
+        assert!(line.contains("(hwnd_focus)"), "{line}");
+        assert!(!line.contains("secret"), "{line}");
+    }
+
+    #[test]
+    fn trace_records_prechecks() {
+        let (_, trace) =
+            Pipeline::with_own_process_id(vec![], 1).run_traced(&CaptureTarget::for_tests(None));
+        assert_eq!(trace.precheck, Some(Unavailable::NoForegroundWindow));
+        assert!(trace.steps.is_empty());
+        let line = trace.to_string();
+        assert!(
+            line.starts_with("precheck=no_foreground_window; total "),
+            "{line}"
+        );
     }
 }
