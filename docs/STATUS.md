@@ -4,7 +4,7 @@
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
 **最后更新**：2026-10-15
-**当前阶段**：M1 · 取词与词典（进行中：数据模型公共部分已评审）
+**当前阶段**：M1 · 取词与词典（进行中：数据模型已评审，`lextrail-core` HLC 与 `lextrail-store` 已完成）
 
 ---
 
@@ -14,7 +14,11 @@ M0 的十项任务全部完成：monorepo、代码规范、CI、Tauri 托盘骨�
 
 M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同步元数据字段、HLC 时间戳格式（小写十六进制定宽文本，按字符串比较）、`lookups` 表的结构都已确定，写在 `ARCHITECTURE.md` 6.1–6.3；推迟到 M3/M4 的问题记在 6.5，并已加入 `ROADMAP.md`。本地表不带 `user_id`，`device_id` 存在数据库 `meta` 表中。
 
+随后完成了 `lextrail-core` 的 HLC 和 `lextrail-store`，并新增决定 D040：数据库放在 `%LOCALAPPDATA%`（不放 Roaming），按需打开，以及 SQLite 的连接设置和迁移规则。
+
 代码现状（详见各文件）：
+- `crates/lextrail-core`：`Hlc`（定宽小写文本、严格解析、按字符串比较即为先后）+ `HlcClock`（本地 `now`、收到远端 `receive`、计数器溢出借 1 ms、`restore` 回滚）+ 可注入的 `Clock`（`SystemClock` / 测试用 `ManualClock`）；`lookup` 模块：`LookupKind`、`CaptureMethod`、文本规范化（合并空白、最多 2000 字符）、30 秒去重判定。26 个测试
+- `crates/lextrail-store`（D037、D040）：`Store::open_in_dir`（创建目录、`lextrail.db`）/ `open_in_memory_with_clock`；`user_version` 迁移（`src/migrations/0001_init.sql`：`meta`、`lookups`，STRICT 表）；版本更高时拒绝打开且不改文件；WAL、`synchronous=NORMAL`、`foreign_keys`、`busy_timeout` 5 秒；`meta` 存 `device_id`（UUIDv7）和最近一次 HLC，与数据写入同一事务；`record_lookup`（规范化、去重、空查询忽略）、`delete_lookup`（软删除）、`lookup`、`recent_lookups`。20 个测试。**桌面端尚未接入**
 - `crates/lextrail-config`（D035）：`Settings`（`version`、`hotkeys.lookup`、`popup.mode`）+ `SettingsFile`（TOML、原子写入、损坏时备份为 `.corrupt` 并恢复默认、更新版本写的文件不覆盖）+ `SecretStore` 适配器（`WindowsCredentialStore` / `MemorySecretStore`）。17 个测试，其中 1 个真实读写 Windows 凭据管理器（用临时 key，测完删除）
 - `apps/desktop/src-tauri`：
   - 启动时不创建任何窗口（不加载 WebView2），只有托盘；托盘图标左键单击打开主窗口，右键弹出菜单（"打开主窗口"、"退出 LexTrail"）
@@ -55,8 +59,8 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
 
 ## 下一步
 
-1. 创建 `lextrail-store`（D037）：本地 SQLite、迁移机制、`meta` 表（`device_id`、最近一次 HLC）、`lookups` 表（按 `ARCHITECTURE.md` 6.3）。同时在 `lextrail-core` 实现 HLC（6.2，含溢出、回拨等测试）。
-2. 然后按 `ROADMAP.md` 做取词、dict-builder（D038）、词典等任务。
+1. 按 `ROADMAP.md` 做取词（`lextrail-capture` 统一接口 + UIA）、剪贴板兜底、dict-builder（D038）、词典等任务。
+2. 有了取词和词典后，桌面端接入查询历史：用 `app_local_data_dir()` 按需打开 `Store`（第一次查询时），加上"不记录查询历史"开关。
 3. M1、M2、M3、M6 都有"重测性能预算"任务，结果追加到 `docs/specs/m0-benchmark.md` 第 7 节。
 
 ## 遇到的问题 / 需要项目负责人决定

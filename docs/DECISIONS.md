@@ -308,6 +308,14 @@
 - 推迟的事项（记录在 `ARCHITECTURE.md` 6.5）：M3 确定删除与修改并发时是否"复活"；M4 确定换账号时本地数据的归属、重复 `device_id` 的检测、远端时钟超前的阈值、已删除记录的清理。
 - 由项目负责人确认（M1 数据模型评审）。
 
+### D040 ✅ 本地数据库放在 `%LOCALAPPDATA%`，以及它的基本设置（2026-10-15）
+- 数据库文件：`%LOCALAPPDATA%\io.github.aspeternity.lextrail\lextrail.db`（Tauri 的 `app_local_data_dir()`），不放在 Roaming（`%APPDATA%`）。理由：域环境下 Roaming 目录会在多台电脑间漫游，导致多台设备共用同一个数据库和 `device_id`，破坏同步（D039）。设置文件仍在 `%APPDATA%`（D035），可以随用户漫游。
+- 数据库按需打开：只有功能第一次需要时才打开，只有托盘待机时不打开（D004）。
+- 使用 `rusqlite`（`bundled`）；表使用 `STRICT`；连接设置 `journal_mode = WAL`、`synchronous = NORMAL`、`foreign_keys = ON`、`busy_timeout`（5 秒）。
+- 迁移用 SQLite 的 `user_version`；每个迁移与版本号更新在同一事务中；遇到版本更高的数据库拒绝打开、不做任何修改（与 D035 中设置文件的处理一致）。
+- HLC 时间可注入（`Clock`），测试使用假时钟；`meta` 表中的最近一次 HLC 与数据写入在同一事务中更新。
+- 由项目负责人决定（M1 创建 `lextrail-store` 时）。
+
 ---
 
 ## 待确认事项

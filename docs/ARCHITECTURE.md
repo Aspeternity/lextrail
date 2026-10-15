@@ -81,7 +81,7 @@ lextrail/
 │   ├── lextrail-dict/        词典访问、词形还原、义项拆分（占位，M1）
 │   ├── lextrail-ai/          AI 适配器、提示词模板、分段标记流式解析（占位，M2）
 │   ├── lextrail-capture/     取词层（占位，M1；计划按平台分 windows.rs，以后加 macos.rs）
-│   ├── lextrail-store/       桌面端本地 SQLite 读写与迁移（M1 创建，D037；core 不依赖 SQLite）
+│   ├── lextrail-store/       桌面端本地 SQLite 读写与迁移（D037、D040；core 不依赖 SQLite）
 │   └── lextrail-config/      本地设置（TOML）与密钥存储（系统凭据管理器）（D035）
 ├── apps/
 │   ├── desktop/              Tauri 应用（npm 包 @lextrail/desktop）
@@ -217,6 +217,16 @@ pub trait AiProvider {
 
 > 评审状态：公共字段、HLC 时间戳和 `lookups` 表已在 M1 开始时评审确定（D039）；其余表在 M3 评审，仍为初稿。本地 SQLite 的读写与迁移在 `lextrail-store`（D037），`lextrail-core` 不依赖 SQLite。
 
+### 6.0 本地数据库（D037、D040）
+
+- **位置**：`%LOCALAPPDATA%\io.github.aspeternity.lextrail\lextrail.db`（Tauri 的 `app_local_data_dir()`）。不放在 Roaming（`%APPDATA%`）：域环境下 Roaming 目录会在多台电脑间漫游，导致多台设备共用同一个数据库和 `device_id`。设置文件仍在 `%APPDATA%`（D035）。
+- **按需打开**：只有功能第一次需要时才打开（例如第一次写查询历史）；只有托盘待机时不打开数据库。
+- **驱动**：`rusqlite`（`bundled`，自带 SQLite，不依赖系统版本）。表使用 `STRICT`，类型不符直接报错。
+- **连接设置**：`journal_mode = WAL`、`synchronous = NORMAL`、`foreign_keys = ON`、`busy_timeout = 5000` 毫秒。
+- **迁移**：用 SQLite 的 `user_version` 记录结构版本；迁移脚本只追加、发布后不修改，每个迁移与版本号更新放在同一事务中。打开时发现数据库版本**高于**本程序支持的版本，直接拒绝打开，**不做任何修改**（检查在切换 WAL 之前进行）。
+- **HLC 持久化**：每次写入时，`meta` 表中的"最近一次 HLC"与数据在同一事务中更新；事务失败时内存中的时钟一并回滚。
+- **测试**：内存数据库；从版本 0 逐级迁移到最新，结果与直接迁移一致；更高版本数据库被拒绝且文件不变。
+
 ### 6.1 同步元数据公共字段（D024、D039）
 
 所有可同步的表都带以下字段：
@@ -230,7 +240,7 @@ pub trait AiProvider {
 | `deleted` | INTEGER | 软删除标记，`0` / `1`。已删除的记录暂时永久保留，清理规则在 M4 确定 |
 
 - **本地表不带 `user_id`**：用户可以先离线使用、以后再登录，本地记录带 `user_id` 会导致登录时要改写全部记录。服务端按登录账号区分用户，服务端的表保留 `user_id`。
-- **`device_id`**：第一次启动时生成一个 UUIDv7，保存在 `lextrail-store` 的本地 `meta` 表中（不同步），不放在 `settings.toml`，这样只拷贝设置文件不会让两台设备共用同一个 ID。
+- **`device_id`**：第一次打开数据库时生成一个 UUIDv7，保存在 `lextrail-store` 的本地 `meta` 表中（不同步），不放在 `settings.toml`，这样只拷贝设置文件不会让两台设备共用同一个 ID。
 - **合并粒度**：按整行合并，`updated_at` 大的一行整体胜出。按字段合并留到 M3 评审 `vocab_items` 时再考虑。
 
 ### 6.2 HLC 时间戳（D039）
@@ -261,6 +271,7 @@ pub trait AiProvider {
 ### 6.3 `lookups`（查询历史，D039）
 
 ```sql
+-- 实际定义见 crates/lextrail-store/src/migrations/0001_init.sql（表为 STRICT）
 CREATE TABLE lookups (
   id          TEXT    PRIMARY KEY,
   created_at  INTEGER NOT NULL,
@@ -282,7 +293,7 @@ CREATE INDEX lookups_created ON lookups (created_at);
 - **只新增、只软删除，不修改**（与 `review_logs` 一样，合并不会冲突）。AI 结果（使用的模型、语境含义）与查询记录的关联在 M2/M3 设计"你见过 N 次"时确定，通过迁移增加字段或表。
 - **不保存窗口标题**：窗口标题常含邮件主题、文件名等隐私内容，而查询历史会同步到服务器。取词时仍可读取窗口标题（例如判断是否为终端），但不写入数据库。
 - **`url`**：接入浏览器扩展时再评审隐私处理（例如是否只保存域名、是否允许关闭）。
-- **去重**：同一 `query` + 同一 `context` 在 30 秒内重复查询只记一次。去重逻辑放在 `lextrail-core` / `lextrail-store`，不放在界面层。
+- **去重**：同一 `query` + 同一 `context` 在 30 秒内重复查询只记一次（未删除的记录；按时间差的绝对值判断，系统时间回拨不会误判）。去重逻辑放在 `lextrail-core` / `lextrail-store`，不放在界面层。
 - **"不记录查询历史"开关**：打开后不写入 `lookups`。应用黑名单中的程序本来就不会产生查询（D032）。
 - **`lemma` 依赖词典版本**：词典或词形还原规则更新后，旧记录的 `lemma` 可能与新结果不一致。以后做"查过 N 次"等统计时，可能需要按当前词典重新归一化（重新计算或在查询时归一）。
 
