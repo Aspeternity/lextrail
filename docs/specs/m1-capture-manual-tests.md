@@ -27,6 +27,13 @@
   ```
 
   生成 `target\release\lextrail-desktop.exe`。注意不要用 `cargo build --release`，那样得到的程序会去加载开发服务器的页面。
+- **悬浮窗内容的自动检查**（AI 做端到端验证时必须用它，或者截图亲眼看到内容；只看日志不算）：
+
+  ```bash
+  powershell -NoProfile -ExecutionPolicy Bypass -File tools/e2e/popup-e2e.ps1 -App target/debug/lextrail-desktop.exe
+  ```
+
+  它会启动应用和一个全新的 Edge（InPrivate，独立配置），用真实鼠标双击 `tools/e2e/list-item.html` 中的单词、按真实快捷键，然后检查悬浮窗可见、有焦点，并通过 UI Automation 读出悬浮窗里的文字，核对单词和句子（不含列表符号）。每次查词保存一张截图（`%TEMP%\lextrail-e2e\`）。运行期间会移动鼠标、模拟按键，不要操作电脑。失败时退出码为 1。
 - 只测某个窗口能不能取到词时，可以用探针，不必启动整个应用：
 
   ```bash
