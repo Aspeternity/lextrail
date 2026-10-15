@@ -119,33 +119,82 @@ lextrail/
 
 ## 4. 取词层（lextrail-capture）
 
-### 4.1 统一接口
+### 4.1 统一接口（D041）
 
 ```rust
-pub struct Selection {
-    pub text: String,
-    pub context: Option<String>,    // 所在句子或段落
-    pub source_app: Option<String>, // 来源软件
-    pub url: Option<String>,        // 浏览器扩展可提供
-    pub method: CaptureMethod,      // Uia / Clipboard / ClipboardDoubleCopy / Ocr
+pub trait TextCapture: Send + Sync {
+    /// 按下快捷键时立即调用（悬浮窗出现之前）。只做 Win32 调用，不会被目标程序卡住。
+    fn snapshot(&self) -> Result<CaptureTarget, CaptureError>;
+    /// 在后台线程调用，最长约为时间预算。
+    fn capture(&self, target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError>;
+    /// 只读取已知文字（如连按两次 Ctrl+C 得到的文字）周围的上下文（D012，以后实现）。
+    fn capture_context(&self, target: &CaptureTarget, selected_text: &str)
+        -> Result<Option<RawContext>, CaptureError>;
 }
 
-pub trait TextCapture {
-    fn get_selection(&self) -> Result<Selection>;
-    fn ocr_region(&self, rect: Rect) -> Result<String>;
+pub struct CaptureTarget {
+    pub window: Option<WindowInfo>,   // None：没有前台窗口
+    // 内部：前台窗口、GetGUIThreadInfo 的 hwndFocus / hwndCaret（平台句柄）
+}
+
+pub struct WindowInfo {
+    pub process_id: u32,
+    pub process_name: Option<String>, // "chrome.exe"，可写入数据库
+    pub class_name: Option<String>,   // 用于识别终端
+    pub title: Option<String>,        // 只在内存中使用，永远不写入数据库
+    pub integrity: Integrity,         // SameOrLower / Higher / Unknown（UIPI）
+}
+
+pub enum CaptureOutcome { Captured(Selection), Unavailable(Unavailable) }
+
+/// 取不到（正常情况，悬浮窗给出提示）
+pub enum Unavailable { NoSelection, Elevated, NoForegroundWindow, Unsupported, TimedOut }
+
+/// 出错（程序或系统故障，写日志）。平台错误在适配器内部转换，类型与平台无关（D003、D007）。
+pub enum CaptureError {
+    Platform { operation: &'static str, code: u32, message: String },
+    WorkerUnavailable(String),
+}
+
+pub struct Selection {
+    pub text: String,
+    pub context: Option<RawContext>,
+    pub url: Option<String>,          // 预留，浏览器扩展提供
+    pub method: CaptureMethod,        // 来自 lextrail-core：uia / clipboard / clipboard_double_copy / ocr
+}
+
+pub struct RawContext {
+    pub text: String,                 // 取到的段落或行，原样返回
+    pub selection: Option<Range<usize>>, // 选中文字在 text 中的位置：UTF-8 字节偏移，落在字符边界上
 }
 ```
 
-### 4.2 Windows 实现（D011、D012）
+- **调用顺序**：快捷键 → `snapshot` → **检查应用黑名单（M5）** → 显示悬浮窗（不抢焦点，见 9.3）→ 后台线程 `capture`。
+- **前置检查**（`Pipeline`，与平台无关，有单元测试）：没有前台窗口 → `NoForegroundWindow`；目标是 LexTrail 自己 → `Unsupported`（M1 的处理）；目标权限更高 → `Elevated`，不尝试任何方式。
+- **多种方式的结果合并**：按顺序尝试，第一个取到的为准；都取不到时按 `NoSelection` > `TimedOut` > 出错 > `Unsupported` 报告。某一步报告 `Elevated` 时立即结束。
+- **切句**：适配器只返回段落或行；`lextrail_core::text::sentence_around` 用纯逻辑切出所在句子。位置提示无效（越界、不在字符边界、文字对不上）时退回按文字查找，不会 panic；多处匹配时取离提示最近的一处（没有提示时取第一处）；找不到时返回 `None`（不显示句子）。
+- **编码转换**：Windows 上 UIA 的位置是 UTF-16，适配器用 `utf16_range_to_utf8` 转成字节偏移（落在代理对中间时向外扩到完整字符）。
+- **测试**：`CaptureTarget::for_tests`、`WindowInfo::for_tests` 用于构造测试目标；`examples/capture_probe.rs` 用于手动测试真实窗口。
+- **OCR** 不在这个接口里：它是用户框选区域的独立入口，M5 时单独做适配器（D011）。
+
+### 4.2 Windows 实现（D011、D012、D041）
 
 | 步骤 | 方式 | 要点 |
 |---|---|---|
-| 1 | UI Automation | 读取选中文本，尽量读取所在句子；不污染剪贴板 |
+| 1 | UI Automation | 读取选中文本和所在段落（太长时改用行）；不污染剪贴板。时间预算 180 ms，超时转下一步 |
 | 2 | 剪贴板兜底 | 等待修饰键松开 → 模拟 Ctrl+C（终端用 Ctrl+Insert）→ 用剪贴板序列号确认已更新 → 读取 → 恢复原内容 |
-| 3 | OCR | `Windows.Media.Ocr`，用户框选区域 |
-| 另 | 连按两次 Ctrl+C | 监听剪贴板变化通知；< 约 50 ms 的连续更新算同一次复制；50–500 ms 内第二次更新判定为连按；触发后尝试用 UIA 补充上下文 |
+| 另 | 连按两次 Ctrl+C | 监听剪贴板变化通知；< 约 50 ms 的连续更新算同一次复制；50–500 ms 内第二次更新判定为连按；触发后用 `capture_context` 补充上下文 |
+| 另 | OCR（M5） | `Windows.Media.Ocr`，**用户框选区域的独立入口**，不是自动取词链的一步 |
 
-已知限制：无法读取以管理员权限运行的程序（除非本软件也以管理员身份运行）。连按两次 Ctrl+C 不受此限制。
+UIA 细节：
+- **线程**：UIA 调用全部在一个专用的 COM **MTA** 线程上进行，该线程不拥有任何窗口（微软对 UIA 客户端的建议）。线程在第一次按快捷键时启动（`snapshot` 时预热），托盘待机时不加载 UIA。
+- **超时**：`IUIAutomation2` 的连接超时和事务超时都设为时间预算；调用方最多等预算时间（第一次额外等 500 ms 用于初始化）。
+- **卡死**：上一个请求仍在执行时，本次跳过 UIA；工作线程忙超过 5 秒视为卡死，放弃它并新建一个。被放弃的线程最多保留 2 个，超过后暂时停用 UIA，直到有线程结束。
+- **找元素**：先试焦点元素（必须属于目标进程），再依次从 `snapshot` 记下的 hwndFocus、hwndCaret、前台窗口句柄找元素；向上最多 8 层找带 TextPattern 的元素。
+- **错误归类**：拒绝访问 → `Elevated`；UIA 超时 → `TimedOut`；元素已不存在、目标断开 → `Unsupported`；其他 → `CaptureError::Platform`。
+- **权限识别**：比较目标进程与本程序的 `TokenIntegrityLevel`；查询失败为 `Unknown`（仍尝试取词）。
+
+已知限制：无法读取以管理员权限运行的程序（除非本软件也以管理员身份运行），悬浮窗会明确提示，并建议改用连按两次 Ctrl+C（不受此限制）。
 
 ---
 
@@ -396,6 +445,25 @@ address                         ★  🔊  📌
   n. 演讲，致辞    ●●○ 较常用   · 你见过 1 次
   v. 写地址        ●○○ 少见
 ```
+
+### 9.3 显示与焦点（D042）
+
+取词期间悬浮窗**不抢焦点**，原窗口一直保持前台：UIA 能拿到正确的焦点元素，剪贴板兜底也能向原窗口发送 Ctrl+C。逻辑在 `popup/request.rs`（纯状态机，有单元测试）。
+
+1. 按快捷键：先 `snapshot`（记下前台窗口和焦点），再开始准备窗口（创建或恢复），同时在后台取词。
+2. 取词在约 100 ms 内完成：直接显示结果，不出现"正在取词"。
+3. 超过约 100 ms：先清空上一次的内容，再以**不激活**的方式（`SW_SHOWNOACTIVATE`）显示"正在取词…"。
+4. 取词完成：显示结果，然后让悬浮窗获取焦点（Esc 和点击外部关闭都依赖焦点）。
+5. 取词期间用 `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` 监视前台窗口：用户切换到别的窗口，就隐藏悬浮窗并丢弃这次的结果。
+6. 获取焦点失败（前台锁定）：悬浮窗仍然显示，继续监视前台窗口，切换窗口时隐藏。
+7. 悬浮窗隐藏时清空内容，下次显示时不会闪出旧结果。
+
+**钉住状态**（📌，功能以后实现，规则先定）：
+- 钉住时不因失去焦点或前台窗口变化而隐藏，只能用 Esc（悬浮窗有焦点时）或再次点击 📌 / 关闭按钮关闭。
+- 钉住时按快捷键：原位置更新内容，不移动窗口。
+- 钉住时取词完成后**不主动获取焦点**，焦点留在原窗口，方便用户继续阅读和选词；用户点击悬浮窗后它才获得焦点。
+
+实测（M1，Windows 11，记事本）：冷启动、热显示、挂起后恢复三种情况下，取词完成后 `SetForegroundWindow` 都直接成功，没有用到后备方案；取词期间切换窗口会隐藏悬浮窗。剪贴板兜底完成后需要再验证一次（模拟按键可能影响前台权限）。
 
 ---
 

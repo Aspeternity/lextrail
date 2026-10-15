@@ -34,16 +34,20 @@
 - [x] 评审数据模型公共部分：同步元数据字段、HLC 时间戳格式、`lookups` 表（D039）（新增）
 - [x] 创建 `lextrail-store`：本地 SQLite、迁移机制（D037）（新增）
 - [x] `lextrail-core` HLC 时间戳：格式化与严格解析、单调递增、计数器溢出、持久化，含单元测试（`ARCHITECTURE.md` 6.2）（新增）
-- [ ] `lextrail-capture` 统一接口 + Windows 实现：UI Automation 取词（含上下文）
-- [ ] 剪贴板兜底：修饰键等待、序列号确认、恢复原内容、终端使用 Ctrl+Insert
-- [ ] 连按两次 Ctrl+C（默认关闭）：剪贴板变化监听、50–500 ms 判定、UIA 补充上下文
-- [ ] 来源软件识别（进程名 / 窗口标题）
+- [x] `lextrail-capture` 统一接口 + Windows 实现：UI Automation 取词（含上下文）（D041）
+- [x] 悬浮窗焦点方案 B：取词期间不抢焦点、约 100 ms 后显示"正在取词"、前台窗口变化时隐藏、取词完成后获取焦点（D042）（新增）
+- [x] `lextrail-core` 切句：`sentence_around`（新增）
+- [ ] 按 `docs/specs/m1-capture-manual-tests.md` 在浏览器、PDF 阅读器、Word、VS Code、终端中手动测试并记录结果（新增）
+- [ ] 前端测试：引入 Vitest，测试悬浮窗页面的内容渲染（新增）
+- [ ] 剪贴板兜底：修饰键等待、序列号确认、恢复原内容、终端使用 Ctrl+Insert；完成后验证悬浮窗仍能获取焦点（手动测试清单 6.10）
+- [ ] 连按两次 Ctrl+C（默认关闭）：剪贴板变化监听、50–500 ms 判定、UIA 补充上下文（实现 `capture_context`）
+- [x] 来源软件识别（进程名 / 窗口类名 / 窗口标题；标题只在内存中使用）
 - [ ] `tools/dict-builder`：ECDICT → 精简版 SQLite；义项拆分；索引
 - [ ] `dict-builder` 下载固定版本 ECDICT 并校验 SHA-256；CI 缓存下载与生成结果（D038）（新增）
 - [ ] `lextrail-dict`：查询、词形还原、单词 / 短语 / 句子分类
 - [ ] 悬浮窗显示词典结果：音标、词性、释义、考试标签
 - [ ] 快捷键设置界面与冲突提示；整理常用软件快捷键清单，确定默认快捷键（D014）
-- [ ] 查询历史写入本地数据库（`lextrail-store` 的 `record_lookup` 已完成，剩桌面端接入：按需打开数据库，D040）
+- [ ] 查询历史写入本地数据库（`lextrail-store` 的 `record_lookup` 已完成，剩桌面端接入：第一次查询时按需打开数据库（D040）；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词）
 - [ ] "不记录查询历史"开关（`ARCHITECTURE.md` 6.3）（新增）
 - [ ] 单元测试：词形还原、义项拆分、输入分类、剪贴板连按判定
 

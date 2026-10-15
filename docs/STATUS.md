@@ -4,7 +4,7 @@
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
 **最后更新**：2026-10-15
-**当前阶段**：M1 · 取词与词典（进行中：数据模型已评审，`lextrail-core` HLC 与 `lextrail-store` 已完成）
+**当前阶段**：M1 · 取词与词典（进行中：数据模型、HLC、`lextrail-store`、UIA 取词与悬浮窗焦点方案已完成）
 
 ---
 
@@ -16,8 +16,11 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
 
 随后完成了 `lextrail-core` 的 HLC 和 `lextrail-store`，并新增决定 D040：数据库放在 `%LOCALAPPDATA%`（不放 Roaming），按需打开，以及 SQLite 的连接设置和迁移规则。
 
+最近完成：`lextrail-capture` 统一接口 + Windows UIA 取词（D041），悬浮窗焦点方案 B（D042），`lextrail-core` 切句。快捷键取词已在记事本中端到端验证（冷启动、热显示、挂起后恢复都能直接获得焦点；慢取词时约 100 ms 后不抢焦点地显示"正在取词"；取词期间切换窗口会隐藏）。五类软件的手动测试还没做，清单见 `docs/specs/m1-capture-manual-tests.md`。
+
 代码现状（详见各文件）：
-- `crates/lextrail-core`：`Hlc`（定宽小写文本、严格解析、按字符串比较即为先后）+ `HlcClock`（本地 `now`、收到远端 `receive`、计数器溢出借 1 ms、`restore` 回滚）+ 可注入的 `Clock`（`SystemClock` / 测试用 `ManualClock`）；`lookup` 模块：`LookupKind`、`CaptureMethod`、文本规范化（合并空白、最多 2000 字符）、30 秒去重判定。26 个测试
+- `crates/lextrail-core`：`text::sentence_around`（从段落切出选中文字所在的句子；处理缩写、小数、省略号、引号、中文标点、硬换行；位置提示无效时退回按文字查找）；`Hlc`（定宽小写文本、严格解析、按字符串比较即为先后）+ `HlcClock`（本地 `now`、收到远端 `receive`、计数器溢出借 1 ms、`restore` 回滚）+ 可注入的 `Clock`（`SystemClock` / 测试用 `ManualClock`）；`lookup` 模块：`LookupKind`、`CaptureMethod`、文本规范化（合并空白、最多 2000 字符）、30 秒去重判定。37 个测试
+- `crates/lextrail-capture`（D041）：`TextCapture`（`snapshot` / `capture` / `capture_context`）、`CaptureOutcome` / `Unavailable`（取不到）与 `CaptureError`（出错，平台无关）；`Pipeline` 按顺序尝试各步骤（与平台无关，有测试）；`WindowsCapture`：`snapshot` 只做 Win32 调用（前台窗口、进程名、类名、标题、权限级别、`GetGUIThreadInfo` 的 hwndFocus / hwndCaret），UIA 在专用 MTA 线程上（预算 180 ms、卡死 5 秒放弃重建、最多 2 个被放弃的线程）；`capture_context` 目前返回 `None`（连按两次 Ctrl+C 时实现）。16 个测试；`examples/capture_probe.rs` 用于手动测试真实窗口
 - `crates/lextrail-store`（D037、D040）：`Store::open_in_dir`（创建目录、`lextrail.db`）/ `open_in_memory_with_clock`；`user_version` 迁移（`src/migrations/0001_init.sql`：`meta`、`lookups`，STRICT 表）；版本更高时拒绝打开且不改文件；WAL、`synchronous=NORMAL`、`foreign_keys`、`busy_timeout` 5 秒；`meta` 存 `device_id`（UUIDv7）和最近一次 HLC，与数据写入同一事务；`record_lookup`（规范化、去重、空查询忽略）、`delete_lookup`（软删除）、`lookup`、`recent_lookups`。20 个测试。**桌面端尚未接入**
 - `crates/lextrail-config`（D035）：`Settings`（`version`、`hotkeys.lookup`、`popup.mode`）+ `SettingsFile`（TOML、原子写入、损坏时备份为 `.corrupt` 并恢复默认、更新版本写的文件不覆盖）+ `SecretStore` 适配器（`WindowsCredentialStore` / `MemorySecretStore`）。17 个测试，其中 1 个真实读写 Windows 凭据管理器（用临时 key，测完删除）
 - `apps/desktop/src-tauri`：
@@ -25,20 +28,21 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
   - 单实例：第二次启动时唤起主窗口；关闭窗口不退出，只有菜单"退出"会退出
   - 主窗口（`main_window.rs`）：按需创建，960×640 逻辑像素、居中，页面加载完成后再显示；已打开时恢复最小化并置前；关闭即销毁，关闭后 WebView2 进程全部退出（已实测）。与悬浮窗共用同一个 WebView2 环境（D010，Tauri 默认共用数据目录）
   - 启动时从 `%APPDATA%\io.github.aspeternity.lextrail\settings.toml` 读设置（第一次启动会创建）；读取出问题时弹原生提示框，并用默认设置继续运行
-  - 全局快捷键从设置读取（默认 Ctrl+Alt+X，D014）；注册失败时弹原生提示框，托盘提示文字也会改；按下后显示悬浮窗
+  - 全局快捷键从设置读取（默认 Ctrl+Alt+X，D014）；注册失败时弹原生提示框，托盘提示文字也会改；按下后调用 `popup::lookup`：先 `snapshot`，再准备悬浮窗，同时在后台线程取词
   - 悬浮窗（`src/popup/`）：
     - 第一次按快捷键时才创建（只有托盘时不加载 WebView2），之后隐藏、复用，不重新加载（D010）
     - 生命周期（D009）：`popup/lifecycle.rs` 是纯状态机（Absent → Creating → Visible → Hidden → Suspending → Suspended，18 个测试），`popup/mod.rs` 执行它返回的动作
       - 隐藏 5 秒后（`SUSPEND_DELAY`）`SetIsVisible(false)` + `TrySuspend`；再次显示时 `Resume` + `SetIsVisible(true)` 后再显示窗口（`popup/webview.rs`）
       - "内存优先"（`popup.mode = "memory_saver"`）：隐藏即销毁窗口
       - 低内存：`memory.rs` 后台线程阻塞等待 `CreateMemoryResourceNotification(Low)`（不轮询；只在内存一直很低时每 60 秒复查一次）；悬浮窗不在屏幕上时销毁，正在显示时不动
-      - debug 构建会在控制台打印每次状态转换（`popup: 事件 -> [动作]`）
-    - 第一次显示等页面加载完成（`PageLoadEvent::Finished`）后再显示，避免出现白屏
+      - debug 构建会在控制台打印每次状态转换（`popup: 事件 -> [动作]`、`request: ...`、`capture #N: ...`）
+    - 一次查词（D042）：`popup/request.rs` 是纯状态机（8 个测试），决定何时显示、显示什么、何时获取焦点；`popup/foreground.rs` 用 `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` 在取词期间监视前台窗口；`popup/content.rs` 把取词结果转成发给页面的 `popup:content` 事件。debug 构建可用环境变量 `LEXTRAIL_DEBUG_CAPTURE_DELAY_MS` 人为让取词变慢
+    - 第一次显示等页面加载完成（`PageLoadEvent::Finished`）后再显示，避免出现白屏；取词期间以 `SW_SHOWNOACTIVATE` 显示，取词完成后 `SetForegroundWindow`（失败时退回 Tauri 的 `set_focus`）
     - 位置：默认在光标右下方 12 逻辑像素处，右边或下边放不下时翻到左边或上边，最后限制在光标所在显示器的工作区内（`popup/placement.rs`，纯函数，9 个测试，含负坐标副屏、比工作区还大等情况）
     - 关闭：页面里按 Esc 调用 `hide_popup` 命令；失去焦点（点击外部）时由 Rust 端隐藏
-    - 尺寸暂定 380×260 逻辑像素，只有浅色主题，页面是占位内容
+    - 尺寸暂定 380×260 逻辑像素，只有浅色主题；页面显示取到的文字、所在句子和来源软件，或"没有选中文字""无法读取以管理员身份运行的程序"等提示（词典结果待接入）
   - 提示框统一走 `notice::warn`（`tauri-plugin-dialog`，不加载 WebView）
-- `apps/desktop/src`：Vite + Vue，`popup/`、`main/` 两个入口。悬浮窗页面只有 Esc 处理和占位内容（JS 0.6 kB + CSS 0.5 kB，Vue 运行时在公共 chunk 里）；主窗口页面还是占位内容
+- `apps/desktop/src`：Vite + Vue，`popup/`、`main/` 两个入口。悬浮窗页面监听 `popup:content` 事件显示内容（`popup/content.ts` 与 Rust 端的 `Content` 对应），Esc 关闭；前端还没有测试框架；主窗口页面还是占位内容
 - `tools/bench`（`lextrail-bench`）：性能测试工具，`quick` 约 6 分钟，`long --wait-mins N` 测挂起 N 分钟后恢复；运行时会模拟按键、移动鼠标。报告和方法见 `docs/specs/m0-benchmark.md`
 - CI（`.github/workflows/ci.yml`）：ubuntu 跑格式、ESLint、类型检查；Windows 跑 clippy、测试，并用 `tauri build --no-bundle` 做 release 构建
 
@@ -59,13 +63,16 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
 
 ## 下一步
 
-1. 按 `ROADMAP.md` 做取词（`lextrail-capture` 统一接口 + UIA）、剪贴板兜底、dict-builder（D038）、词典等任务。
-2. 有了取词和词典后，桌面端接入查询历史：用 `app_local_data_dir()` 按需打开 `Store`（第一次查询时），加上"不记录查询历史"开关。
-3. M1、M2、M3、M6 都有"重测性能预算"任务，结果追加到 `docs/specs/m0-benchmark.md` 第 7 节。
+1. 按 `docs/specs/m1-capture-manual-tests.md` 在浏览器、PDF 阅读器、Word、VS Code、终端中手动测试 UIA 取词并记录结果（需要项目负责人在本机操作，或指定时间由 AI 驱动）。
+2. 剪贴板兜底（D011）：完成后在 `WindowsCapture` 的 `Pipeline` 中加在 UIA 之后，并验证取词完成后悬浮窗仍能获得焦点（清单 6.10）。
+3. 然后做连按两次 Ctrl+C（实现 `capture_context`）、dict-builder（D038）、词典等任务。
+4. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。
+5. M1、M2、M3、M6 都有"重测性能预算"任务，结果追加到 `docs/specs/m0-benchmark.md` 第 7 节。
 
 ## 遇到的问题 / 需要项目负责人决定
 
 - 无需要现在决定的事项。服务端许可证写法和 `apps/server` 是否加入 Cargo workspace 推迟到 M4（见 `DECISIONS.md` 待确认事项）。
+- 需要关注：接入 UIA 取词后重测（`m0-benchmark.md` 第 7 节），冷启动中位数 351 ms、p90 381 ms，离 400 ms 预算只剩约 50 ms（M0 为 288 ms）；挂起内存 83.3 MiB、恢复 20.2 ms 仍达标。接入词典结果后要再测，必要时分析冷启动中取词和页面加载各占多少。
 - 低优先级问题：冷启动后 0–100 ms 内按 Esc 可能无效（WebView 稍晚拿到键盘焦点），见报告 4.5 节。
 
 已知情况（不需要处理）：
