@@ -4,8 +4,8 @@
 use std::time::Instant;
 
 use crate::{
-    CaptureError, CaptureOutcome, CaptureTarget, CaptureTrace, Integrity, StepContext, StepOutput,
-    StepTrace, Unavailable, result_label,
+    CaptureError, CaptureOutcome, CaptureTarget, CaptureTrace, Integrity, Progress, StepContext,
+    StepOutput, StepTrace, Unavailable, result_label,
 };
 
 /// One capture method (UI Automation, clipboard, ...). Each step enforces its own time
@@ -13,8 +13,14 @@ use crate::{
 pub trait CaptureStep: Send + Sync {
     fn name(&self) -> &'static str;
 
-    /// `context` holds what earlier steps learned (e.g. the focused element's class).
-    fn try_capture(&self, target: &CaptureTarget, context: &StepContext) -> StepOutput;
+    /// `context` holds what earlier steps learned (e.g. the focused element's class);
+    /// `progress` receives the step's [`crate::CaptureProgress`] reports.
+    fn try_capture(
+        &self,
+        target: &CaptureTarget,
+        context: &StepContext,
+        progress: Progress<'_>,
+    ) -> StepOutput;
 
     /// Whether to run even though an earlier step reported "no selection". By default
     /// "no selection" is final: re-checking a reliable answer only costs time (and, for
@@ -30,8 +36,13 @@ impl<T: CaptureStep + ?Sized> CaptureStep for std::sync::Arc<T> {
         (**self).name()
     }
 
-    fn try_capture(&self, target: &CaptureTarget, context: &StepContext) -> StepOutput {
-        (**self).try_capture(target, context)
+    fn try_capture(
+        &self,
+        target: &CaptureTarget,
+        context: &StepContext,
+        progress: Progress<'_>,
+    ) -> StepOutput {
+        (**self).try_capture(target, context, progress)
     }
 
     fn confirms_no_selection(&self, target: &CaptureTarget, context: &StepContext) -> bool {
@@ -69,17 +80,19 @@ impl Pipeline {
     }
 
     pub fn run(&self, target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError> {
-        self.run_traced(target).0
+        self.run_traced(target, &|_| {}).0
     }
 
-    /// [`Pipeline::run`] plus a [`CaptureTrace`] of the steps that ran.
+    /// [`Pipeline::run`] plus a [`CaptureTrace`] of the steps that ran; the steps report
+    /// progress to `progress`.
     pub fn run_traced(
         &self,
         target: &CaptureTarget,
+        progress: Progress<'_>,
     ) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace) {
         let start = Instant::now();
         let mut trace = CaptureTrace::default();
-        let result = self.run_steps(target, &mut trace);
+        let result = self.run_steps(target, progress, &mut trace);
         trace.total = start.elapsed();
         (result, trace)
     }
@@ -87,6 +100,7 @@ impl Pipeline {
     fn run_steps(
         &self,
         target: &CaptureTarget,
+        progress: Progress<'_>,
         trace: &mut CaptureTrace,
     ) -> Result<CaptureOutcome, CaptureError> {
         let unavailable = |u| Ok(CaptureOutcome::Unavailable(u));
@@ -108,7 +122,7 @@ impl Pipeline {
                 continue;
             }
             let start = Instant::now();
-            let output = step.try_capture(target, &context);
+            let output = step.try_capture(target, &context, progress);
             if output.focused_class.is_some() {
                 context.focused_class.clone_from(&output.focused_class);
             }
@@ -181,7 +195,7 @@ mod tests {
             "fixed"
         }
 
-        fn try_capture(&self, _: &CaptureTarget, _: &StepContext) -> StepOutput {
+        fn try_capture(&self, _: &CaptureTarget, _: &StepContext, _: Progress<'_>) -> StepOutput {
             self.calls.fetch_add(1, Ordering::SeqCst);
             StepOutput {
                 element: Some(ElementSource::HwndFocus),
@@ -203,7 +217,12 @@ mod tests {
             "probe"
         }
 
-        fn try_capture(&self, _: &CaptureTarget, context: &StepContext) -> StepOutput {
+        fn try_capture(
+            &self,
+            _: &CaptureTarget,
+            context: &StepContext,
+            _: Progress<'_>,
+        ) -> StepOutput {
             *self.seen_class.lock().unwrap() = Some(context.focused_class.clone());
             StepOutput {
                 focused_class: self.focused_class.map(str::to_owned),
@@ -383,7 +402,8 @@ mod tests {
                 calls: Arc::default(),
             }),
         ];
-        let (result, trace) = Pipeline::with_own_process_id(steps, 1).run_traced(&target());
+        let (result, trace) =
+            Pipeline::with_own_process_id(steps, 1).run_traced(&target(), &|_| {});
         assert_eq!(result, captured("secret text"));
         assert_eq!(trace.precheck, None);
         let labels: Vec<_> = trace
@@ -428,8 +448,8 @@ mod tests {
 
     #[test]
     fn trace_records_prechecks() {
-        let (_, trace) =
-            Pipeline::with_own_process_id(vec![], 1).run_traced(&CaptureTarget::for_tests(None));
+        let (_, trace) = Pipeline::with_own_process_id(vec![], 1)
+            .run_traced(&CaptureTarget::for_tests(None), &|_| {});
         assert_eq!(trace.precheck, Some(Unavailable::NoForegroundWindow));
         assert!(trace.steps.is_empty());
         let line = trace.to_string();

@@ -2,6 +2,7 @@
 export type Content =
   | { kind: 'empty' }
   | { kind: 'loading' }
+  | { kind: 'release_keys' }
   | { kind: 'selection'; text: string; sentence: string | null; source_app: string | null }
   | { kind: 'unavailable'; reason: UnavailableReason }
   | { kind: 'error'; message: string };

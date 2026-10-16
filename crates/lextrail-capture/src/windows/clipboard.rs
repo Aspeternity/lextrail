@@ -44,8 +44,8 @@ use crate::clipboard_rules::{
     is_restorable_format, is_vscode_empty_selection_copy,
 };
 use crate::{
-    CaptureError, CaptureMethod, CaptureOutcome, CaptureStep, CaptureTarget, Selection,
-    StepContext, StepOutput, Unavailable,
+    CaptureError, CaptureMethod, CaptureOutcome, CaptureProgress, CaptureStep, CaptureTarget,
+    Progress, Selection, StepContext, StepOutput, Unavailable,
 };
 
 /// How long to wait for the user to release the hotkey's modifiers (D043).
@@ -99,12 +99,17 @@ impl CaptureStep for ClipboardStep {
         target.window.as_ref().is_some_and(confirm_no_selection)
     }
 
-    fn try_capture(&self, target: &CaptureTarget, context: &StepContext) -> StepOutput {
+    fn try_capture(
+        &self,
+        target: &CaptureTarget,
+        context: &StepContext,
+        progress: Progress<'_>,
+    ) -> StepOutput {
         let Some(window) = &target.window else {
             return unavailable(Unavailable::NoForegroundWindow, None);
         };
         let keys = copy_keys(window, context);
-        let mut output = self.copy_selection(keys);
+        let mut output = self.copy_selection(keys, progress);
         if keys == CopyKeys::CtrlInsert && output.note.is_none() {
             output.note = Some("ctrl_insert");
         }
@@ -134,9 +139,9 @@ enum Save {
 }
 
 impl ClipboardStep {
-    fn copy_selection(&self, keys: CopyKeys) -> StepOutput {
+    fn copy_selection(&self, keys: CopyKeys, progress: Progress<'_>) -> StepOutput {
         let start = Instant::now();
-        let released = wait_modifiers_released(MODIFIER_WAIT);
+        let released = wait_modifiers_released(MODIFIER_WAIT, progress);
         let key_wait = Some(start.elapsed());
         let output = if released {
             self.copy_released(keys)
@@ -245,18 +250,28 @@ enum Copied {
     VscodeEmptySelection,
 }
 
-fn wait_modifiers_released(timeout: Duration) -> bool {
+/// Reports [`CaptureProgress::WaitingForKeys`] when it has to wait, then
+/// [`CaptureProgress::KeysReleased`] once the keys are up.
+fn wait_modifiers_released(timeout: Duration, progress: Progress<'_>) -> bool {
     let deadline = Instant::now() + timeout;
+    let mut waiting = false;
     loop {
         // SAFETY: plain Win32 calls. The high bit is set while a key is down.
         let held = [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
             .iter()
             .any(|vk| unsafe { GetAsyncKeyState(i32::from(vk.0)) } < 0);
         if !held {
+            if waiting {
+                progress(CaptureProgress::KeysReleased);
+            }
             return true;
         }
         if Instant::now() >= deadline {
             return false;
+        }
+        if !waiting {
+            waiting = true;
+            progress(CaptureProgress::WaitingForKeys);
         }
         thread::sleep(POLL);
     }

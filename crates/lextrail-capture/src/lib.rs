@@ -34,14 +34,16 @@ pub trait TextCapture: Send + Sync {
     /// Reads the selected text and its context from `target`. Blocks for up to about the
     /// time budget; never call it on the UI thread.
     fn capture(&self, target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError> {
-        self.capture_traced(target).0
+        self.capture_traced(target, &|_| {}).0
     }
 
     /// [`TextCapture::capture`] plus what each method did and how long it took, for
-    /// diagnostics. The trace holds no captured text.
+    /// diagnostics. The trace holds no captured text. `progress` is called on the
+    /// capturing thread as the capture goes (see [`CaptureProgress`]).
     fn capture_traced(
         &self,
         target: &CaptureTarget,
+        progress: Progress<'_>,
     ) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace);
 
     /// Reads only the context around `selected_text` (already known, e.g. from a double
@@ -52,6 +54,19 @@ pub trait TextCapture: Send + Sync {
         selected_text: &str,
     ) -> Result<Option<RawContext>, CaptureError>;
 }
+
+/// What a running capture reports, so the caller can tell time spent waiting for the user
+/// from time spent capturing (the popup's "capturing..." delay, R3-P4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureProgress {
+    /// The clipboard fallback is waiting for the hotkey's keys to be released.
+    WaitingForKeys,
+    /// They were released; the copy follows.
+    KeysReleased,
+}
+
+/// Receives [`CaptureProgress`] reports.
+pub type Progress<'a> = &'a dyn Fn(CaptureProgress);
 
 /// The foreground window and focus at the moment the hotkey fired.
 #[derive(Debug, Clone)]
@@ -93,6 +108,7 @@ impl TextCapture for UnsupportedCapture {
     fn capture_traced(
         &self,
         _target: &CaptureTarget,
+        _progress: Progress<'_>,
     ) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace) {
         (
             Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported)),

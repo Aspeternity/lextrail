@@ -14,6 +14,8 @@ pub enum Content {
     Empty,
     /// Capture is taking a while.
     Loading,
+    /// The clipboard fallback waits for the hotkey to be released (held for a while).
+    ReleaseKeys,
     Selection {
         text: String,
         sentence: Option<String>,
@@ -152,6 +154,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Content::Loading).unwrap(),
             r#"{"kind":"loading"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Content::ReleaseKeys).unwrap(),
+            r#"{"kind":"release_keys"}"#
         );
     }
 }

@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use lextrail_capture::{CaptureTrace, TextCapture, result_label};
+use lextrail_capture::{CaptureProgress, CaptureTrace, TextCapture, result_label};
 use lextrail_config::PopupMode;
 use tauri::window::Color;
 use tauri::{
@@ -146,8 +146,15 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result
             .and_then(|t| t.window.as_ref())
             .and_then(|w| w.process_name.clone());
         debug_capture_delay();
+        let progress = |p: CaptureProgress| {
+            let event = match p {
+                CaptureProgress::WaitingForKeys => request::Event::WaitingForKeys { id },
+                CaptureProgress::KeysReleased => request::Event::KeysReleased { id },
+            };
+            dispatch_request(&capture_app, event);
+        };
         let (result, trace) = match target {
-            Ok(t) => capture.capture_traced(&t),
+            Ok(t) => capture.capture_traced(&t, &progress),
             Err(e) => (Err(e), CaptureTrace::default()),
         };
         if let Err(e) = &result {
@@ -166,12 +173,6 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result
         }
         let content = Content::from_capture(result, source_app);
         dispatch_request(&capture_app, request::Event::Captured { id, content });
-    });
-
-    let timer_app = app.clone();
-    spawn("popup-delay", move || {
-        thread::sleep(request::LOADING_DELAY);
-        dispatch_request(&timer_app, request::Event::DelayElapsed { id });
     });
 
     // May create the window and block for a while (first lookup).
@@ -331,6 +332,14 @@ fn perform_request<R: Runtime>(app: &AppHandle<R>, action: &request::Action) -> 
             None => Ok(()),
         },
         &A::WatchForeground(on) => app.run_on_main_thread(move || foreground::set_watching(on)),
+        &A::StartTimer { id, timer, after } => {
+            let app = app.clone();
+            spawn("popup-timer", move || {
+                thread::sleep(after);
+                dispatch_request(&app, request::Event::TimerFired { id, timer });
+            });
+            Ok(())
+        }
         A::Hide => {
             dispatch(app, Event::HideRequested);
             Ok(())

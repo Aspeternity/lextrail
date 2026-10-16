@@ -30,7 +30,7 @@ use windows::Win32::UI::Accessibility::{
 use super::window::hwnd;
 use crate::{
     CaptureError, CaptureMethod, CaptureOutcome, CaptureStep, CaptureTarget, ElementSource,
-    RawContext, Selection, StepContext, StepOutput, Unavailable, utf16_range_to_utf8,
+    Progress, RawContext, Selection, StepContext, StepOutput, Unavailable, utf16_range_to_utf8,
 };
 
 /// Time the caller waits for UIA before falling back (150–200 ms, D011).
@@ -126,7 +126,12 @@ impl CaptureStep for UiaStep {
         "uia"
     }
 
-    fn try_capture(&self, target: &CaptureTarget, _context: &StepContext) -> StepOutput {
+    fn try_capture(
+        &self,
+        target: &CaptureTarget,
+        _context: &StepContext,
+        _progress: Progress<'_>,
+    ) -> StepOutput {
         let unavailable = |u| StepOutput::from(Ok(CaptureOutcome::Unavailable(u)));
         if target.platform.hwnd == 0 {
             return unavailable(Unavailable::Unsupported);
@@ -534,7 +539,8 @@ mod tests {
         let step = UiaStep::new(BUDGET);
         let target = CaptureTarget::for_tests(Some(WindowInfo::for_tests("x.exe")));
         assert_eq!(
-            step.try_capture(&target, &StepContext::default()).result,
+            step.try_capture(&target, &StepContext::default(), &|_| {})
+                .result,
             Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported))
         );
     }
@@ -552,7 +558,9 @@ mod tests {
                 ..Default::default()
             },
         };
-        let outcome = step.try_capture(&target, &StepContext::default()).result;
+        let outcome = step
+            .try_capture(&target, &StepContext::default(), &|_| {})
+            .result;
         assert!(
             matches!(outcome, Ok(CaptureOutcome::Unavailable(_))),
             "{outcome:?}"
