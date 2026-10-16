@@ -35,9 +35,16 @@
   powershell -NoProfile -ExecutionPolicy Bypass -File tools/e2e/popup-e2e.ps1 -App target/debug/lextrail-desktop.exe
   ```
 
-  加 `-Pdf` 时改为把测试页打印成 PDF、在 Edge 的 PDF 阅读器中打开：此时不用 UIA、由剪贴板兜底取词，用来检查模拟 Ctrl+C 之后悬浮窗仍能获得焦点（没有句子行）。
+  加 `-Pdf` 时改为把测试页打印成 PDF、在 Edge 的 PDF 阅读器中打开：此时不用 UIA、由剪贴板兜底取词，用来检查模拟 Ctrl+C 之后悬浮窗仍能获得焦点（没有句子行）。再加 `-HoldMs 2000` 时按下快捷键后 Ctrl+Alt 按住 2 秒，检查按住期间显示"松开快捷键后取词…"、松手后取到单词；`-HoldMs 3600` 检查显示"请松开快捷键后再试"；`-HoldMs 200` 相当于正常按一下。
 
   它会启动应用和一个全新的 Edge（InPrivate，独立配置），用真实鼠标双击 `tools/e2e/list-item.html` 中的单词、按真实快捷键，然后检查悬浮窗可见、有焦点，并通过 UI Automation 读出悬浮窗里的文字，核对单词和句子（不含列表符号）。每次查词保存一张截图（`%TEMP%\lextrail-e2e\`）。运行期间会移动鼠标、模拟按键，不要操作电脑。失败时退出码为 1。
+- **屏蔽键会不会让修饰键卡住**（D014 补充）：`tools/e2e/stuck-keys.ps1` 打开一个自己的小窗口，用模拟按键按很多次 Ctrl+Alt+X，并让松开按键与补发的 Ctrl 竞争（间隔 0 ms 起），每次检查没有修饰键卡住：
+
+  ```bash
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "& ./tools/e2e/stuck-keys.ps1 -App target/debug/lextrail-desktop.exe -GapsMs 0,0,1,2,3 -Rounds 24"
+  ```
+
+  debug 版每次补发打印一行，如 `hotkey: alt mask: repeat LeftCtrl (0.5ms; hook saw A2v*)`（`A2` = 左 Ctrl，`v` 按下，`^` 松开，`*` 我们补发的）；出现竞争并已补发松开时为 `released first, key-up sent`。
 - 只测某个窗口能不能取到词时，可以用探针，不必启动整个应用：
 
   ```bash
@@ -159,6 +166,28 @@
 | R3-13 | D043 | 复制一个文件（资源管理器中 Ctrl+C），再在 Edge PDF 中查词，然后在别的文件夹粘贴 | 粘贴出的是原来的文件 || ✅ |
 | R3-14 | 回归 | Edge 网页（1.1）、Word（3.1）各查一次 | 与之前相同，日志里没有 `clipboard=` || ✅ |
 
+## R3 问题修复后的复测（R4）
+
+对应 R3-P1 至 R3-P4。构建 debug 版运行；标 **[release]** 的再用 release 版、从资源管理器双击启动测一次。**R4-1 至 R4-4、R4-8 必须用真实键盘按快捷键。** debug 版日志的变化：
+
+- 每次取词一行多了 `start +N ms`（从按下快捷键到开始取词），剪贴板这一步多了 `keys=N ms`（等松开快捷键的时间），例如 `capture #3: captured | start +7.6ms; uia=unsupported 3.1ms ...; clipboard=captured 218.4ms keys=208.5ms; total 221.6ms`。
+- 每次补发屏蔽键一行：`hotkey: alt mask: repeat LeftCtrl (...)`，只有 Alt 时为 `alt mask: 0xE8`。如果出现 `was released before its mask repeat; released it`，说明遇到了松开与补发的竞争并已处理，请记下当时的操作。
+
+| # | 对应 | 步骤 | 预期 | 结果 |
+|---|---|---|---|---|
+| R4-1 | R3-P1、5.1 | **[release]** Windows Terminal 中用鼠标选中一个单词 → 快捷键，重复 3 次；再选跨行文字 1 次 | 取到单词（日志 `uia=captured`，没有 `clipboard=`）；查词后 Windows Terminal 里的选区高亮**还在** | |
+| R4-2 | R2-1 | **[release]** VS Code Markdown 预览中拖选一个词 → 快捷键 → 看到结果后按 Esc → 按 ↓，重复 3 次；再在编辑器和集成终端中各做 1 次 | 没有"文件(F)"被框住，按 ↓ 不弹出菜单 | |
+| R4-3 | R2-2 | Word、记事本、Edge 中各查一次词后按 Esc | Word 不出现 KeyTips，记事本、Edge 不出现菜单栏激活 | |
+| R4-4 | R3-P3、P1 | 退出 LexTrail 后重新启动，**启动后的第一次查词在 VS Code 编辑器里做**（选中一个单词）→ 看到结果后按 Esc → 按 ↓ | 取到单词；菜单栏没有被激活。日志 `start +` 在 20 ms 以内；`keys=` 与之后几次相近（约 100–250 ms，取决于松手快慢），不再是 10 ms 左右 | |
+| R4-5 | R3-P3 | 再退出、重新启动，第一次查词在 Edge PDF 里做 | 同 R4-4：取到单词；`keys=` 与之后几次相近 | |
+| R4-6 | R3-P2、P4 | Edge PDF 中选中单词，按快捷键后**按住 Ctrl+Alt 约 2 秒**再松开；再做一次按住超过 3 秒 | 约 2 秒：按住约 1 秒后显示"松开快捷键后取词…"，松手后显示单词；超过 3 秒：显示"请松开快捷键后再试"（不再是"取词超时"），剪贴板保持 | |
+| R4-7 | R3-P4 | **[release]** Edge PDF、VS Code 编辑器中正常快速按一下快捷键，各 3 次 | 直接显示结果，不再先闪"正在取词…" | |
+| R4-8 | D014 补充 | 在记事本里**快速连按快捷键 20 次**（每次看到悬浮窗就按 Esc），然后在记事本里打几个字母 | 打出来的是字母（Ctrl 没有卡住，没有触发 Ctrl+字母的快捷键）；日志中如有 `released first`，记下次数 | |
+| R4-9 | R3-7 | VS Code 集成终端中运行 `ping -t 127.0.0.1`，什么都不选，按快捷键 | 显示"没有选中文字"；ping 继续运行，没有被中断 | |
+| R4-10 | 回归 | Edge 网页（1.1）、Word（3.1）、conhost 选词（R3-8）各查一次 | 与之前相同 | |
+
+AI 已用模拟按键做过的自动检查（2026-10-17，debug 版）：`popup-e2e.ps1` 网页、`-Pdf`、`-Pdf -HoldMs 200`（3 次，均未出现"正在取词…"）、`-Pdf -HoldMs 2000`（按住期间显示"松开快捷键后取词…"，截图核对）、`-Pdf -HoldMs 3600`（显示"请松开快捷键后再试"，截图核对）全部通过；`stuck-keys.ps1` 120 次按键没有修饰键卡住，其中 1 次触发了"先松开后补发"的竞争并已补发松开。模拟按键不能代替 R4-1 至 R4-4、R4-8 的真实键盘测试。
+
 ## 记录
 
 | 日期 | 测试人 | Windows 版本 | 备注 |
@@ -187,10 +216,10 @@
 
 | 编号 | 问题 | 处理 |
 |---|---|---|
-| R3-P1（高） | Windows Terminal 选词后查词，UIA 报 `no_selection`（4/4），选区高亮消失；关掉屏蔽键后 3/3 正常。屏蔽键 `0xE8` 是普通按键，Windows Terminal 收到非修饰键就清除选区（R3-9） | 修改屏蔽键做法（D014 补充），方案待项目负责人确认；修复后 WT 选词、R2-1、R2-2 都要通过 |
-| R3-P2（中） | 走剪贴板的程序（Edge PDF、VS Code）中按住 Ctrl+Alt 超过约 0.6 秒：`clipboard=timed_out 604ms [modifiers_held]`，提示"取词超时 / 程序响应较慢"，原因不对，松手后也不补取（走 UIA 的程序按住也能取词） | 项目负责人决定：一直等到松开修饰键再复制，兜底约 3 秒；超过时提示"请松开快捷键后再试"（D043 补充） |
-| R3-P3（待查） | 两轮 debug 测试中，启动后第一次取词的剪贴板步骤只用约 10 ms（如 `uia=unsupported 12.4ms; clipboard=captured 12.5ms; total 25.0ms`），之后每次 150–210 ms（在等松开修饰键，已用实验确认）。怀疑第一次没等修饰键 | 查等待修饰键的逻辑；日志中单独打印"等修饰键"的时间 |
-| R3-P4（观察） | 走剪贴板时每次都要等松开修饰键（约 150–200 ms），所以都会先闪一下"正在取词…"再出结果（release 版确认） | 结合 R3-P2 的改法，提出调整显示阈值的方案 |
+| R3-P1（高） | Windows Terminal 选词后查词，UIA 报 `no_selection`（4/4），选区高亮消失；关掉屏蔽键后 3/3 正常。屏蔽键 `0xE8` 是普通按键，Windows Terminal 收到非修饰键就清除选区（R3-9） | 已修复：改为补发仍按着的修饰键（Ctrl / Shift）的按下，低级键盘钩子检测"先松开"的竞争并补发松开（D014 补充）。待 R4-1 至 R4-4、R4-8 复测 |
+| R3-P2（中） | 走剪贴板的程序（Edge PDF、VS Code）中按住 Ctrl+Alt 超过约 0.6 秒：`clipboard=timed_out 604ms [modifiers_held]`，提示"取词超时 / 程序响应较慢"，原因不对，松手后也不补取（走 UIA 的程序按住也能取词） | 已修复：等待改为最多 3 秒，超过时结果为 `keys_held`，提示"请松开快捷键后再试"（D043 补充）。待 R4-6 复测 |
+| R3-P3（待查） | 两轮 debug 测试中，启动后第一次取词的剪贴板步骤只用约 10 ms（如 `uia=unsupported 12.4ms; clipboard=captured 12.5ms; total 25.0ms`），之后每次 150–210 ms（在等松开修饰键，已用实验确认）。怀疑第一次没等修饰键 | 原因：第一次查词时创建悬浮窗在快捷键线程上同步阻塞，取词线程在那之后才启动，用户已经松手，所以几乎不用等（复制本身是正确的 Ctrl+C，否则 Edge PDF 不会复制成功）。已改为先启动取词线程（D042 补充）；日志加了 `start +N ms` 和 `keys=N ms`。待 R4-4、R4-5 复测 |
+| R3-P4（观察） | 走剪贴板时每次都要等松开修饰键（约 150–200 ms），所以都会先闪一下"正在取词…"再出结果（release 版确认） | 已修复：约 100 ms 的计时在松开快捷键时重新开始；按住超过约 1 秒显示"松开快捷键后取词…"（D042 补充）。待 R4-6、R4-7 复测 |
 
 记录，暂不处理：
 - Word 中什么都不选时偶发一次 `uia=timed_out 193.7ms`，随后剪贴板兜底给出 `no_selection [clipboard_unchanged]`，共 598 ms；之后重测 3 次都是 3.6–5.5 ms，未复现。
