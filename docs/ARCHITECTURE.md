@@ -172,6 +172,7 @@ pub struct RawContext {
 - **调用顺序**：快捷键 → `snapshot` → **检查应用黑名单（M5）** → 显示悬浮窗（不抢焦点，见 9.3）→ 后台线程 `capture`。
 - **前置检查**（`Pipeline`，与平台无关，有单元测试）：没有前台窗口 → `NoForegroundWindow`；目标是 LexTrail 自己 → `Unsupported`（M1 的处理）；目标权限更高 → `Elevated`，不尝试任何方式。
 - **多种方式的结果合并**：按顺序尝试，第一个取到的为准；都取不到时按 `NoSelection` > `TimedOut` > 出错 > `Unsupported` 报告。某一步报告 `Elevated` 时立即结束。
+- **控制字符**：规范化文字时过滤控制字符（`text::clean_control_chars`）：Word 表格单元格结束符 `\u{7}` 等变为空格。PDFium（Chrome/Edge 的 PDF 阅读器）用 `\u{2}` 表示行末连字符，分不清断词（compu-tation）和复合词（English-to-German）：先由 `text::resolve_line_end_hyphens` 用词典判断，合起来是一个词就合并，否则还原为 `-`。
 - **切句**：适配器只返回段落或行；`lextrail_core::text::sentence_around` 用纯逻辑切出所在句子。位置提示无效（越界、不在字符边界、文字对不上）时退回按文字查找，不会 panic；多处匹配时取离提示最近的一处（没有提示时取第一处）；找不到时返回 `None`（不显示句子）。
 - **编码转换**：Windows 上 UIA 的位置是 UTF-16，适配器用 `utf16_range_to_utf8` 转成字节偏移（落在代理对中间时向外扩到完整字符）。
 - **测试**：`CaptureTarget::for_tests`、`WindowInfo::for_tests` 用于构造测试目标；`examples/capture_probe.rs` 用于手动测试真实窗口。

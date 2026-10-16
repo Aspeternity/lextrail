@@ -48,6 +48,7 @@
 - [ ] `dict-builder` 下载固定版本 ECDICT 并校验 SHA-256；CI 缓存下载与生成结果（D038）（新增）
 - [ ] `lextrail-dict`：查询、词形还原、单词 / 短语 / 句子分类
 - [ ] 悬浮窗显示词典结果：音标、词性、释义、考试标签
+- [ ] 行末连字符：词典接入后，取词结果先经 `text::resolve_line_end_hyphens` 用 `lextrail-dict` 判断（去掉连字符后查得到就合并，如 compu-tation），再规范化（新增，R1-7）
 - [ ] 快捷键设置界面与冲突提示；整理常用软件快捷键清单，确定默认快捷键（D014）
 - [ ] 查询历史写入本地数据库（`lextrail-store` 的 `record_lookup` 已完成，剩桌面端接入：第一次查询时按需打开数据库（D040）；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词）
 - [ ] "不记录查询历史"开关（`ARCHITECTURE.md` 6.3）（新增）
