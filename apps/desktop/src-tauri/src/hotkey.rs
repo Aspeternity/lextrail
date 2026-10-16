@@ -82,6 +82,8 @@ fn register<R: Runtime>(app: &AppHandle<R>, binding: &Binding) -> Result<(), Fai
 fn on_triggered<R: Runtime>(app: &AppHandle<R>, action: HotkeyAction) {
     #[cfg(debug_assertions)]
     eprintln!("hotkey triggered: {action:?}");
+    // First, before anything else can happen: Alt is still held now.
+    crate::keyboard::mask_alt_release();
     match action {
         HotkeyAction::Lookup => {
             if let Err(e) = crate::popup::lookup(app) {

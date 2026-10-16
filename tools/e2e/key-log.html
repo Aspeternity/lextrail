@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- Logs the keyboard and focus events this page receives, to see what an application
+     behind the popup observes when the global hotkey is pressed (D014, R1-1). -->
+<html translate="no">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="google" content="notranslate" />
+    <title>lextrail-keylog</title>
+    <style>
+      body {
+        margin: 0;
+        font: 20px/1.4 Consolas, monospace;
+      }
+      p {
+        margin: 16px 24px;
+        font: 40px sans-serif;
+      }
+      pre {
+        margin: 0 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <p>select me please</p>
+    <pre id="log"></pre>
+    <script>
+      const log = document.getElementById('log');
+      const start = performance.now();
+      const lines = [];
+      function add(text) {
+        lines.push(`${(performance.now() - start).toFixed(0).padStart(6)} ms  ${text}`);
+        log.textContent = lines.slice(-24).join('\n');
+      }
+      for (const type of ['keydown', 'keyup']) {
+        window.addEventListener(
+          type,
+          (e) =>
+            add(
+              `${type.padEnd(7)} key=${JSON.stringify(e.key)} code=${e.code} keyCode=${e.keyCode}` +
+                ` ctrl=${e.ctrlKey} alt=${e.altKey}`,
+            ),
+          true,
+        );
+      }
+      window.addEventListener('blur', () => add('window blur'));
+      window.addEventListener('focus', () => add('window focus'));
+    </script>
+  </body>
+</html>

@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod hotkey;
+mod keyboard;
 mod main_window;
 mod memory;
 mod notice;
