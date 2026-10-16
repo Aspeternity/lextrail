@@ -193,7 +193,8 @@ UIA 细节：
 - **卡死**：上一个请求仍在执行时，本次跳过 UIA；工作线程忙超过 5 秒视为卡死，放弃它并新建一个。被放弃的线程最多保留 2 个，超过后暂时停用 UIA，直到有线程结束。
 - **找元素**：先试焦点元素（必须属于目标进程），再依次从 `snapshot` 记下的 hwndFocus、hwndCaret、前台窗口句柄找元素；向上最多 8 层找带 TextPattern 的元素。
 - **Chromium 窗口**（类名 `Chrome_WidgetWin_*`：Chrome、Edge、VS Code 等 Electron 程序）：进程第一次被 UIA 访问时才开启无障碍树，第一次请求找不到文本元素（`Unsupported`）。对这类窗口在预算内每 30 ms 重试一次（预算末尾留 20 ms），实测第二次即可读到选区（全新 Edge 进程约 55–70 ms，之后约 15 ms）。日志中重试显示为 `x2`。
-- **Chromium 内置 PDF 阅读器**（Edge / Chrome 打开 PDF）：它通过 UIA 报告的选区范围整体错位，偏移量随段落变化（`GetText()` 返回的就是错位后的文字，例如选 "between" 得到 "ween di"），报告的"段落"也可能从段落中间开始；实测在第 1 页有时正确，第 2 页起常常错误，无法判断哪次可信。因此检测到选区所在文档是 Chromium PDF（文档根 `RootWebArea` 名为 "PDF Document" 或以 `.pdf` 结尾）时，UIA 直接返回 `Unsupported`（日志标注 `[chromium_pdf]`，不重试），交给剪贴板兜底。错误的文字比取不到更糟。
+- **Edge 内置 PDF 阅读器**：它通过 UIA 报告的选区范围整体错位，偏移量随段落变化（`GetText()` 返回的就是错位后的文字，例如选 "between" 得到 "ween di"），报告的"段落"也可能从段落中间开始；实测在第 1 页有时正确，第 2 页起常常错误，无法判断哪次可信。因此检测到选区所在文档是 Edge 的 PDF（文档根 `RootWebArea` 名为 "PDF Document" 或以 `.pdf` 结尾）时，UIA 直接返回 `Unsupported`（日志标注 `[chromium_pdf]`，不重试），交给剪贴板兜底。错误的文字比取不到更糟。
+- **Chrome 内置 PDF 阅读器**（2026-10-16 实测，R1-6）：选区报告正确。同一份 PDF 第 2 页 5 个词、4 个段落，每次报告的文字都与屏幕上高亮的词一致（截图核对），段落文字完整、从段首开始。Chrome 的文档根没有名字（PDF 文档元素名为本地化的"包含 15 页内容的 PDF 文档"），不会被上面的规则识别，**照常使用 UIA**，这正是期望的结果。若以后 Chrome 也出现错位，再按文档元素识别。刚打开 PDF 时可能报告"没有选中文字"（R1-4），由剪贴板确认处理。
 - **没有选中文字时不重试**：实测 Chromium 中早于无障碍树建立的选区，等待后也不会出现在 UIA 中；重试只会在真的没选中时白白耗尽预算。是否改用剪贴板再确认一次，在做剪贴板兜底时决定。
 - **错误归类**：拒绝访问 → `Elevated`；UIA 超时 → `TimedOut`；元素已不存在、目标断开 → `Unsupported`；其他 → `CaptureError::Platform`。
 - **权限识别**：比较目标进程与本程序的 `TokenIntegrityLevel`；查询失败为 `Unknown`（仍尝试取词）。

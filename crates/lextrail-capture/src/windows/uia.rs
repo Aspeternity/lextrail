@@ -356,9 +356,11 @@ fn read_selection(
             continue;
         };
         if is_chromium(target) && in_chromium_pdf(automation, &holder) {
-            // Edge / Chrome's PDF viewer reports selection ranges shifted by a varying
-            // number of characters (and paragraphs that start mid-paragraph): its text
-            // would be wrong, which is worse than none. Leave PDFs to the other methods.
+            // Edge's PDF viewer reports selection ranges shifted by a varying number of
+            // characters (and paragraphs that start mid-paragraph): its text would be
+            // wrong, which is worse than none. Leave those PDFs to the other methods.
+            // Chrome's PDF viewer reports correct ranges and does not match this check
+            // (its document root has no name), so it keeps using UIA (R1-6).
             *used = Some(source);
             *note = Some("chromium_pdf");
             return Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported));
@@ -409,9 +411,9 @@ fn text_pattern(
     Ok(None)
 }
 
-/// Whether `element` is inside the PDF viewer of a Chromium browser. Its document root
-/// (`RootWebArea`) is named "PDF Document" (not localised), and the page around it is
-/// named after the `.pdf` file.
+/// Whether `element` is inside Edge's PDF viewer. Its document root (`RootWebArea`) is
+/// named "PDF Document" (not localised), and the page around it is named after the
+/// `.pdf` file. Chrome's PDF viewer has an unnamed root and is not matched.
 fn in_chromium_pdf(automation: &IUIAutomation2, element: &IUIAutomationElement) -> bool {
     // SAFETY: COM calls on an MTA thread with valid arguments.
     unsafe {
