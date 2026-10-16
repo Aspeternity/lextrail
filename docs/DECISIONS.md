@@ -338,6 +338,15 @@
 - 已否决：方案 A（先取词，再显示并获取焦点）。
 - 由项目负责人选择（M1 取词接口评审）。
 
+### D043 ✅ 剪贴板兜底：何时运行、发什么键、如何恢复剪贴板（2026-10-17）
+- **何时运行**：UIA 返回"不支持"、超时或出错时，剪贴板兜底照常接着尝试（D011）。UIA 返回"没有选中文字"时，**只对 UIA 不可靠的程序**再用剪贴板确认一次：目前是 Chromium 系窗口（类名 `Chrome_WidgetWin_*`：Chrome、Edge、VS Code 等 Electron 程序）。记事本、Word、Windows Terminal 等 UIA 可靠的程序不确认，避免多余的延迟（约 400 ms）和剪贴板操作。理由：手动测试 R1-3、R1-4 中，VS Code 编辑器、集成终端和刚打开的 Chrome PDF 已经选中却被 UIA 报告为"没有选中"；而可靠程序的"没有选中"是真的。由项目负责人确定（第二阶段计划）。
+- **发什么键**：一般程序发 Ctrl+C；终端发 Ctrl+Insert（Windows Terminal、conhost、mintty、ConEmu，以及焦点在 VS Code 集成终端 `xterm-helper-textarea` 上时），因为终端里没有选区时 Ctrl+C 会中断正在运行的程序。2026-10-17 实测：Windows Terminal、conhost、VS Code 终端的 Ctrl+Insert 都能复制选区；没有选区时什么都不发生（VS Code 终端中运行的 `ping -t` 未被中断）。
+- **"复制了但不是选区"**：VS Code 编辑器在没有选区时按 Ctrl+C 会复制整行，同时在 Chromium 的 `Chromium Web Custom MIME Data Format` 中写入 `vscode-editor-data`，其中 `"isFromEmptySelection":true`；据此判定为"没有选中文字"。
+- **剪贴板没有变化**（序列号 400 ms 内未变）：判定为"没有选中文字"，不改动剪贴板。
+- **保存与恢复**：复制前保存剪贴板中所有"内存类"格式（文本、HTML、RTF、`CF_DIB`、文件列表 `CF_HDROP`、各程序注册的自定义格式等）；GDI 句柄类格式（`CF_BITMAP`、`CF_ENHMETAFILE`、`CF_METAFILEPICT`、`CF_PALETTE` 等）不保存，它们大多由系统从内存类格式自动合成（如 `CF_BITMAP` 由 `CF_DIB` 合成）。总大小超过 64 MB、或当前剪贴板所有者无响应（读取延迟渲染的格式会卡住）时，不使用剪贴板兜底（返回"不支持"），不碰用户的剪贴板。读取后立即写回保存的内容，并附加 `ExcludeClipboardContentFromMonitorProcessing`、`CanIncludeInClipboardHistory = 0`、`CanUploadToCloudClipboard = 0`，使写回不进入剪贴板历史和云剪贴板。
+- 已知限制：目标程序自己的复制会在剪贴板历史（Win+V）中留下一条记录，无法避免；写回会触发其他剪贴板监视程序的变化通知（多数监视程序会遵守上述排除标记）；只保存内存类格式，个别程序只放 GDI 句柄类格式时，恢复后可能缺少这种格式。
+- 剪贴板兜底只返回选中的文字，没有上下文（悬浮窗不显示句子）。
+
 ---
 
 ## 待确认事项
