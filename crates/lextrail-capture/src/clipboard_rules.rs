@@ -84,14 +84,22 @@ pub fn is_restorable_format(format: u32) -> bool {
 /// failed restore would lose a lot.
 pub const MAX_SAVED_BYTES: usize = 64 * 1024 * 1024;
 
-/// VS Code writes this format next to the text it copies.
-pub const VSCODE_EDITOR_DATA: &str = "vscode-editor-data";
+/// The clipboard format in which Chromium / Electron store web custom MIME types. VS Code
+/// puts its `vscode-editor-data` JSON there (verified with VS Code 1.142, R1-3), as UTF-16
+/// inside a binary "pickle" with length fields.
+pub const CHROMIUM_CUSTOM_MIME_FORMAT: &str = "Chromium Web Custom MIME Data Format";
 
-/// Whether VS Code's `vscode-editor-data` says the copy came from an empty selection (VS
+/// The custom MIME type VS Code uses for the metadata of a copy.
+const VSCODE_EDITOR_DATA: &str = "vscode-editor-data";
+
+/// Whether the decoded custom MIME data says VS Code copied from an empty selection (VS
 /// Code then copies the whole line, which is not what the user selected).
-pub fn is_vscode_empty_selection_copy(editor_data: &str) -> bool {
-    let compact: String = editor_data.chars().filter(|c| !c.is_whitespace()).collect();
-    compact.contains("\"isFromEmptySelection\":true")
+pub fn is_vscode_empty_selection_copy(custom_mime_data: &str) -> bool {
+    let compact: String = custom_mime_data
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    compact.contains(VSCODE_EDITOR_DATA) && compact.contains("\"isFromEmptySelection\":true")
 }
 
 #[cfg(test)]
@@ -166,14 +174,16 @@ mod tests {
 
     #[test]
     fn vscode_empty_selection_marker() {
-        assert!(is_vscode_empty_selection_copy(
-            r#"{"version":1,"isFromEmptySelection":true,"multicursorText":null,"mode":"markdown"}"#
-        ));
-        assert!(is_vscode_empty_selection_copy(
-            r#"{ "isFromEmptySelection" : true }"#
-        ));
+        // As decoded from the Chromium custom MIME pickle (length fields become noise).
+        let empty = "\u{1}\0application/vnd.code.copymetadata{\"id\":\"x\"}\u{12}\
+                     vscode-editor-data{\"version\":1, \"isFromEmptySelection\" : true}";
+        assert!(is_vscode_empty_selection_copy(empty));
         assert!(!is_vscode_empty_selection_copy(
-            r#"{"version":1,"isFromEmptySelection":false,"mode":"markdown"}"#
+            &empty.replace("true", "false")
+        ));
+        // The flag without VS Code's key is not enough.
+        assert!(!is_vscode_empty_selection_copy(
+            r#"{"isFromEmptySelection":true}"#
         ));
         assert!(!is_vscode_empty_selection_copy(""));
     }

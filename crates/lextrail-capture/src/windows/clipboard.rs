@@ -39,7 +39,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PCWSTR, w};
 
 use crate::clipboard_rules::{
-    CopyKeys, MAX_SAVED_BYTES, VSCODE_EDITOR_DATA, confirm_no_selection, copy_keys,
+    CHROMIUM_CUSTOM_MIME_FORMAT, CopyKeys, MAX_SAVED_BYTES, confirm_no_selection, copy_keys,
     is_restorable_format, is_vscode_empty_selection_copy,
 };
 use crate::{
@@ -62,7 +62,7 @@ pub struct ClipboardStep {
     exclude_from_monitors: u32,
     can_include_in_history: u32,
     can_upload_to_cloud: u32,
-    vscode_editor_data: u32,
+    chromium_custom_mime: u32,
 }
 
 impl ClipboardStep {
@@ -77,7 +77,7 @@ impl ClipboardStep {
                     "CanIncludeInClipboardHistory"
                 )),
                 can_upload_to_cloud: RegisterClipboardFormatW(w!("CanUploadToCloudClipboard")),
-                vscode_editor_data: register(VSCODE_EDITOR_DATA),
+                chromium_custom_mime: register(CHROMIUM_CUSTOM_MIME_FORMAT),
             }
         }
     }
@@ -199,8 +199,8 @@ impl ClipboardStep {
         let _open = OpenGuard::open(owner)?;
         // SAFETY: the clipboard is open; handles are only used while it stays open.
         unsafe {
-            if let Some(data) = read_format(self.vscode_editor_data)
-                && is_vscode_empty_selection_copy(&decode_any(&data))
+            if let Some(data) = read_format(self.chromium_custom_mime)
+                && is_vscode_empty_selection_copy(&utf16_lossy(&data))
             {
                 return Ok(Copied::VscodeEmptySelection);
             }
@@ -410,14 +410,16 @@ fn utf16_until_nul(bytes: &[u8]) -> String {
     String::from_utf16_lossy(&units)
 }
 
-/// Custom formats may be UTF-8 or UTF-16; this only needs to find an ASCII marker.
-fn decode_any(bytes: &[u8]) -> String {
-    let utf8 = String::from_utf8_lossy(bytes).replace('\0', "");
-    if utf8.contains('{') {
-        utf8
-    } else {
-        utf16_until_nul(bytes)
-    }
+/// All UTF-16 units of `bytes`, NULs included: Chromium's custom MIME pickle mixes binary
+/// length fields with UTF-16 strings, and only the strings matter here.
+fn utf16_lossy(bytes: &[u8]) -> String {
+    let units: Vec<u16> = bytes
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&pair| u16::from_ne_bytes(pair))
+        .collect();
+    String::from_utf16_lossy(&units)
 }
 
 /// Holds the clipboard open; closes it on drop.
@@ -495,11 +497,18 @@ mod tests {
     }
 
     #[test]
-    fn finds_vscode_marker_in_either_encoding() {
-        let json = r#"{"isFromEmptySelection":true}"#;
-        assert!(is_vscode_empty_selection_copy(&decode_any(json.as_bytes())));
-        let utf16: Vec<u8> = json.encode_utf16().flat_map(u16::to_ne_bytes).collect();
-        assert!(is_vscode_empty_selection_copy(&decode_any(&utf16)));
+    fn finds_vscode_marker_in_a_chromium_pickle() {
+        // Binary length fields followed by the UTF-16 type and JSON strings.
+        let utf16 = |s: &str| {
+            s.encode_utf16()
+                .flat_map(u16::to_ne_bytes)
+                .collect::<Vec<u8>>()
+        };
+        let mut bytes = vec![0x40, 0, 0, 0, 1, 0, 0, 0, 18, 0, 0, 0];
+        bytes.extend(utf16("vscode-editor-data"));
+        bytes.extend([30, 0, 0, 0]);
+        bytes.extend(utf16(r#"{"isFromEmptySelection":true}"#));
+        assert!(is_vscode_empty_selection_copy(&utf16_lossy(&bytes)));
     }
 
     /// Round trip through the real clipboard. Ignored by default because it changes the
