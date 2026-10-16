@@ -300,7 +300,7 @@ fn is_chromium(target: &CaptureTarget) -> bool {
         .window
         .as_ref()
         .and_then(|w| w.class_name.as_deref())
-        .is_some_and(|c| c.starts_with("Chrome_WidgetWin_"))
+        .is_some_and(crate::clipboard_rules::is_chromium_class)
 }
 
 fn read(automation: &IUIAutomation2, target: &CaptureTarget) -> StepOutput {

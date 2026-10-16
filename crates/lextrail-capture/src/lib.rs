@@ -9,6 +9,7 @@
 //! "Nothing to capture" ([`CaptureOutcome::Unavailable`]) is a normal result the popup
 //! explains to the user; [`CaptureError`] means something is broken and is logged.
 
+mod clipboard_rules;
 mod pipeline;
 mod text_offsets;
 #[cfg(windows)]

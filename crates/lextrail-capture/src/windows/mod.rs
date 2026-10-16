@@ -1,5 +1,7 @@
-//! Windows capture adapter: UI Automation now; clipboard fallback and OCR follow (D011).
+//! Windows capture adapter: UI Automation, then the clipboard fallback (D011). OCR is a
+//! separate entry point (M5).
 
+mod clipboard;
 mod uia;
 mod window;
 
@@ -24,8 +26,17 @@ impl WindowsCapture {
 
     pub fn with_uia_budget(budget: Duration) -> Self {
         let uia = Arc::new(UiaStep::new(budget));
-        // The clipboard fallback is added after UIA in its own task.
-        let pipeline = Pipeline::new(vec![Box::new(Arc::clone(&uia))]);
+        let clipboard: Box<dyn crate::CaptureStep> = Box::new(clipboard::ClipboardStep::new());
+        // Debug builds only: LEXTRAIL_DEBUG_CLIPBOARD_ONLY=1 skips UI Automation, to test
+        // the clipboard fallback in programs where UIA works.
+        #[cfg(debug_assertions)]
+        if std::env::var_os("LEXTRAIL_DEBUG_CLIPBOARD_ONLY").is_some() {
+            return Self {
+                uia,
+                pipeline: Pipeline::new(vec![clipboard]),
+            };
+        }
+        let pipeline = Pipeline::new(vec![Box::new(Arc::clone(&uia)), clipboard]);
         Self { uia, pipeline }
     }
 }
