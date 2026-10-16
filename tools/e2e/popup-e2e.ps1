@@ -15,24 +15,41 @@ With -Pdf the same page is printed to a PDF and opened in Edge's PDF viewer, whe
 is not used (D041) and the word comes through the clipboard fallback (D043): this checks
 that the popup still gets focus after the simulated Ctrl+C. There is no sentence then.
 
+With -HoldMs the hotkey's Ctrl+Alt are held for that long after the X is pressed (use it
+with -Pdf, where the clipboard fallback waits for the keys, D043). The popup is read once
+more shortly before the keys are released: held for over a second it must say
+"release the hotkey to capture..." (R3-P4); held for more than 3 s the result must be
+"release the hotkey and try again"
+(R3-P2), otherwise the word. (Read with UI Automation, like the rest.)
+
 It moves the mouse and sends keys: leave the machine alone while it runs. Exits with 1 if
 any check fails.
 
 .EXAMPLE
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Pdf
+pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Pdf -HoldMs 2000
 #>
 param(
   [string]$App = "target\debug\lextrail-desktop.exe",
   [int]$Lookups = 2,
   [string]$OutDir = (Join-Path $env:TEMP "lextrail-e2e"),
-  [switch]$Pdf
+  [switch]$Pdf,
+  [int]$HoldMs = 0
 )
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
 $App = (Resolve-Path $App).Path
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $expected = if ($Pdf) { @("launch") } else { @("launch", "launch missiles at ships.") }
+# The clipboard fallback gives up after 3 s of held keys (D043).
+# Built from code points: Windows PowerShell reads a script without BOM in the ANSI code page.
+function Text([int[]]$CodePoints) { -join ($CodePoints | ForEach-Object { [char]$_ }) }
+# The popup texts "release the hotkey and try again" (D043, R3-P2) and "release the
+# hotkey to capture..." (R3-P4).
+$keysHeldTitle = Text 0x8BF7, 0x677E, 0x5F00, 0x5FEB, 0x6377, 0x952E, 0x540E, 0x518D, 0x8BD5
+$holdHint = Text 0x677E, 0x5F00, 0x5FEB, 0x6377, 0x952E, 0x540E, 0x53D6, 0x8BCD, 0x2026
+if ($HoldMs -gt 3000) { $expected = @($keysHeldTitle) }
 
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing
 Add-Type @"
@@ -48,6 +65,9 @@ public static class LtE2e {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int hh, bool r);
+  [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
+  [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint type);
+  public static void Key(byte vk, bool up) { keybd_event(vk, (byte)MapVirtualKey(vk, 0), up ? 2u : 0u, IntPtr.Zero); }
   // Fixed size in logical pixels, so the PDF page lays out the same every time.
   public static void Resize(IntPtr h, int w, int hh) {
     double scale = GetDpiForWindow(h) / 96.0;
@@ -74,13 +94,13 @@ function Save-Screenshot([IntPtr]$Hwnd, [string]$Path) {
 
 # The popup is a WebView2 (Chromium) window, which builds its accessibility tree only
 # after the first UIA query, so the text is read a few times before giving up.
-function Get-PopupText([IntPtr]$Hwnd) {
+function Get-PopupText([IntPtr]$Hwnd, [string]$Want = $expected[0]) {
   $root = [System.Windows.Automation.AutomationElement]::FromHandle($Hwnd)
   for ($try = 0; $try -lt 10; $try++) {
     $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
       [System.Windows.Automation.Condition]::TrueCondition)
     $names = @($all | ForEach-Object { $_.Current.Name } | Where-Object { $_ } | Select-Object -Unique)
-    if ($names | Where-Object { $_ -eq $expected[0] }) { return $names }
+    if ($names | Where-Object { $_ -eq $Want }) { return $names }
     Start-Sleep -Milliseconds 200
   }
   return $names
@@ -122,7 +142,23 @@ try {
     $ws.SendKeys("{ESC}"); Start-Sleep -Milliseconds 300
     [LtE2e]::DoubleClick($page.MainWindowHandle, $word[0], $word[1]); Start-Sleep -Milliseconds 400
     Save-Screenshot $page.MainWindowHandle (Join-Path $OutDir "page-$i.png")
-    $ws.SendKeys("^%x"); Start-Sleep -Milliseconds 900
+    $heldText = @()
+    if ($HoldMs -gt 0) {
+      # Left Ctrl, left Alt, X down and up; Ctrl+Alt stay down for $HoldMs.
+      [LtE2e]::Key(0xA2, $false); Start-Sleep -Milliseconds 30; [LtE2e]::Key(0xA4, $false)
+      Start-Sleep -Milliseconds 30; [LtE2e]::Key(0x58, $false); [LtE2e]::Key(0x58, $true)
+      Start-Sleep -Milliseconds ([Math]::Max(0, $HoldMs - 400))
+      $early = [LtE2e]::FindWindow("Tauri Window", "LexTrail")
+      if ($early -ne [IntPtr]::Zero -and [LtE2e]::IsWindowVisible($early)) {
+        Save-Screenshot $early (Join-Path $OutDir "held-$i.png")
+        $heldText = Get-PopupText $early $(if ($HoldMs -le 3000) { $holdHint } else { $expected[0] })
+      }
+      Start-Sleep -Milliseconds ([Math]::Min(400, $HoldMs))
+      [LtE2e]::Key(0xA4, $true); [LtE2e]::Key(0xA2, $true)
+      Start-Sleep -Milliseconds 900
+    } else {
+      $ws.SendKeys("^%x"); Start-Sleep -Milliseconds 900
+    }
 
     $popup = [LtE2e]::FindWindow("Tauri Window", "LexTrail")
     $visible = $popup -ne [IntPtr]::Zero -and [LtE2e]::IsWindowVisible($popup)
@@ -133,11 +169,14 @@ try {
       $text = Get-PopupText $popup
     }
     $missing = @($expected | Where-Object { $text -notcontains $_ })
-    $ok = $visible -and $focused -and $missing.Count -eq 0
+    # Held for over a second (and read before the 3 s limit): the hint must be up.
+    $hintOk = -not ($HoldMs -gt 1400 -and $HoldMs -le 3000) -or ($heldText -contains $holdHint)
+    $ok = $visible -and $focused -and $missing.Count -eq 0 -and $hintOk
     if (-not $ok) { $failures++ }
     "lookup ${i}: " + $(if ($ok) { "PASS" } else { "FAIL" }) + " (visible=$visible focused=$focused)"
     "  popup text: " + ($text -join " | ")
     if ($missing.Count) { "  missing: " + ($missing -join " | ") }
+    if ($HoldMs -gt 0) { "  while held: " + ($heldText -join " | ") + $(if ($hintOk) { "" } else { "  (hint missing)" }) }
     if ($shot) { "  screenshot: $shot" }
     $ws.SendKeys("{ESC}"); Start-Sleep -Milliseconds 600
   }
