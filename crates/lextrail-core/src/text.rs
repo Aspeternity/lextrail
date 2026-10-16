@@ -119,6 +119,64 @@ fn one_marker(text: &str) -> Option<&str> {
     }
 }
 
+/// PDFium (Chrome / Edge PDF viewer) writes this in place of a hyphen at the end of a
+/// line. It cannot tell a hyphenation break ("compu-tation") from a compound word's
+/// hyphen ("English-to-German"); see [`resolve_line_end_hyphens`].
+pub const LINE_END_HYPHEN: char = '\u{2}';
+
+/// Replaces control characters that capture can bring along: [`LINE_END_HYPHEN`] becomes
+/// `-` (whitespace right after it is dropped), every other control character (e.g. Word's
+/// table cell end `\u{7}`) becomes a space. Ordinary whitespace is left as it is.
+pub fn clean_control_chars(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut after_hyphen = false;
+    for c in text.chars() {
+        if after_hyphen && c.is_whitespace() {
+            continue;
+        }
+        after_hyphen = c == LINE_END_HYPHEN;
+        match c {
+            LINE_END_HYPHEN => out.push('-'),
+            c if c.is_control() && !c.is_whitespace() => out.push(' '),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Decides each [`LINE_END_HYPHEN`] between two letters: if the two halves joined form a
+/// word (`is_word`, normally the dictionary), the marker is removed ("compu" + "tation" →
+/// "computation"); otherwise it stays, and [`clean_control_chars`] later turns it into `-`.
+pub fn resolve_line_end_hyphens(text: &str, is_word: impl Fn(&str) -> bool) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(LINE_END_HYPHEN) {
+        let (before, after) = (&rest[..at], &rest[at + LINE_END_HYPHEN.len_utf8()..]);
+        let after_trimmed = after.trim_start();
+        let left_start = before
+            .char_indices()
+            .rev()
+            .take_while(|(_, c)| c.is_alphabetic())
+            .last()
+            .map_or(before.len(), |(i, _)| i);
+        let right_len: usize = after_trimmed
+            .chars()
+            .take_while(|c| c.is_alphabetic())
+            .map(char::len_utf8)
+            .sum();
+        let (left, right) = (&before[left_start..], &after_trimmed[..right_len]);
+        out.push_str(before);
+        if !left.is_empty() && !right.is_empty() && is_word(&format!("{left}{right}")) {
+            rest = after_trimmed;
+        } else {
+            out.push(LINE_END_HYPHEN);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Finds the byte range of `selection` in `paragraph` (see [`sentence_around`]).
 fn locate(paragraph: &str, selection: &str, hint: Option<Range<usize>>) -> Option<Range<usize>> {
     let selection = selection.trim();
@@ -513,6 +571,48 @@ mod tests {
                 "This makes it more difficult to learn dependencies between distant \
                  positions [12]."
             )
+        );
+    }
+
+    #[test]
+    fn control_characters_are_cleaned() {
+        assert_eq!(clean_control_chars("hello world\u{7}"), "hello world ");
+        assert_eq!(
+            clean_control_chars("English\u{2}to-German"),
+            "English-to-German"
+        );
+        // Whitespace after the marker (a kept line break) is dropped.
+        assert_eq!(clean_control_chars("English\u{2}\r\nto"), "English-to");
+        // Ordinary whitespace stays for the caller to collapse.
+        assert_eq!(clean_control_chars("a\tb\nc"), "a\tb\nc");
+        assert_eq!(clean_control_chars("x\u{0}y"), "x y");
+    }
+
+    #[test]
+    fn line_end_hyphens_are_joined_only_when_the_dictionary_knows_the_word() {
+        let words = ["computation", "representation"];
+        let is_word = |w: &str| words.contains(&w.to_lowercase().as_str());
+        assert_eq!(
+            resolve_line_end_hyphens("sequential compu\u{2}tation of", is_word),
+            "sequential computation of"
+        );
+        assert_eq!(
+            resolve_line_end_hyphens("Represen\u{2}\r\ntation", is_word),
+            "Representation"
+        );
+        // A compound word keeps its hyphen.
+        let kept = resolve_line_end_hyphens("English\u{2}to-German", is_word);
+        assert_eq!(kept, "English\u{2}to-German");
+        assert_eq!(clean_control_chars(&kept), "English-to-German");
+        // Not between letters: kept.
+        assert_eq!(
+            resolve_line_end_hyphens("2014\u{2}2017", is_word),
+            "2014\u{2}2017"
+        );
+        assert_eq!(resolve_line_end_hyphens("\u{2}", is_word), "\u{2}");
+        assert_eq!(
+            resolve_line_end_hyphens("no markers", is_word),
+            "no markers"
         );
     }
 }

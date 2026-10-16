@@ -77,11 +77,13 @@ text_enum!(CaptureMethod, "capture method", {
 });
 
 /// Collapses runs of whitespace to one space, trims, and keeps at most
-/// [`MAX_TEXT_CHARS`] characters.
+/// [`MAX_TEXT_CHARS`] characters. Control characters are cleaned up first with
+/// [`crate::text::clean_control_chars`] (line-end hyphen marker → `-`, others → space).
 pub fn normalize_text(text: &str) -> String {
-    let mut out = String::with_capacity(text.len().min(MAX_TEXT_CHARS * 4));
+    let cleaned = crate::text::clean_control_chars(text);
+    let mut out = String::with_capacity(cleaned.len().min(MAX_TEXT_CHARS * 4));
     let mut chars = 0;
-    for word in text.split_whitespace() {
+    for word in cleaned.split_whitespace() {
         let sep = usize::from(chars > 0);
         if chars + sep >= MAX_TEXT_CHARS {
             break;
@@ -135,6 +137,18 @@ mod tests {
             "take off now"
         );
         assert_eq!(normalize_text(" \n\t"), "");
+    }
+
+    #[test]
+    fn normalize_removes_control_characters() {
+        // Word table cell end marker.
+        assert_eq!(normalize_text("hello world\u{7}"), "hello world");
+        // PDFium line-end hyphen marker.
+        assert_eq!(
+            normalize_text("the English\u{2}to-German task"),
+            "the English-to-German task"
+        );
+        assert_eq!(normalize_text("a\u{0}b\u{1b}c"), "a b c");
     }
 
     #[test]
