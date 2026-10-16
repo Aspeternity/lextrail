@@ -458,7 +458,8 @@ address                         ★  🔊  📌
 3. 超过约 100 ms：先清空上一次的内容，再以**不激活**的方式（`SW_SHOWNOACTIVATE`）显示"正在取词…"。
 4. 取词完成：显示结果，然后让悬浮窗获取焦点（Esc 和点击外部关闭都依赖焦点）。
 5. 取词期间用 `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` 监视前台窗口：用户切换到别的窗口，就隐藏悬浮窗并丢弃这次的结果。
-6. 获取焦点失败（前台锁定）：悬浮窗仍然显示，继续监视前台窗口，切换窗口时隐藏。
+6. 获取焦点：先直接 `SetForegroundWindow`；被拒绝时（例如慢速取词期间有过其他输入），先用 `IsHungAppWindow` 确认前台窗口没有失去响应，再用 `AttachThreadInput` 挂到前台线程的输入队列后重试，无论成功与否都立即解除挂接。不使用 Tauri 的 `set_focus` 后备做法（它会模拟一次 Alt 键，发到原窗口，可能打开其菜单栏）。获取焦点期间发生的前台变化视为我们自己造成的，不隐藏悬浮窗（`popup/activation.rs`、`popup/request.rs`）。
+   - 仍然失败时：结果照常显示，但悬浮窗没有焦点，Esc 关不掉；在原窗口里操作也不会改变前台窗口。关闭方式：点击悬浮窗右上角的 × 按钮（任何时候都显示）；或点击悬浮窗本身（它因此获得焦点，之后 Esc、点击外部都可关闭）；或切换到其他窗口（仍在监视前台，会隐藏）；或再次按快捷键查别的词。
 7. 悬浮窗隐藏时清空内容，下次显示时不会闪出旧结果。
 8. 权限（Tauri 2 ACL）：`apps/desktop/src-tauri/capabilities/popup.json` 只给悬浮窗授予 `core:event:allow-listen`；`hide_popup`、`popup_ready` 是应用自己的命令，不需要权限。主窗口目前不调用任何 Tauri API，没有授予权限，以后按需添加。
 

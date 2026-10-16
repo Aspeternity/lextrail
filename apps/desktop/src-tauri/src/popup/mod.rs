@@ -7,6 +7,8 @@
 //!
 //! This module turns both state machines' actions into window, WebView2 and capture calls.
 
+#[cfg(windows)]
+mod activation;
 mod content;
 mod foreground;
 mod lifecycle;
@@ -384,20 +386,18 @@ fn hide_window<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
 }
 
 /// Gives the popup focus (needed for Esc and click-outside), then reports whether it
-/// worked. Windows allows it because the hotkey press was input to this process; it can
-/// still refuse (foreground lock), and the request then keeps watching the foreground.
+/// worked (see [`activation`]). If Windows refuses, the popup stays visible without
+/// focus: the request keeps watching the foreground, and the page's close button works.
 fn activate<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<R>) -> tauri::Result<()> {
-    // Tell Tauri the window is visible, so its own focus and hide calls work.
+    // Tell Tauri the window is visible, so its own hide calls keep working.
     window.show()?;
     let target = window.clone();
     app.run_on_main_thread(move || {
-        if !try_set_foreground(&target) {
-            #[cfg(debug_assertions)]
-            eprintln!("popup: SetForegroundWindow refused; falling back to set_focus");
-            if let Err(e) = target.set_focus() {
-                eprintln!("popup: set_focus failed: {e}");
-            }
-        }
+        let how = bring_to_front(&target);
+        #[cfg(debug_assertions)]
+        eprintln!("popup: bring to front: {how}");
+        #[cfg(not(debug_assertions))]
+        let _ = how;
     })?;
     let app = app.clone();
     let window = window.clone();
@@ -421,17 +421,19 @@ fn activate<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<R>) -> tauri:
 }
 
 #[cfg(windows)]
-fn try_set_foreground<R: Runtime>(window: &WebviewWindow<R>) -> bool {
-    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
-    // SAFETY: plain Win32 call on our own window handle.
-    window
-        .hwnd()
-        .is_ok_and(|hwnd| unsafe { SetForegroundWindow(hwnd) }.as_bool())
+fn bring_to_front<R: Runtime>(window: &WebviewWindow<R>) -> String {
+    match window.hwnd() {
+        Ok(hwnd) => format!("{:?}", activation::bring_to_front(hwnd)),
+        Err(e) => format!("no window handle: {e}"),
+    }
 }
 
 #[cfg(not(windows))]
-fn try_set_foreground<R: Runtime>(_window: &WebviewWindow<R>) -> bool {
-    false
+fn bring_to_front<R: Runtime>(window: &WebviewWindow<R>) -> String {
+    match window.set_focus() {
+        Ok(()) => "set_focus".into(),
+        Err(e) => format!("set_focus failed: {e}"),
+    }
 }
 
 #[cfg(windows)]

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { UNAVAILABLE_MESSAGES, type Content } from './content';
-import { subscribe } from './ipc';
+import { call, subscribe } from './ipc';
 
 const content = ref<Content>({ kind: 'empty' });
 
@@ -18,6 +18,16 @@ onMounted(() => {
 
 <template>
   <main class="popup">
+    <!-- Always available: when Windows refuses the popup focus, Esc cannot reach it. -->
+    <button
+      class="popup__close"
+      type="button"
+      aria-label="关闭"
+      title="关闭（Esc）"
+      @click="call('hide_popup')"
+    >
+      ×
+    </button>
     <template v-if="content.kind === 'loading'">
       <p class="popup__hint">正在取词…</p>
     </template>

@@ -7,7 +7,9 @@
 //! - It appears only once the capture is done, or after [`LOADING_DELAY`] with
 //!   "capturing...", shown without activation.
 //! - When the capture is done it shows the result and takes focus (for Esc and
-//!   click-outside). Until that worked, another window coming to the foreground hides it.
+//!   click-outside). Foreground changes while taking focus are ignored (they are ours).
+//! - If Windows refuses the focus, the result stays visible without it: another window
+//!   coming to the foreground hides it, and so does the page's close button.
 
 use std::time::Duration;
 
@@ -176,10 +178,12 @@ impl Request {
                 }
             }
 
+            // While we are taking the foreground ourselves, foreground changes are ours (or
+            // a side effect of trying), not the user switching windows.
+            (Phase::Activating, Event::ForegroundChanged) => vec![],
             (
                 Phase::Capturing { .. }
                 | Phase::WaitingForWindow { .. }
-                | Phase::Activating
                 | Phase::Shown { focused: false },
                 Event::ForegroundChanged,
             ) => {
@@ -365,5 +369,24 @@ mod tests {
             [A::WatchForeground(false), A::SetContent(Content::Empty)]
         );
         assert_eq!(r.capturing_id(), None);
+    }
+
+    #[test]
+    fn foreground_changes_while_activating_are_ignored() {
+        let mut r = started(1);
+        r.handle(Event::WindowReady);
+        r.handle(Event::Captured {
+            id: 1,
+            content: result(),
+        });
+        // E.g. a side effect of attaching to the foreground thread to take the focus.
+        assert_eq!(r.handle(Event::ForegroundChanged), []);
+        // Refused: the result stays visible without focus.
+        assert_eq!(r.handle(Event::Activated { ok: false }), []);
+        // From now on the user switching windows hides it.
+        assert_eq!(
+            r.handle(Event::ForegroundChanged),
+            [A::WatchForeground(false), A::Hide]
+        );
     }
 }
