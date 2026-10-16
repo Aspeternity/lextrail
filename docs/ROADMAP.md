@@ -37,7 +37,9 @@
 - [x] `lextrail-capture` 统一接口 + Windows 实现：UI Automation 取词（含上下文）（D041）
 - [x] 悬浮窗焦点方案 B：取词期间不抢焦点、约 100 ms 后显示"正在取词"、前台窗口变化时隐藏、取词完成后获取焦点（D042）（新增）
 - [x] `lextrail-core` 切句：`sentence_around`（新增）
-- [ ] 按 `docs/specs/m1-capture-manual-tests.md` 在浏览器、PDF 阅读器、Word、VS Code、终端中手动测试并记录结果（新增）
+- [ ] 按 `docs/specs/m1-capture-manual-tests.md` 在浏览器、PDF 阅读器、Word、VS Code、终端中手动测试并记录结果（新增）：R1、R2 已完成，R3（剪贴板兜底后）待测
+- [ ] 获取焦点的后备路径（`AttachThreadInput`、被拒后不带焦点显示）在真实环境中触发时记录场景并核对（新增，R2-5）
+- [ ] Windows Terminal 跨行选中时句子带上提示符：终端里按行切上下文、识别提示符（新增，R1-10，优先级低）
 - [ ] 前端测试：引入 Vitest，测试悬浮窗页面的内容渲染（新增）
 - [x] 剪贴板兜底：修饰键等待、序列号确认、恢复原内容、终端使用 Ctrl+Insert；完成后验证悬浮窗仍能获取焦点（手动测试清单 6.10）；Edge 内置 PDF 阅读器靠它取词（D043）
 - [x] 决定：UIA 返回"没有选中文字"时，只对 Chromium 系窗口用剪贴板确认（D043）（新增，来自手动测试第 2 节）

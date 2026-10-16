@@ -3,115 +3,82 @@
 > 每次开发结束前更新本文件（见 `AGENTS.md` 的"结束流程"）。
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
-**最后更新**：2026-10-15
-**当前阶段**：M1 · 取词与词典（进行中：数据模型、HLC、`lextrail-store`、UIA 取词与悬浮窗焦点方案已完成）
+**最后更新**：2026-10-17
+**当前阶段**：M1 · 取词与词典（进行中）。取词部分（UIA + 剪贴板兜底 + 悬浮窗焦点）已完成，**等第三轮手动复测（R3）**；词典部分尚未开始。
 
 ---
 
 ## 当前状态
 
-M0 的十项任务全部完成：monorepo、代码规范、CI、Tauri 托盘骨架、全局快捷键、设置读写、悬浮窗、悬浮窗生命周期、主窗口骨架、**性能测试（路线 A 已确认，D036）**。M0 收尾时评审了 `ARCHITECTURE.md` 第 3 节（仓库结构），已对照实际代码更新，并新增决定 D037（本地数据库放在 `lextrail-store`）、D038（dict-builder 用 Rust，词典数据不进仓库，构建时下载固定版本并校验哈希）、D039（M1 开始时评审数据模型公共部分）。
+M0 全部完成（路线 A 已确认，D036）。M1 已完成：
 
-M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同步元数据字段、HLC 时间戳格式（小写十六进制定宽文本，按字符串比较）、`lookups` 表的结构都已确定，写在 `ARCHITECTURE.md` 6.1–6.3；推迟到 M3/M4 的问题记在 6.5，并已加入 `ROADMAP.md`。本地表不带 `user_id`，`device_id` 存在数据库 `meta` 表中。
+- **数据模型公共部分**评审（D039）：同步元数据、HLC 时间戳格式、`lookups` 表，见 `ARCHITECTURE.md` 6.1–6.3，推迟事项在 6.5。
+- **`lextrail-core` 的 HLC** 与 **`lextrail-store`**（D037、D040：数据库在 `%LOCALAPPDATA%`，按需打开）。**桌面端尚未接入查询历史。**
+- **取词**（D041）：统一接口 + Windows UIA，在专用 MTA 线程上运行；Chromium 窗口第一次取词时在预算内重试；Edge 的 PDF 阅读器报告的选区会错位，所以不走 UIA（`[chromium_pdf]`），Chrome 的 PDF 正常走 UIA。
+- **悬浮窗焦点方案 B**（D042）：取词期间不抢焦点，超过约 100 ms 才显示"正在取词…"，取词完成后获取焦点（`SetForegroundWindow`，被拒时用 `AttachThreadInput`；不再用 Tauri 模拟 Alt 的后备做法）；仍失败时不带焦点显示结果，可用右上角 × 关闭；悬浮窗在前台时再按快捷键会被忽略；每次显示时按目标显示器当前缩放设置尺寸。
+- **快捷键屏蔽键**（D014 补充）：快捷键触发时 Alt 仍按着，就补发虚拟键 `0xE8`，避免 VS Code 等程序把它当成单独按 Alt 而激活菜单栏（R2-1 用真实键盘验证有效）。
+- **剪贴板兜底**（D043）：UIA 不支持、超时或出错时运行；UIA 说"没有选中"时只对 Chromium 系窗口用剪贴板确认。终端（Windows Terminal、conhost、VS Code 集成终端）用 Ctrl+Insert；VS Code 的空选区复制（整行）识别为"没有选中"；复制前保存剪贴板、复制后写回，写回的内容不进剪贴板历史。已在记事本、Edge PDF、conhost、Windows Terminal、VS Code 编辑器和终端中实测（截图核对）。
+- **文字处理**（`lextrail-core::text`）：`sentence_around` 切句（处理缩写、小数、省略号、引号、中文标点、硬换行、开头的列表符号）；`clean_control_chars` 过滤控制字符，PDFium 的行末连字符 `\u{2}` 还原为 `-`；`resolve_line_end_hyphens`（词典里查得到就合并，如 compu-tation）已写好，**等词典接入时调用**。
 
-随后完成了 `lextrail-core` 的 HLC 和 `lextrail-store`，并新增决定 D040：数据库放在 `%LOCALAPPDATA%`（不放 Roaming），按需打开，以及 SQLite 的连接设置和迁移规则。
-
-最近完成：`lextrail-capture` 统一接口 + Windows UIA 取词（D041），悬浮窗焦点方案 B（D042），`lextrail-core` 切句。快捷键取词已在记事本中端到端验证（冷启动、热显示、挂起后恢复都能直接获得焦点；慢取词时约 100 ms 后不抢焦点地显示"正在取词"；取词期间切换窗口会隐藏）。五类软件的手动测试还没做，清单见 `docs/specs/m1-capture-manual-tests.md`。
-
-手动测试 1.1（Edge）发现并已修复（2026-10-16）：
-- **悬浮窗始终空白**：仓库里没有 `capabilities/`，Tauri 2 的 ACL 拒绝了页面的 `listen()`，错误被 `void` 吞掉。之前在记事本里的"端到端验证"只看了 Rust 日志（`SetContent(Selection{...})`）和前台窗口标题，**没有看悬浮窗实际显示的内容**，所以没发现。已加 `capabilities/popup.json`（只授予 `core:event:allow-listen`），前端 listen/invoke 失败时打印错误，订阅失败会经 `popup_ready` 报给 Rust 日志。**以后的端到端验证必须截图亲眼看到内容，或用 `tools/e2e/popup-e2e.ps1` 自动检查**（用 UI Automation 读出悬浮窗文字核对）。
-- **冷启动时序**：窗口就绪改为页面 `await listen` 后调用 `popup_ready`，不再以 `PageLoadEvent::Finished` 为准（生命周期事件改名 `PageReady`，补了测试）。
-- **Chromium 第一次取词失败**：Chrome/Edge/Electron 第一次被 UIA 访问时才开启无障碍树；对 `Chrome_WidgetWin_*` 窗口在预算内每 30 ms 重试。全新 Edge 进程实测第一次即可取到（约 55–70 ms，`x2`）。
-- **句子带列表符号**：`sentence_around` 去掉开头的 •、-、*、1.、(2)、a)、一、、① 等；行首的 "1." 不再被当作句末。
-- 顺带修了悬浮窗中间多出一条横线（`#app` 没有高度）。
-
-**第一轮手动测试（R1）全部完成**（2026-10-16），结果和问题表（R1-1 至 R1-11）见 `docs/specs/m1-capture-manual-tests.md`。修复分两个阶段，**第一阶段已完成**：
-- A1（R1-5、R1-10）：悬浮窗在前台时再按快捷键，忽略并保留结果；桌面上取词显示"没有选中文字"。
-- A2（R1-2）：获取焦点改为 `SetForegroundWindow`，被拒时检查 `IsHungAppWindow` 后用 `AttachThreadInput` 重试并立即解除挂接（`popup/activation.rs`），不再用 Tauri 模拟 Alt 的后备做法；获取焦点期间的前台变化不再隐藏悬浮窗；仍失败时不带焦点显示结果，右上角新增 × 关闭按钮（关闭方式见 ARCHITECTURE 9.3）。debug 版可用 `LEXTRAIL_DEBUG_SKIP_ACTIVATION=1` 模拟这种状态。
-- A3（R1-1）：快捷键触发时 Alt 仍按着，就补发未分配的虚拟键 `0xE8`（`keyboard.rs`，见 D014 补充）。用 `tools/e2e/key-log.html` 确认：修复前程序只收到 Alt 按下/松开（X 的按下被快捷键拦截），修复后中间多了 `keyCode=232`。**VS Code 菜单栏被框住的现象我用模拟输入没能复现**（无论有无屏蔽键），需项目负责人用真实键盘复测（R2-1）。debug 版可用 `LEXTRAIL_DEBUG_NO_ALT_MASK=1` 关掉屏蔽键做对比。
-- A4（R1-9）：提示文字不再提尚未实现的"连按两次 Ctrl+C"；做完该功能时加回（已写进 ROADMAP）。
-- A5（R1-7）：`text::clean_control_chars` 过滤控制字符（`\u{7}` 等变空格），PDFium 的行末连字符 `\u{2}` 还原为 `-`；`text::resolve_line_end_hyphens` 已实现（去掉连字符后词典里查得到就合并），词典接入时调用（M1 任务已加）。
-- A6（R1-8）：每次显示悬浮窗时按目标显示器当前缩放设置尺寸（无法自测，因需要改系统缩放设置，待 R2-11 复测）。
-- A7（R1-6）：Chrome 的 PDF 阅读器实测选区正确（截图核对 5 个词），继续用 UIA；`[chromium_pdf]` 只针对 Edge。
-
-第二轮复测（R2）12 项全部通过，第一阶段验收（2026-10-16）。
-
-**第二阶段（剪贴板兜底）已完成**（2026-10-17，D043）：
-- `Pipeline` 步骤间传递 `StepContext`（UIA 读到的焦点元素类名、是否已报告"没有选中"）；UIA 的"没有选中"是最终结果，除非后面的步骤为该目标确认（`confirms_no_selection`）。剪贴板步骤只对 Chromium 系窗口确认。
-- `windows/clipboard.rs`：等修饰键松开（600 ms）→ 保存所有内存类剪贴板格式（超过 64 MB 或剪贴板所有者无响应时不碰剪贴板）→ Ctrl+C / 终端 Ctrl+Insert（带扫描码）→ 等序列号变化（400 ms）→ 读 `CF_UNICODETEXT`，VS Code 的空选区复制（Chromium 自定义 MIME 格式中的 `vscode-editor-data`）判为没有选中 → 写回原内容并加不进历史 / 云剪贴板的标记。规则在 `clipboard_rules.rs`（与平台无关，有测试）；真实剪贴板的往返测试 `clipboard_round_trip` 默认忽略（会改动剪贴板）。
-- 实测（截图核对）：记事本（UIA 可靠，不走剪贴板）、Edge PDF、conhost、Windows Terminal、VS Code 编辑器（有选区 / 空选区）、VS Code 终端（有选区 / 无选区且 `ping -t` 未被中断）都正确，每次剪贴板都恢复。e2e 脚本新增 `-Pdf` 模式：走剪贴板后悬浮窗仍直接获得焦点（`bring to front: Direct`）。
-- debug 版新开关：`LEXTRAIL_DEBUG_CLIPBOARD_ONLY=1` 跳过 UIA，只测剪贴板兜底。
-- 第三轮复测清单（R3-1 至 R3-14）已写在手动测试清单里，**等项目负责人复测**。
-
-手动测试第 1 节（浏览器）通过（Firefox 未安装）。第 2 节（Edge 内置 PDF）发现并处理（2026-10-16）：
-- **选中文字错位**：用 `examples/uia_dump.rs` 打印原始数据确认，是 **Edge 的 PDF 阅读器本身**报告的选区范围错位（选区 range 的 `GetText()` 就是错的，如 "between" → "ween di"），不是 LexTrail 用偏移截取文字；报告的"段落"也会从段落中间开始（句子缺开头同一原因）。无法判断哪次可信，所以检测到 Chromium PDF 时 UIA 返回 `unsupported [chromium_pdf]`，等剪贴板兜底接手。补了"偏移与文字不一致"的单元测试（原有逻辑已会退回按文字查找）。
-- **刚打开 PDF 时 no_selection**：PDF 现在一律不走 UIA。评估后**不在 no_selection 时重试**（实测重试拿不到早于无障碍树的选区，只会耗尽预算），留到剪贴板兜底时决定是否用剪贴板确认（已加入 ROADMAP）。
-- 句子开头的省略号、过长上下文的截取：已加入 ROADMAP（低优先级）。
+手动测试：清单和全部结果在 `docs/specs/m1-capture-manual-tests.md`。
+- 第一轮（R1，2026-10-16）：发现 11 个问题（R1-1 至 R1-11），已分两阶段处理。
+- 第二轮（R2，2026-10-16）：第一阶段修复后复测，12 项全部通过，第一阶段验收。
+- **第三轮（R3）：剪贴板兜底完成后的复测清单（R3-1 至 R3-14）已写好，等项目负责人测。**
 
 代码现状（详见各文件）：
-- `crates/lextrail-core`：`text::sentence_around`（从段落切出选中文字所在的句子；处理缩写、小数、省略号、引号、中文标点、硬换行、开头的列表符号；位置提示无效时退回按文字查找）；`Hlc`（定宽小写文本、严格解析、按字符串比较即为先后）+ `HlcClock`（本地 `now`、收到远端 `receive`、计数器溢出借 1 ms、`restore` 回滚）+ 可注入的 `Clock`（`SystemClock` / 测试用 `ManualClock`）；`lookup` 模块：`LookupKind`、`CaptureMethod`、文本规范化（合并空白、最多 2000 字符）、30 秒去重判定；`text::clean_control_chars`、`resolve_line_end_hyphens`。46 个测试
-- `crates/lextrail-capture`（D041）：`TextCapture`（`snapshot` / `capture` / `capture_context`）、`CaptureOutcome` / `Unavailable`（取不到）与 `CaptureError`（出错，平台无关）；`Pipeline` 按顺序尝试各步骤（与平台无关，有测试）；`WindowsCapture`：`snapshot` 只做 Win32 调用（前台窗口、进程名、类名、标题、权限级别、`GetGUIThreadInfo` 的 hwndFocus / hwndCaret），UIA 在专用 MTA 线程上（预算 180 ms、卡死 5 秒放弃重建、最多 2 个被放弃的线程）；`capture_context` 目前返回 `None`（连按两次 Ctrl+C 时实现）；Chromium 窗口在预算内重试，Edge PDF 不走 UIA，桌面直接返回没有选中文字。21 个测试；`examples/capture_probe.rs` 用于手动测试真实窗口。`capture_traced` 返回 `CaptureTrace`（每一步的方式、结果、耗时、焦点元素来源，不含文字）；debug 构建每次取词打印一行，如 `capture #2: captured | uia=captured 3.1ms (uia_focus); total 3.1ms`
-- `crates/lextrail-store`（D037、D040）：`Store::open_in_dir`（创建目录、`lextrail.db`）/ `open_in_memory_with_clock`；`user_version` 迁移（`src/migrations/0001_init.sql`：`meta`、`lookups`，STRICT 表）；版本更高时拒绝打开且不改文件；WAL、`synchronous=NORMAL`、`foreign_keys`、`busy_timeout` 5 秒；`meta` 存 `device_id`（UUIDv7）和最近一次 HLC，与数据写入同一事务；`record_lookup`（规范化、去重、空查询忽略）、`delete_lookup`（软删除）、`lookup`、`recent_lookups`。20 个测试。**桌面端尚未接入**
-- `crates/lextrail-config`（D035）：`Settings`（`version`、`hotkeys.lookup`、`popup.mode`）+ `SettingsFile`（TOML、原子写入、损坏时备份为 `.corrupt` 并恢复默认、更新版本写的文件不覆盖）+ `SecretStore` 适配器（`WindowsCredentialStore` / `MemorySecretStore`）。17 个测试，其中 1 个真实读写 Windows 凭据管理器（用临时 key，测完删除）
-- `apps/desktop/src-tauri`：
-  - 启动时不创建任何窗口（不加载 WebView2），只有托盘；托盘图标左键单击打开主窗口，右键弹出菜单（"打开主窗口"、"退出 LexTrail"）
-  - 单实例：第二次启动时唤起主窗口；关闭窗口不退出，只有菜单"退出"会退出
-  - 主窗口（`main_window.rs`）：按需创建，960×640 逻辑像素、居中，页面加载完成后再显示；已打开时恢复最小化并置前；关闭即销毁，关闭后 WebView2 进程全部退出（已实测）。与悬浮窗共用同一个 WebView2 环境（D010，Tauri 默认共用数据目录）
-  - 启动时从 `%APPDATA%\io.github.aspeternity.lextrail\settings.toml` 读设置（第一次启动会创建）；读取出问题时弹原生提示框，并用默认设置继续运行
-  - 全局快捷键从设置读取（默认 Ctrl+Alt+X，D014）；注册失败时弹原生提示框，托盘提示文字也会改；按下后调用 `popup::lookup`：先 `snapshot`，再准备悬浮窗，同时在后台线程取词
-  - 悬浮窗（`src/popup/`）：
-    - 第一次按快捷键时才创建（只有托盘时不加载 WebView2），之后隐藏、复用，不重新加载（D010）
-    - 生命周期（D009）：`popup/lifecycle.rs` 是纯状态机（Absent → Creating → Visible → Hidden → Suspending → Suspended，18 个测试），`popup/mod.rs` 执行它返回的动作
-      - 隐藏 5 秒后（`SUSPEND_DELAY`）`SetIsVisible(false)` + `TrySuspend`；再次显示时 `Resume` + `SetIsVisible(true)` 后再显示窗口（`popup/webview.rs`）
-      - "内存优先"（`popup.mode = "memory_saver"`）：隐藏即销毁窗口
-      - 低内存：`memory.rs` 后台线程阻塞等待 `CreateMemoryResourceNotification(Low)`（不轮询；只在内存一直很低时每 60 秒复查一次）；悬浮窗不在屏幕上时销毁，正在显示时不动
-      - debug 构建会在控制台打印每次状态转换（`popup: 事件 -> [动作]`、`request: ...`、`capture #N: ...`）
-    - 一次查词（D042）：`popup/request.rs` 是纯状态机（8 个测试），决定何时显示、显示什么、何时获取焦点；`popup/foreground.rs` 用 `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` 在取词期间监视前台窗口；`popup/content.rs` 把取词结果转成发给页面的 `popup:content` 事件。debug 构建可用环境变量 `LEXTRAIL_DEBUG_CAPTURE_DELAY_MS` 人为让取词变慢
-    - 第一次显示等页面加载完成（`PageLoadEvent::Finished`）后再显示，避免出现白屏；取词期间以 `SW_SHOWNOACTIVATE` 显示，取词完成后 `SetForegroundWindow`（失败时退回 Tauri 的 `set_focus`）
-    - 位置：默认在光标右下方 12 逻辑像素处，右边或下边放不下时翻到左边或上边，最后限制在光标所在显示器的工作区内（`popup/placement.rs`，纯函数，9 个测试，含负坐标副屏、比工作区还大等情况）
-    - 关闭：页面里按 Esc 调用 `hide_popup` 命令；失去焦点（点击外部）时由 Rust 端隐藏
-    - 尺寸暂定 380×260 逻辑像素，只有浅色主题；页面显示取到的文字、所在句子和来源软件，或"没有选中文字""无法读取以管理员身份运行的程序"等提示（词典结果待接入）
-  - 提示框统一走 `notice::warn`（`tauri-plugin-dialog`，不加载 WebView）
-- `apps/desktop/src`：Vite + Vue，`popup/`、`main/` 两个入口。悬浮窗页面监听 `popup:content` 事件显示内容（`popup/content.ts` 与 Rust 端的 `Content` 对应），Esc 关闭；前端还没有测试框架；主窗口页面还是占位内容
-- `tools/e2e/popup-e2e.ps1`：悬浮窗内容的端到端自动检查（真实鼠标、真实快捷键、全新 Edge，用 UI Automation 读出悬浮窗文字核对，并保存截图），用法见手动测试清单第 0 节
-- `tools/bench`（`lextrail-bench`）：性能测试工具，`quick` 约 6 分钟，`long --wait-mins N` 测挂起 N 分钟后恢复；运行时会模拟按键、移动鼠标。启动应用时设置 `LEXTRAIL_BENCH_TIMINGS`，应用把每次查词的分项时间（只有数字）写进该文件，bench 据此分开报告取词耗时和窗口显示耗时。报告和方法见 `docs/specs/m0-benchmark.md`
-- CI（`.github/workflows/ci.yml`）：ubuntu 跑格式、ESLint、类型检查；Windows 跑 clippy、测试，并用 `tauri build --no-bundle` 做 release 构建
+- `crates/lextrail-core`：HLC（`Hlc`、`HlcClock`、可注入的 `Clock`）；`lookup`（`LookupKind`、`CaptureMethod`、`normalize_text`、30 秒去重）；`text`（见上）。46 个测试
+- `crates/lextrail-capture`（D041、D043）：`TextCapture`（`snapshot` / `capture` / `capture_traced` / `capture_context`，最后一个目前返回 `None`，做连按两次 Ctrl+C 时实现）；`Pipeline` 按顺序运行各步骤，步骤间用 `StepContext` 传递信息，UIA 的"没有选中"默认就是最终结果；`clipboard_rules.rs`（剪贴板兜底的规则，与平台无关）；`windows/`：`window.rs`（快照）、`uia.rs`（UIA 步骤）、`clipboard.rs`（剪贴板步骤）。30 个测试，其中 `clipboard_round_trip` 默认忽略（会改动真实剪贴板，需要时用 `cargo test -p lextrail-capture -- --ignored clipboard_round_trip`）。`examples/capture_probe.rs`（手动测试真实窗口）、`examples/uia_dump.rs`（打印原始 UIA 数据）
+- `crates/lextrail-store`（D037、D040）：SQLite、`user_version` 迁移、`meta` / `lookups` 表、`record_lookup` 等。20 个测试
+- `crates/lextrail-config`（D035）：设置文件与凭据管理器。17 个测试
+- `apps/desktop/src-tauri`：托盘、单实例、主窗口（占位）、设置、全局快捷键（`hotkey.rs` + `keyboard.rs` 屏蔽键）、悬浮窗（`popup/`：`lifecycle.rs` 窗口生命周期 20 个测试，`request.rs` 一次查词 9 个测试，`activation.rs` 获取焦点，`foreground.rs` 前台窗口监视，`content.rs` 内容事件，`placement.rs` 位置，`timing.rs` bench 计时）。悬浮窗页面先订阅内容事件再调用 `popup_ready`，之后才显示；权限在 `capabilities/popup.json`（只有 `core:event:allow-listen`）。共 56 个测试
+- `apps/desktop/src`：悬浮窗页面（`popup/`：`content.ts`、`ipc.ts`、`App.vue`），主窗口占位。**前端还没有测试框架**
+- `tools/e2e/`：`popup-e2e.ps1`（悬浮窗内容端到端检查：真实鼠标、真实快捷键、全新 Edge，用 UI Automation 读出悬浮窗文字核对并截图；`-Pdf` 走剪贴板路径）、`list-item.html`、`key-log.html`（记录页面收到的键盘事件）
+- `tools/bench`：性能测试；应用在 `LEXTRAIL_BENCH_TIMINGS` 下写出分项计时。14 个测试
 
-正式性能测试结果（`docs/specs/m0-benchmark.md`，口径见 D036）：托盘 1.6 MiB；挂起 15 秒 82.8 MiB、2 小时后 13.0 MiB；冷启动显示 288 ms；挂起后恢复 11.7 ms，挂起 2 小时后恢复 44.7 ms；空闲 CPU ≈ 0。全部达标，但刚挂起时距离 100 MB 只剩约 17 MB，后续里程碑都要重测。
-"内存优先"模式：隐藏后 0.5 秒内 WebView2 进程全部退出，每次显示都是冷启动（约 270–290 ms）。
-以上功能都在本机手动验证过；托盘图标已由项目负责人目测确认。
+debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 0 节）：`LEXTRAIL_DEBUG_CAPTURE_DELAY_MS`（让取词变慢）、`LEXTRAIL_DEBUG_SKIP_ACTIVATION`（不获取焦点）、`LEXTRAIL_DEBUG_NO_ALT_MASK`（关掉屏蔽键）、`LEXTRAIL_DEBUG_CLIPBOARD_ONLY`（跳过 UIA，只走剪贴板）。debug 版每次取词在控制台打印一行，如 `capture #2: captured | uia=no_selection 16.8ms (uia_focus); clipboard=captured 11.3ms [ctrl_insert]; total 28.1ms`（不含取到的文字）。
+
+性能（`docs/specs/m0-benchmark.md` 第 7 节，口径见 D036）：最近一次（2026-10-16）托盘 1.6 MiB、挂起 83.1 MiB、冷启动 281 ms、挂起后恢复 18.5 ms，全部达标。剪贴板兜底之后还没有重测（它只在 UIA 取不到时运行，不影响 bench 的路径）。
 
 常用命令：
 - `pnpm check`：格式、lint、类型检查、全部测试
-- `pnpm --filter @lextrail/desktop tauri dev`：开发运行桌面端
-- `pnpm --filter @lextrail/desktop tauri build --no-bundle`：构建真正的 release 版。**注意**：直接 `cargo build --release` 得到的仍是开发模式（加载 `devUrl` http://localhost:1420），手动测试和性能测试都必须用 `tauri build`
-- `cargo audit`：依赖漏洞检查（本机已装 cargo-audit）
-- `cargo run -p lextrail-bench --release -- quick`：性能测试（先用 `tauri build` 构建；运行时不要操作电脑）
+- `pnpm --filter @lextrail/desktop tauri build --debug --no-bundle`：带日志的 debug 版（`target\debug\lextrail-desktop.exe`，在终端里运行看日志）
+- `pnpm --filter @lextrail/desktop tauri build --no-bundle`：真正的 release 版。**不要用** `cargo build --release`（会加载开发服务器页面）
+- `powershell -NoProfile -ExecutionPolicy Bypass -File tools/e2e/popup-e2e.ps1 -App target/debug/lextrail-desktop.exe [-Pdf]`：悬浮窗端到端检查（会移动鼠标、模拟按键）
+- `cargo run -p lextrail-capture --example capture_probe -- 3`：3 秒后对前台窗口取词并打印结果
+- `cargo run -p lextrail-bench --release -- quick`：性能测试（先 `tauri build`；运行时不要操作电脑）
+- `cargo audit`：依赖漏洞检查
 
 ## 正在进行
 
-- 无。
+- 无（第二阶段已完成，等 R3 复测结果）。
 
 ## 下一步
 
-1. 项目负责人按手动测试清单的"第二阶段（剪贴板兜底）后的复测（R3）"复测，结果发回后处理。
-2. 未完成的调查（B3）：VS Code 编辑器里 UIA 报告"没有选中"的原因未确认。把 `editor.accessibilitySupport` 设为 `on` 后，我用模拟按键没能做出选区（屏幕阅读器模式下 Ctrl+Shift+→ 的行为不同），结论不成立。由于剪贴板兜底已覆盖 VS Code，且不改用户设置，暂不继续；如项目负责人需要，可在 `on` 模式下手动选词，用 `capture_probe` 看 UIA 是否取到。
-3. 然后做连按两次 Ctrl+C（实现 `capture_context`）、dict-builder（D038）、词典等任务。
-4. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。
-5. M1、M2、M3、M6 都有"重测性能预算"任务，结果追加到 `docs/specs/m0-benchmark.md` 第 7 节。
+1. **项目负责人做第三轮复测（R3-1 至 R3-14）**，结果填进手动测试清单的 R3 表并发回；先处理复测发现的问题。R3-11 至 R3-13（剪贴板历史、图片、文件的恢复）只能人工检查。
+2. 然后按 `ROADMAP.md` 继续 M1：连按两次 Ctrl+C（实现 `capture_context`，完成后把这个用法加回提示文字，R1-9）→ `tools/dict-builder`（D038）→ `lextrail-dict` → 悬浮窗显示词典结果 → 行末连字符接入词典（用 `transduc-tion` 验证）→ 查询历史接入桌面端 → 快捷键设置界面。
+3. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。
+4. 悬浮窗加入词典结果后重测性能预算（M1 任务）。
+
+待跟进（已在 ROADMAP 中，或在此记录）：
+- **B3 没有结论**：VS Code 编辑器里 UIA 报告"没有选中"的原因未确认。把 `editor.accessibilitySupport` 设为 `on` 后，我用模拟按键没能做出选区（屏幕阅读器模式下 Ctrl+Shift+→ 的行为不同），这次测试不成立。剪贴板兜底已覆盖 VS Code，且不改用户设置，所以暂不继续；如需要，可在 `on` 模式下手动选词，用 `capture_probe` 看 UIA 是否取到。
+- **获取焦点的后备路径未在真实环境中触发过**（R2-5）：`AttachThreadInput` 重试只经代码审查；"被拒后不带焦点显示"只用模拟开关验证过。以后如在日志里看到 `Attached` 或 `Refused`，记下当时的场景。
+- 前端测试框架（Vitest）还没引入（M1 任务）。
+- 低优先级：Windows Terminal 跨行选中时句子带上提示符（R1-10）；句首省略号、过长上下文截取（R1-11）。
+- 低优先级：冷启动后 0–100 ms 内按 Esc 可能无效（`m0-benchmark.md` 4.5 节）。
+- 用模拟输入做调查或测试之前和之后都要告诉项目负责人（项目负责人的要求）；端到端验证必须截图看到悬浮窗内容或用 `popup-e2e.ps1`，只看日志不算。
 
 ## 遇到的问题 / 需要项目负责人决定
 
 - 无需要现在决定的事项。服务端许可证写法和 `apps/server` 是否加入 Cargo workspace 推迟到 M4（见 `DECISIONS.md` 待确认事项）。
-- 需要关注：冷启动两次重测分别为 351 ms 和 281 ms（预算 400 ms），波动较大。分项计时（`m0-benchmark.md` 7.1）显示冷启动几乎全部是窗口创建和页面加载（约 274 ms），取词约 13 ms 且与之并行；热显示和挂起后恢复的显示时间由取词决定（7–11 ms）。接入词典结果后要再测，看趋势时多测几次。
-- 低优先级问题：冷启动后 0–100 ms 内按 Esc 可能无效（WebView 稍晚拿到键盘焦点），见报告 4.5 节。
+- 需要关注：冷启动两次重测分别为 351 ms 和 281 ms（预算 400 ms），波动较大；冷启动几乎全部是窗口创建和页面加载（约 274 ms），取词与之并行。接入词典后要再测，看趋势时多测几次。
 
 已知情况（不需要处理）：
-- GitHub Dependabot 有 1 个中等级别提醒，应该是 `glib 0.18.5`（RUSTSEC-2024-0429，unsound）。它只经由 Tauri 的 Linux GTK 托盘依赖引入，**Windows 构建里没有这个 crate**（已用 `cargo tree --target x86_64-pc-windows-msvc` 确认）。Tauri 2 锁定了 gtk 0.18，我们无法单独升级；做 macOS/Linux 支持时再看。可以在 GitHub 上把这条提醒标记为"不影响"（tolerable risk）。`cargo audit` 另有一条 `proc-macro-error` unmaintained 警告，同样只在 Linux 上用到。
-- TypeScript 锁定在 `~6.0.3`：TypeScript 7.0 不被 `typescript-eslint` 8.x 支持（peer 要求 `<6.1.0`）。等生态支持 7.x 后再升级。
-- 自动化测试注意：用 `Start-Process -WindowStyle Hidden` 启动时，第一个提示框会被系统隐藏（Windows 把启动参数用在进程第一个显示的窗口上）。正常启动不受影响。
+- GitHub Dependabot 有 1 个中等级别提醒（`glib 0.18.5`，RUSTSEC-2024-0429），只经由 Tauri 的 Linux GTK 依赖引入，Windows 构建里没有这个 crate。`cargo audit` 另有一条 `proc-macro-error` unmaintained 警告，同样只在 Linux 上用到。
+- TypeScript 锁定在 `~6.0.3`（`typescript-eslint` 8.x 不支持 7.x）。
+- 自动化测试注意：用 `Start-Process -WindowStyle Hidden` 启动时，第一个提示框会被系统隐藏。正常启动不受影响。
+- 模拟输入测试的坑（本机）：中文输入法会转换模拟键入的文字（改用粘贴）；Ctrl+` 是本机另一个截图/贴图工具的全局快捷键；新配置的 Edge 会弹出同步登录对话框（用 `--inprivate`）和"翻译此页"提示（先按 Esc）。
 
 ## 备注
 
-- 开发环境：项目负责人使用 Windows。M0 的性能测试必须在真实的 Windows 机器上进行。
+- 开发环境：项目负责人使用 Windows。性能测试和手动测试必须在真实的 Windows 机器上进行。
 - 仓库为公开仓库。不要提交任何密钥、Token 或个人数据。
