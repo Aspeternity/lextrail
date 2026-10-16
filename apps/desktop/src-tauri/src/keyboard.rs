@@ -49,6 +49,15 @@ impl Modifier {
         }
     }
 
+    /// The side-neutral virtual key (`VK_CONTROL`, `VK_SHIFT`). Programs that inject
+    /// keys often send these (e.g. WScript's `SendKeys`), and hooks then report them so.
+    pub fn generic_vk(self) -> u16 {
+        match self {
+            Self::LeftShift | Self::RightShift => 0x10,
+            Self::LeftCtrl | Self::RightCtrl => 0x11,
+        }
+    }
+
     /// Right Ctrl is an extended key; the others are not.
     #[cfg_attr(not(windows), allow(dead_code))]
     fn extended(self) -> bool {
@@ -87,23 +96,36 @@ pub fn choose_mask(held: HeldKeys) -> Option<Mask> {
 /// comes through, to tell whether the user released the key just before it.
 #[derive(Debug)]
 pub struct RepeatWatch {
+    modifier: Modifier,
     vk: u32,
+    generic_vk: u32,
     delivered: bool,
     released_first: bool,
+    /// The events seen, for the debug log (the first few only).
+    seen: Vec<(u32, bool, bool)>,
 }
 
 impl RepeatWatch {
+    const SEEN_LIMIT: usize = 16;
+
     pub fn new(modifier: Modifier) -> Self {
         Self {
+            modifier,
             vk: u32::from(modifier.vk()),
+            generic_vk: u32::from(modifier.generic_vk()),
             delivered: false,
             released_first: false,
+            seen: Vec::new(),
         }
     }
 
-    /// One key event as the hook saw it; `ours` = the injected repeat.
+    /// One key event as the hook saw it; `ours` = the injected repeat. Events of the
+    /// side-neutral key count too: a release of `VK_CONTROL` also releases left Ctrl.
     pub fn on_key(&mut self, vk: u32, up: bool, ours: bool) {
-        if self.delivered || vk != self.vk {
+        if self.seen.len() < Self::SEEN_LIMIT {
+            self.seen.push((vk, up, ours));
+        }
+        if self.delivered || (vk != self.vk && vk != self.generic_vk) {
             return;
         }
         if ours {
@@ -114,6 +136,10 @@ impl RepeatWatch {
         }
     }
 
+    pub fn modifier(&self) -> Modifier {
+        self.modifier
+    }
+
     pub fn delivered(&self) -> bool {
         self.delivered
     }
@@ -122,11 +148,28 @@ impl RepeatWatch {
     pub fn needs_release(&self) -> bool {
         self.delivered && self.released_first
     }
+
+    /// The events seen, e.g. `A2v* 11^ A4^` (virtual key in hex, `v` down, `^` up,
+    /// `*` ours).
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+    pub fn seen(&self) -> String {
+        self.seen
+            .iter()
+            .map(|&(vk, up, ours)| {
+                format!(
+                    "{vk:X}{}{}",
+                    if up { "^" } else { "v" },
+                    if ours { "*" } else { "" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
 }
 
 /// Call first thing when a hotkey fires, while the hotkey's keys are still held. Returns
-/// once the mask key has been sent (or found unnecessary); the stuck-key check then
-/// finishes on its own thread.
+/// once the mask key has been sent (or found unnecessary, a few milliseconds); the
+/// stuck-key check then finishes on the hook's thread.
 #[cfg(windows)]
 pub fn mask_alt_release() {
     win::mask_alt_release();
@@ -137,14 +180,15 @@ pub fn mask_alt_release() {}
 
 #[cfg(windows)]
 mod win {
-    use std::cell::RefCell;
     use std::mem::size_of;
-    use std::sync::mpsc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex, mpsc};
     use std::thread;
     use std::time::{Duration, Instant};
 
     use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::Threading::GetCurrentThreadId;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
         KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, MAPVK_VK_TO_VSC, MapVirtualKeyW, SendInput,
@@ -152,8 +196,8 @@ mod win {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLKHF_UP,
-        MSG, MsgWaitForMultipleObjects, PM_REMOVE, PeekMessageW, QS_ALLINPUT, SetWindowsHookExW,
-        UnhookWindowsHookEx, WH_KEYBOARD_LL,
+        MSG, MsgWaitForMultipleObjects, PM_REMOVE, PeekMessageW, PostThreadMessageW, QS_ALLINPUT,
+        SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_NULL,
     };
 
     use super::{HeldKeys, Mask, Modifier, RepeatWatch, choose_mask};
@@ -162,14 +206,22 @@ mod win {
     const UNASSIGNED_KEY: u16 = 0xE8;
     /// Marks our injected events (`dwExtraInfo`), so the hook can tell them apart.
     const TAG: usize = 0x4C58_4D4B;
-    /// How long the hotkey thread waits for the mask to be sent.
-    const SEND_WAIT: Duration = Duration::from_millis(50);
+    /// How long the hotkey thread waits for the hook to be in place.
+    const HOOK_WAIT: Duration = Duration::from_millis(50);
     /// How long the hook waits for the repeat to come through.
     const DELIVERY_WAIT: Duration = Duration::from_millis(200);
+    /// After installing the hook and before reading the keys: a key event that passed
+    /// the hook chain just before the hook was installed may not have reached the key
+    /// state yet, and would be missed by both.
+    const SETTLE: Duration = Duration::from_millis(2);
 
-    thread_local! {
-        /// The watch of the hook installed on this thread.
-        static WATCH: RefCell<Option<RepeatWatch>> = const { RefCell::new(None) };
+    /// The repeat being watched by the hook; one at a time.
+    static WATCH: Mutex<Option<RepeatWatch>> = Mutex::new(None);
+
+    fn watch() -> std::sync::MutexGuard<'static, Option<RepeatWatch>> {
+        WATCH
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     pub fn mask_alt_release() {
@@ -192,29 +244,94 @@ mod win {
         if !held_keys().alt {
             return;
         }
-        let (sent, wait) = mpsc::channel();
-        let spawned = thread::Builder::new()
-            .name("hotkey-mask".into())
-            .spawn(move || {
-                mask_on_this_thread(&|| {
-                    let _ = sent.send(());
-                })
-            });
-        match spawned {
-            // Whatever the lookup does next comes after the mask.
-            Ok(_) => {
-                let _ = wait.recv_timeout(SEND_WAIT);
+        // The hook goes in before the keys are read, so that a release right after the
+        // read is seen by it. It runs on a thread of its own, and the repeat is sent from
+        // this thread: a thread's own SendInput reaches its own hook out of order (ahead
+        // of real events already queued), which would hide exactly the race the hook is
+        // for (seen in tools/e2e/stuck-keys.ps1).
+        let watcher = Watcher::start();
+        let mask = choose_mask(held_keys());
+        match (mask, &watcher) {
+            (None, _) => {}
+            (Some(Mask::Repeat(modifier)), Some(w)) if w.arm(modifier) => {
+                send(&[key(modifier.vk(), modifier.extended(), false)]);
             }
-            Err(e) => eprintln!("hotkey: could not start the Alt mask thread: {e}"),
+            // Without the hook a stuck key would go unnoticed: use the plain key-press.
+            (Some(_), _) => {
+                send_unassigned();
+                #[cfg(debug_assertions)]
+                eprintln!("hotkey: alt mask: 0xE8");
+            }
+        }
+        if let Some(watcher) = watcher {
+            watcher.done();
         }
     }
 
-    fn mask_on_this_thread(sent: &dyn Fn()) {
-        // The hook goes in before the keys are read, so that a release right after the
-        // read is seen by it.
+    /// The hook thread, from the hotkey thread's side.
+    struct Watcher {
+        thread_id: u32,
+        flags: Arc<Flags>,
+    }
+
+    #[derive(Default)]
+    struct Flags {
+        /// This watcher's repeat is in `WATCH`.
+        armed: AtomicBool,
+        /// The hotkey thread has sent the mask (or decided against it).
+        done: AtomicBool,
+    }
+
+    impl Watcher {
+        /// Installs the hook on a new thread; `None` if that failed or took too long.
+        fn start() -> Option<Self> {
+            let (ready, wait) = mpsc::channel();
+            let flags = Arc::new(Flags::default());
+            let thread_flags = Arc::clone(&flags);
+            let spawned = thread::Builder::new()
+                .name("hotkey-mask".into())
+                .spawn(move || hook_thread(&ready, &thread_flags));
+            if let Err(e) = spawned {
+                eprintln!("hotkey: could not start the Alt mask thread: {e}");
+                return None;
+            }
+            match wait.recv_timeout(HOOK_WAIT) {
+                Ok(Some(thread_id)) => Some(Self { thread_id, flags }),
+                Ok(None) => None,
+                Err(_) => {
+                    // Gave up on it; it removes its hook once it sees `done`.
+                    flags.done.store(true, Ordering::SeqCst);
+                    eprintln!("hotkey: the Alt mask hook took too long; using 0xE8");
+                    None
+                }
+            }
+        }
+
+        /// Starts watching `modifier`; false if another hotkey's repeat is still watched.
+        fn arm(&self, modifier: Modifier) -> bool {
+            let mut w = watch();
+            if w.is_some() {
+                return false;
+            }
+            *w = Some(RepeatWatch::new(modifier));
+            self.flags.armed.store(true, Ordering::SeqCst);
+            true
+        }
+
+        /// The mask is out (or not needed): the hook thread finishes and wakes up for it.
+        fn done(self) {
+            self.flags.done.store(true, Ordering::SeqCst);
+            // SAFETY: plain Win32 call; WM_NULL does nothing but wake the thread.
+            let _ = unsafe { PostThreadMessageW(self.thread_id, WM_NULL, WPARAM(0), LPARAM(0)) };
+        }
+    }
+
+    /// Installs the hook, reports the thread id (`None` on failure), then pumps messages
+    /// until the hotkey thread is done and the repeat, if one was sent, came through.
+    fn hook_thread(ready: &mpsc::Sender<Option<u32>>, flags: &Flags) {
+        // SAFETY: plain Win32 calls; the hook procedure only touches `WATCH`, and is
+        // removed below on this thread.
         let hook = unsafe {
-            // SAFETY: plain Win32 calls; the hook procedure only touches this thread's
-            // `WATCH` and is removed below on this thread.
             GetModuleHandleW(None).and_then(|module| {
                 SetWindowsHookExW(
                     WH_KEYBOARD_LL,
@@ -224,77 +341,96 @@ mod win {
                 )
             })
         };
-        let mask = choose_mask(held_keys());
-        let result = match (mask, &hook) {
-            (None, _) => None,
-            (Some(Mask::Repeat(modifier)), Ok(_)) => {
-                WATCH.with_borrow_mut(|w| *w = Some(RepeatWatch::new(modifier)));
-                send(&[key(modifier.vk(), modifier.extended(), false)]);
-                // The hotkey thread can go on; the stuck-key check needs no waiting there.
-                sent();
-                Some(finish_repeat(modifier))
-            }
-            // Without the hook a stuck key would go unnoticed: use the plain key-press.
-            (Some(Mask::Repeat(_) | Mask::Unassigned), hook) => {
-                if let Err(e) = hook {
-                    eprintln!("hotkey: no keyboard hook for the Alt mask ({e}); using 0xE8");
-                }
-                send_unassigned();
-                Some("0xE8".to_owned())
+        let hook = match hook {
+            Ok(hook) => hook,
+            Err(e) => {
+                eprintln!("hotkey: no keyboard hook for the Alt mask ({e}); using 0xE8");
+                let _ = ready.send(None);
+                return;
             }
         };
-        // Also for the paths above that sent nothing or only 0xE8 (a second call is harmless).
-        sent();
-        if let Ok(hook) = hook {
-            // SAFETY: the hook was installed on this thread.
-            if let Err(e) = unsafe { UnhookWindowsHookEx(hook) } {
-                eprintln!("hotkey: could not remove the Alt mask hook: {e}");
-            }
+        // Spinning: a blocking wait this short lasts a whole timer tick (~15 ms).
+        pump_until(Instant::now() + SETTLE, Wait::Spin, || false);
+        // SAFETY: plain Win32 call.
+        let _ = ready.send(Some(unsafe { GetCurrentThreadId() }));
+
+        let start = Instant::now();
+        pump_until(start + DELIVERY_WAIT, Wait::Block, || {
+            flags.done.load(Ordering::SeqCst)
+                && (!flags.armed.load(Ordering::SeqCst)
+                    || watch().as_ref().is_none_or(RepeatWatch::delivered))
+        });
+        // Only this watcher's own repeat (another hotkey's may be in `WATCH`).
+        let finished = if flags.armed.load(Ordering::SeqCst) {
+            watch().take()
+        } else {
+            None
+        };
+        // SAFETY: the hook was installed on this thread.
+        if let Err(e) = unsafe { UnhookWindowsHookEx(hook) } {
+            eprintln!("hotkey: could not remove the Alt mask hook: {e}");
         }
-        #[cfg(debug_assertions)]
-        if let Some(result) = result {
-            eprintln!("hotkey: alt mask: {result}");
+        if let Some(w) = finished {
+            let summary = finish_repeat(&w);
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "hotkey: alt mask: {summary} ({:.1}ms; hook saw {})",
+                start.elapsed().as_secs_f64() * 1000.0,
+                w.seen()
+            );
+            #[cfg(not(debug_assertions))]
+            let _ = summary;
         }
-        #[cfg(not(debug_assertions))]
-        let _ = result;
     }
 
-    /// Pumps messages (the hook runs inside them) until the repeat has come through, then
-    /// releases the key if the user had released it first.
-    fn finish_repeat(modifier: Modifier) -> String {
-        let start = Instant::now();
-        let deadline = start + DELIVERY_WAIT;
+    /// Releases the key if the user had released it before the repeat.
+    fn finish_repeat(w: &RepeatWatch) -> String {
+        let modifier = w.modifier();
+        if w.needs_release() {
+            send(&[key(modifier.vk(), modifier.extended(), true)]);
+            // Worth knowing in release builds too: it means the race happened.
+            eprintln!("hotkey: {modifier:?} was released before its mask repeat; released it");
+            format!("repeat {modifier:?}, released first, key-up sent")
+        } else if w.delivered() {
+            format!("repeat {modifier:?}")
+        } else {
+            eprintln!("hotkey: the {modifier:?} mask repeat did not come through the hook");
+            format!("repeat {modifier:?}, not seen by the hook")
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Wait {
+        /// Sleep until a message arrives (hook calls and our wake-up are messages) or
+        /// the deadline.
+        Block,
+        /// Poll without sleeping, for waits shorter than a timer tick.
+        Spin,
+    }
+
+    /// Pumps this thread's messages (low-level hooks run inside them) until `done` or
+    /// `deadline`.
+    fn pump_until(deadline: Instant, wait: Wait, done: impl Fn() -> bool) {
         loop {
-            if WATCH.with_borrow(|w| w.as_ref().is_some_and(RepeatWatch::delivered)) {
-                break;
+            if done() {
+                return;
             }
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                break;
+                return;
             }
             // SAFETY: plain Win32 calls on this thread's message queue.
             unsafe {
-                let _ =
-                    MsgWaitForMultipleObjects(None, false, left.as_millis() as u32, QS_ALLINPUT);
+                if wait == Wait::Block {
+                    let millis = left.as_millis().max(1) as u32;
+                    let _ = MsgWaitForMultipleObjects(None, false, millis, QS_ALLINPUT);
+                } else {
+                    thread::yield_now();
+                }
                 let mut msg = MSG::default();
                 while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                     DispatchMessageW(&msg);
                 }
-            }
-        }
-        let watch = WATCH.with_borrow_mut(Option::take);
-        let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-        match watch {
-            Some(w) if w.needs_release() => {
-                send(&[key(modifier.vk(), modifier.extended(), true)]);
-                // Worth knowing in release builds too: it means the race happened.
-                eprintln!("hotkey: {modifier:?} was released before its mask repeat; released it");
-                format!("repeat {modifier:?}, released first, key-up sent ({elapsed:.1}ms)")
-            }
-            Some(w) if w.delivered() => format!("repeat {modifier:?} ({elapsed:.1}ms)"),
-            _ => {
-                eprintln!("hotkey: the {modifier:?} mask repeat did not come through the hook");
-                format!("repeat {modifier:?}, not seen by the hook")
             }
         }
     }
@@ -306,11 +442,9 @@ mod win {
             let injected = event.flags.0 & LLKHF_INJECTED.0 != 0;
             let up = event.flags.0 & LLKHF_UP.0 != 0;
             let ours = injected && event.dwExtraInfo == TAG;
-            WATCH.with_borrow_mut(|w| {
-                if let Some(w) = w {
-                    w.on_key(event.vkCode, up, ours);
-                }
-            });
+            if let Some(w) = watch().as_mut() {
+                w.on_key(event.vkCode, up, ours);
+            }
         }
         // SAFETY: passes the event on unchanged.
         unsafe { CallNextHookEx(None, code, wparam, lparam) }
@@ -466,6 +600,16 @@ mod tests {
         w.on_key(LCTRL, false, true);
         assert!(w.delivered());
         assert!(!w.needs_release());
+    }
+
+    #[test]
+    fn release_of_the_side_neutral_key_counts() {
+        // WScript's SendKeys releases VK_CONTROL, not VK_LCONTROL.
+        let mut w = RepeatWatch::new(Modifier::LeftCtrl);
+        w.on_key(0x11, true, false);
+        w.on_key(LCTRL, false, true);
+        assert!(w.needs_release());
+        assert_eq!(w.seen(), "11^ A2v*");
     }
 
     #[test]
