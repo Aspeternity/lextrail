@@ -26,8 +26,8 @@ use lextrail_capture::{CaptureTrace, TextCapture, result_label};
 use lextrail_config::PopupMode;
 use tauri::window::Color;
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, Runtime, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 
 use content::Content;
@@ -478,7 +478,11 @@ fn move_near<R: Runtime>(window: &WebviewWindow<R>, cursor: Point) -> tauri::Res
     };
     let gap = (CURSOR_GAP * scale).round() as i32;
     let at = placement::place(cursor, size, work_area, gap);
-    window.set_position(PhysicalPosition::new(at.x, at.y))
+    window.set_position(PhysicalPosition::new(at.x, at.y))?;
+    // Also the size, for this monitor's current scale: moving between monitors, or a
+    // scale changed while LexTrail runs, can leave the window sized for another scale
+    // (R1-8). Set after the position, so it wins over any resize the move caused.
+    window.set_size(PhysicalSize::new(size.width as u32, size.height as u32))
 }
 
 /// Starts a short-lived helper thread. Thread creation can fail (e.g. while the process
