@@ -11,22 +11,28 @@ hotkey (Ctrl+Alt+X) and then checks the popup:
     contains the word and the sentence without the list marker.
 Each lookup is also saved as a screenshot for a human look.
 
+With -Pdf the same page is printed to a PDF and opened in Edge's PDF viewer, where UIA
+is not used (D041) and the word comes through the clipboard fallback (D043): this checks
+that the popup still gets focus after the simulated Ctrl+C. There is no sentence then.
+
 It moves the mouse and sends keys: leave the machine alone while it runs. Exits with 1 if
 any check fails.
 
 .EXAMPLE
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe
+pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Pdf
 #>
 param(
   [string]$App = "target\debug\lextrail-desktop.exe",
   [int]$Lookups = 2,
-  [string]$OutDir = (Join-Path $env:TEMP "lextrail-e2e")
+  [string]$OutDir = (Join-Path $env:TEMP "lextrail-e2e"),
+  [switch]$Pdf
 )
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
 $App = (Resolve-Path $App).Path
 New-Item -ItemType Directory -Force $OutDir | Out-Null
-$expected = @("launch", "launch missiles at ships.")
+$expected = if ($Pdf) { @("launch") } else { @("launch", "launch missiles at ships.") }
 
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing
 Add-Type @"
@@ -41,6 +47,12 @@ public static class LtE2e {
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int hh, bool r);
+  // Fixed size in logical pixels, so the PDF page lays out the same every time.
+  public static void Resize(IntPtr h, int w, int hh) {
+    double scale = GetDpiForWindow(h) / 96.0;
+    MoveWindow(h, 0, 0, (int)(w * scale), (int)(hh * scale), true);
+  }
   // dx, dy in logical (96 DPI) pixels from the window's top left corner.
   public static void DoubleClick(IntPtr h, int dx, int dy) {
     double scale = GetDpiForWindow(h) / 96.0;
@@ -83,10 +95,24 @@ Start-Sleep 4
 $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
 $profileDir = Join-Path $env:TEMP ("lextrail-e2e-edge-" + [guid]::NewGuid())
 $url = "file:///" + (Join-Path $here "list-item.html").Replace([char]92, [char]47)
-Start-Process $edge -ArgumentList "--user-data-dir=$profileDir", "--no-first-run", "--inprivate", "--disable-features=Translate,msTranslate", "--app=$url" | Out-Null
+if ($Pdf) {
+  $pdfPath = Join-Path $OutDir "lextrail-e2e.pdf"
+  Remove-Item $pdfPath -ErrorAction SilentlyContinue
+  $printProfile = Join-Path $env:TEMP ("lextrail-e2e-print-" + [guid]::NewGuid())
+  Start-Process $edge -ArgumentList "--headless", "--disable-gpu", "--user-data-dir=$printProfile",
+    "--print-to-pdf=$pdfPath", "--no-pdf-header-footer", $url -Wait
+  if (-not (Test-Path $pdfPath)) { throw "could not print the test page to PDF" }
+  $pdfUrl = "file:///" + $pdfPath.Replace([char]92, [char]47)
+  Start-Process $edge -ArgumentList "--user-data-dir=$profileDir", "--no-first-run", "--inprivate", "--new-window", $pdfUrl | Out-Null
+} else {
+  Start-Process $edge -ArgumentList "--user-data-dir=$profileDir", "--no-first-run", "--inprivate", "--disable-features=Translate,msTranslate", "--app=$url" | Out-Null
+}
 Start-Sleep 6
 $ws = New-Object -ComObject WScript.Shell
 $page = Get-Process msedge | Where-Object { $_.MainWindowTitle -like "lextrail-e2e*" } | Select-Object -First 1
+# Where "launch" is, in logical pixels from the window's top left corner.
+$word = if ($Pdf) { @(283, 230) } else { @(160, 110) }
+if ($Pdf -and $page) { [LtE2e]::Resize($page.MainWindowHandle, 1050, 1000); Start-Sleep 1 }
 
 try {
   if (-not $page) { throw "Edge test window not found" }
@@ -94,7 +120,7 @@ try {
     [void]$ws.AppActivate($page.Id); Start-Sleep -Milliseconds 500
     # Close any Edge bubble (e.g. "translate this page?") that would hold focus.
     $ws.SendKeys("{ESC}"); Start-Sleep -Milliseconds 300
-    [LtE2e]::DoubleClick($page.MainWindowHandle, 160, 110); Start-Sleep -Milliseconds 400
+    [LtE2e]::DoubleClick($page.MainWindowHandle, $word[0], $word[1]); Start-Sleep -Milliseconds 400
     Save-Screenshot $page.MainWindowHandle (Join-Path $OutDir "page-$i.png")
     $ws.SendKeys("^%x"); Start-Sleep -Milliseconds 900
 
@@ -122,5 +148,6 @@ try {
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 "app log: $log"
+Get-Content $log | Select-String "capture #|bring to front" | ForEach-Object { "  " + $_.Line }
 if ($failures) { "FAILED: $failures lookup(s)"; exit 1 }
 "all lookups passed"
