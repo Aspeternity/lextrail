@@ -243,6 +243,19 @@ pub struct StepOutput {
     pub attempts: u32,
     /// Why the step decided as it did, when that is not obvious (e.g. `chromium_pdf`).
     pub note: Option<&'static str>,
+    /// The class name of the focused element, if the step learned it (UIA). Passed on to
+    /// later steps in [`StepContext`].
+    pub focused_class: Option<String>,
+}
+
+/// What earlier steps of one capture learned, for the later ones.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StepContext {
+    /// Class name of the focused element (for web content: its HTML class attribute),
+    /// e.g. `xterm-helper-textarea` for VS Code's terminal.
+    pub focused_class: Option<String>,
+    /// An earlier step reported [`Unavailable::NoSelection`].
+    pub no_selection: bool,
 }
 
 impl From<Result<CaptureOutcome, CaptureError>> for StepOutput {
@@ -252,6 +265,7 @@ impl From<Result<CaptureOutcome, CaptureError>> for StepOutput {
             element: None,
             attempts: 1,
             note: None,
+            focused_class: None,
         }
     }
 }

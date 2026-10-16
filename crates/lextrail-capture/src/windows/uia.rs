@@ -30,7 +30,7 @@ use windows::Win32::UI::Accessibility::{
 use super::window::hwnd;
 use crate::{
     CaptureError, CaptureMethod, CaptureOutcome, CaptureStep, CaptureTarget, ElementSource,
-    RawContext, Selection, StepOutput, Unavailable, utf16_range_to_utf8,
+    RawContext, Selection, StepContext, StepOutput, Unavailable, utf16_range_to_utf8,
 };
 
 /// Time the caller waits for UIA before falling back (150–200 ms, D011).
@@ -126,7 +126,7 @@ impl CaptureStep for UiaStep {
         "uia"
     }
 
-    fn try_capture(&self, target: &CaptureTarget) -> StepOutput {
+    fn try_capture(&self, target: &CaptureTarget, _context: &StepContext) -> StepOutput {
         let unavailable = |u| StepOutput::from(Ok(CaptureOutcome::Unavailable(u)));
         if target.platform.hwnd == 0 {
             return unavailable(Unavailable::Unsupported);
@@ -307,24 +307,36 @@ fn read(automation: &IUIAutomation2, target: &CaptureTarget) -> StepOutput {
     let process_id = target.window.as_ref().map_or(0, |w| w.process_id);
     let mut element = None;
     let mut note = None;
-    let result = read_selection(automation, target, process_id, &mut element, &mut note)
-        .or_else(|e| classify(&e));
+    let mut focused_class = None;
+    let result = read_selection(
+        automation,
+        target,
+        process_id,
+        &mut element,
+        &mut note,
+        &mut focused_class,
+    )
+    .or_else(|e| classify(&e));
     StepOutput {
         result,
         element,
         attempts: 1,
         note,
+        focused_class,
     }
 }
 
 /// Tries the focused element (if it belongs to the target process), then the elements of
 /// the focus, caret and top-level window handles recorded by `GetGUIThreadInfo`.
+/// Reports the focused element's class name for later steps (e.g. to recognise VS Code's
+/// terminal, where Ctrl+C would interrupt the running program).
 fn read_selection(
     automation: &IUIAutomation2,
     target: &CaptureTarget,
     process_id: u32,
     used: &mut Option<ElementSource>,
     note: &mut Option<&'static str>,
+    focused_class: &mut Option<String>,
 ) -> windows::core::Result<CaptureOutcome> {
     let p = &target.platform;
     // SAFETY: COM calls on an MTA thread with valid arguments.
@@ -333,6 +345,11 @@ fn read_selection(
         if let Ok(focused) = automation.GetFocusedElement()
             && same_process(&focused, process_id)
         {
+            *focused_class = focused
+                .CurrentClassName()
+                .ok()
+                .map(|c| c.to_string())
+                .filter(|c| !c.is_empty());
             candidates.push((ElementSource::UiaFocus, focused));
         }
         for (source, raw) in [
@@ -516,7 +533,7 @@ mod tests {
         let step = UiaStep::new(BUDGET);
         let target = CaptureTarget::for_tests(Some(WindowInfo::for_tests("x.exe")));
         assert_eq!(
-            step.try_capture(&target).result,
+            step.try_capture(&target, &StepContext::default()).result,
             Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported))
         );
     }
@@ -534,7 +551,7 @@ mod tests {
                 ..Default::default()
             },
         };
-        let outcome = step.try_capture(&target).result;
+        let outcome = step.try_capture(&target, &StepContext::default()).result;
         assert!(
             matches!(outcome, Ok(CaptureOutcome::Unavailable(_))),
             "{outcome:?}"
