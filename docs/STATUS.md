@@ -34,7 +34,14 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
 - A6（R1-8）：每次显示悬浮窗时按目标显示器当前缩放设置尺寸（无法自测，因需要改系统缩放设置，待 R2-11 复测）。
 - A7（R1-6）：Chrome 的 PDF 阅读器实测选区正确（截图核对 5 个词），继续用 UIA；`[chromium_pdf]` 只针对 Edge。
 
-第二轮复测清单（R2-1 至 R2-12）已写在手动测试清单里，**等项目负责人复测**。
+第二轮复测（R2）12 项全部通过，第一阶段验收（2026-10-16）。
+
+**第二阶段（剪贴板兜底）已完成**（2026-10-17，D043）：
+- `Pipeline` 步骤间传递 `StepContext`（UIA 读到的焦点元素类名、是否已报告"没有选中"）；UIA 的"没有选中"是最终结果，除非后面的步骤为该目标确认（`confirms_no_selection`）。剪贴板步骤只对 Chromium 系窗口确认。
+- `windows/clipboard.rs`：等修饰键松开（600 ms）→ 保存所有内存类剪贴板格式（超过 64 MB 或剪贴板所有者无响应时不碰剪贴板）→ Ctrl+C / 终端 Ctrl+Insert（带扫描码）→ 等序列号变化（400 ms）→ 读 `CF_UNICODETEXT`，VS Code 的空选区复制（Chromium 自定义 MIME 格式中的 `vscode-editor-data`）判为没有选中 → 写回原内容并加不进历史 / 云剪贴板的标记。规则在 `clipboard_rules.rs`（与平台无关，有测试）；真实剪贴板的往返测试 `clipboard_round_trip` 默认忽略（会改动剪贴板）。
+- 实测（截图核对）：记事本（UIA 可靠，不走剪贴板）、Edge PDF、conhost、Windows Terminal、VS Code 编辑器（有选区 / 空选区）、VS Code 终端（有选区 / 无选区且 `ping -t` 未被中断）都正确，每次剪贴板都恢复。e2e 脚本新增 `-Pdf` 模式：走剪贴板后悬浮窗仍直接获得焦点（`bring to front: Direct`）。
+- debug 版新开关：`LEXTRAIL_DEBUG_CLIPBOARD_ONLY=1` 跳过 UIA，只测剪贴板兜底。
+- 第三轮复测清单（R3-1 至 R3-14）已写在手动测试清单里，**等项目负责人复测**。
 
 手动测试第 1 节（浏览器）通过（Firefox 未安装）。第 2 节（Edge 内置 PDF）发现并处理（2026-10-16）：
 - **选中文字错位**：用 `examples/uia_dump.rs` 打印原始数据确认，是 **Edge 的 PDF 阅读器本身**报告的选区范围错位（选区 range 的 `GetText()` 就是错的，如 "between" → "ween di"），不是 LexTrail 用偏移截取文字；报告的"段落"也会从段落中间开始（句子缺开头同一原因）。无法判断哪次可信，所以检测到 Chromium PDF 时 UIA 返回 `unsupported [chromium_pdf]`，等剪贴板兜底接手。补了"偏移与文字不一致"的单元测试（原有逻辑已会退回按文字查找）。
@@ -87,13 +94,8 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
 
 ## 下一步
 
-1. 项目负责人按手动测试清单的"第一阶段修复后的复测（R2）"复测，结果发回后处理。
-2. **第二阶段：剪贴板兜底**（D011），按已确认的计划：
-   - B1：修饰键松开后模拟 Ctrl+C（终端用 Ctrl+Insert，Windows Terminal 和 conhost 分别实测），用剪贴板序列号确认更新；恢复原剪贴板时写清恢复哪些格式，写回的内容加"不进入剪贴板历史"的标记（目标程序复制产生的那条历史无法避免，写进已知限制）。作为 `Pipeline` 第二步，排在 UIA 之后。
-   - B2：UIA 返回"没有选中文字"时，只对 UIA 不可靠的程序（Chromium 系窗口类名、PDF 等）用剪贴板确认，记事本、Word 等可靠程序不做；结论记入 DECISIONS（新编号）。注意 VS Code 编辑器在没有选区时 Ctrl+C 会复制整行，可用剪贴板中的 `vscode-editor-data` 格式（`isFromEmptySelection`）排除。
-   - B3：查 VS Code 编辑器和集成终端 UIA 返回 `no_selection` 的原因（`editor.accessibilitySupport`），不改用户设置，由剪贴板兜底覆盖；集成终端只在有选区时 Ctrl+C 才是复制。
-   - B4：验证剪贴板路径下悬浮窗仍能获得焦点（清单 6.10），用 e2e 脚本加截图。
-   - 做完后同样给出只需复测的清单。用模拟输入调查前后都要告诉项目负责人。
+1. 项目负责人按手动测试清单的"第二阶段（剪贴板兜底）后的复测（R3）"复测，结果发回后处理。
+2. 未完成的调查（B3）：VS Code 编辑器里 UIA 报告"没有选中"的原因未确认。把 `editor.accessibilitySupport` 设为 `on` 后，我用模拟按键没能做出选区（屏幕阅读器模式下 Ctrl+Shift+→ 的行为不同），结论不成立。由于剪贴板兜底已覆盖 VS Code，且不改用户设置，暂不继续；如项目负责人需要，可在 `on` 模式下手动选词，用 `capture_probe` 看 UIA 是否取到。
 3. 然后做连按两次 Ctrl+C（实现 `capture_context`）、dict-builder（D038）、词典等任务。
 4. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。
 5. M1、M2、M3、M6 都有"重测性能预算"任务，结果追加到 `docs/specs/m0-benchmark.md` 第 7 节。

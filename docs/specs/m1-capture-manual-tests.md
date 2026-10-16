@@ -33,6 +33,8 @@
   powershell -NoProfile -ExecutionPolicy Bypass -File tools/e2e/popup-e2e.ps1 -App target/debug/lextrail-desktop.exe
   ```
 
+  加 `-Pdf` 时改为把测试页打印成 PDF、在 Edge 的 PDF 阅读器中打开：此时不用 UIA、由剪贴板兜底取词，用来检查模拟 Ctrl+C 之后悬浮窗仍能获得焦点（没有句子行）。
+
   它会启动应用和一个全新的 Edge（InPrivate，独立配置），用真实鼠标双击 `tools/e2e/list-item.html` 中的单词、按真实快捷键，然后检查悬浮窗可见、有焦点，并通过 UI Automation 读出悬浮窗里的文字，核对单词和句子（不含列表符号）。每次查词保存一张截图（`%TEMP%\lextrail-e2e\`）。运行期间会移动鼠标、模拟按键，不要操作电脑。失败时退出码为 1。
 - 只测某个窗口能不能取到词时，可以用探针，不必启动整个应用：
 
@@ -41,6 +43,7 @@
   ```
 
   运行后 3 秒内切换到目标窗口并选中文字，探针会打印窗口信息、取到的文字、段落、句子和耗时。
+- 只想测剪贴板兜底时（例如在 UIA 能取到词的 Windows Terminal 里测 Ctrl+Insert），设 `LEXTRAIL_DEBUG_CLIPBOARD_ONLY=1`（只在 debug 构建中有效）跳过 UIA。
 - 测"正在取词"和切换窗口的情况时，设置环境变量 `LEXTRAIL_DEBUG_CAPTURE_DELAY_MS=800`（只在 debug 构建中有效），人为让取词变慢。
 
 说明：选中的内容和整个上下文相同时（例如在记事本中选中整行），悬浮窗不显示句子行，避免重复（`popup/content.rs`，有单元测试），这是有意的设计。
@@ -132,6 +135,27 @@
 | R2-10 | R1-6、R1-7 | Chrome 打开 `arxiv.org/pdf/1706.03762`，选 improving（句子含行末连字符的 "English-to-German"）；再选第 2 页其他段落的 2 个词 | 取到所选的词；句子显示 "English-to-German"，没有方块；日志没有 `[chromium_pdf]` | ✅ single-model、dependencies、sentence 都正确，无 `[chromium_pdf]`、无方块。dependencies 的句子里有 `transduc-tion`（原文行末断词），属预期：词典接入后由行末连字符任务合并 |
 | R2-11 | R1-8 | **[release]** 运行中把外接显示器从 150% 改为 100%，在两块屏幕上各查一次词；再改回 150% 各查一次 | 每次悬浮窗大小都与该屏幕缩放相符（不再约大 1.5 倍） | ✅ release 版运行中 150%→100%→150%，两块屏幕上悬浮窗大小都正确 |
 | R2-12 | 回归 | Edge 网页查词（1.1）、Word 查词（3.1）、刚启动后第一次查词（6.7） | 与第一轮结果相同 | ✅ Edge、Word 正常；release 版启动后第一次查词正常 |
+
+## 第二阶段（剪贴板兜底）后的复测（R3）
+
+只需测下面这些项目。构建 debug 版运行；标 **[release]** 的再用 release 版、从资源管理器双击启动测一次。测之前先复制一段自己认得出的文字（例如"R3 原剪贴板"）到剪贴板，每项测完检查剪贴板内容仍是它（"剪贴板保持"一栏）。日志中剪贴板这一步显示为 `clipboard=...`，用 Ctrl+Insert 时带 `[ctrl_insert]`。
+
+| # | 对应 | 步骤 | 预期 | 结果 |
+|---|---|---|---|---|
+| R3-1 | 2.1、R1-4 | **[release]** Edge 打开本地 PDF，选中一个单词 → 快捷键 | 取到单词（没有句子行）；日志 `uia=unsupported ... [chromium_pdf]; clipboard=captured`；悬浮窗获得焦点；剪贴板保持 | |
+| R3-2 | 2.2 | Edge PDF 中选中跨行短语 | 取到短语，换行合并为空格 | |
+| R3-3 | R1-4 | Chrome 刚打开 PDF 时立即选词查词（第一轮出现过 `no_selection`） | 取到单词：UIA 说没选中时由剪贴板确认（`uia=no_selection ...; clipboard=captured`）；剪贴板保持 | |
+| R3-4 | 4.1、R1-3 | VS Code 编辑器中选中一个单词 | 取到单词（`uia=no_selection; clipboard=captured`）；剪贴板保持 | |
+| R3-5 | 4.1 | VS Code 编辑器中什么都不选（光标停在某行） | 显示"没有选中文字"（`[vscode_empty_selection]`），不显示整行；剪贴板保持 | |
+| R3-6 | 4.3、R1-3 | VS Code 集成终端中选中一个单词 | 取到单词（`[ctrl_insert]`）；剪贴板保持 | |
+| R3-7 | 4.3 | VS Code 集成终端中运行 `ping -t 127.0.0.1`，什么都不选，按快捷键 | 显示"没有选中文字"；ping 继续运行，没有被中断 | |
+| R3-8 | 5.3 | 旧版控制台（conhost）中选中一个单词；再什么都不选按一次 | 取到单词（`[ctrl_insert]`）；不选时显示"没有选中文字"，命令行里没有多余字符 | |
+| R3-9 | 5.1 | Windows Terminal 中选词 | 仍由 UIA 取到（日志里没有 `clipboard=`） | |
+| R3-10 | B2 | 记事本、Word 中什么都不选按快捷键 | 显示"没有选中文字"，日志里没有 `clipboard=`（可靠程序不做剪贴板确认），响应很快 | |
+| R3-11 | D043 | 做完 R3-1 后按 Win+V 打开剪贴板历史 | 有一条目标程序复制的单词（已知限制，无法避免）；**没有**第二条"R3 原剪贴板"（LexTrail 写回的不进历史） | |
+| R3-12 | D043 | 复制一张图片（如截图）到剪贴板，再在 Edge PDF 中查词，然后粘贴到画图 | 粘贴出的仍是原来的图片 | |
+| R3-13 | D043 | 复制一个文件（资源管理器中 Ctrl+C），再在 Edge PDF 中查词，然后在别的文件夹粘贴 | 粘贴出的是原来的文件 | |
+| R3-14 | 回归 | Edge 网页（1.1）、Word（3.1）各查一次 | 与之前相同，日志里没有 `clipboard=` | |
 
 ## 记录
 
