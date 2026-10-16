@@ -134,9 +134,19 @@ enum Save {
 
 impl ClipboardStep {
     fn copy_selection(&self, keys: CopyKeys) -> StepOutput {
-        if !wait_modifiers_released(MODIFIER_WAIT) {
-            return unavailable(Unavailable::TimedOut, Some("modifiers_held"));
-        }
+        let start = Instant::now();
+        let released = wait_modifiers_released(MODIFIER_WAIT);
+        let key_wait = Some(start.elapsed());
+        let output = if released {
+            self.copy_released(keys)
+        } else {
+            unavailable(Unavailable::TimedOut, Some("modifiers_held"))
+        };
+        StepOutput { key_wait, ..output }
+    }
+
+    /// Copies once the hotkey's keys are up.
+    fn copy_released(&self, keys: CopyKeys) -> StepOutput {
         let owner = match MessageWindow::new() {
             Ok(w) => w,
             Err(e) => return StepOutput::from(Err(e)),

@@ -323,6 +323,7 @@ fn read(automation: &IUIAutomation2, target: &CaptureTarget) -> StepOutput {
         attempts: 1,
         note,
         focused_class,
+        key_wait: None,
     }
 }
 

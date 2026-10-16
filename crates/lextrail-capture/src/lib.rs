@@ -247,6 +247,9 @@ pub struct StepOutput {
     /// The class name of the focused element, if the step learned it (UIA). Passed on to
     /// later steps in [`StepContext`].
     pub focused_class: Option<String>,
+    /// How long the step waited for the hotkey's keys to be released (clipboard), part of
+    /// its elapsed time.
+    pub key_wait: Option<Duration>,
 }
 
 /// What earlier steps of one capture learned, for the later ones.
@@ -267,6 +270,7 @@ impl From<Result<CaptureOutcome, CaptureError>> for StepOutput {
             attempts: 1,
             note: None,
             focused_class: None,
+            key_wait: None,
         }
     }
 }
@@ -288,6 +292,7 @@ pub struct StepTrace {
     pub element: Option<ElementSource>,
     pub attempts: u32,
     pub note: Option<&'static str>,
+    pub key_wait: Option<Duration>,
 }
 
 /// A short, text-free label for a capture result: `captured`, `no_selection`, ..., `error`.
@@ -313,7 +318,8 @@ impl Unavailable {
 
 impl fmt::Display for CaptureTrace {
     /// e.g. `uia=captured 21.3ms (uia_focus); total 21.4ms`, `uia=captured 48.0ms x2 ...`
-    /// (retried once) or `precheck=elevated; total 0.0ms`.
+    /// (retried once), `clipboard=captured 160.2ms keys=150.1ms` (of which 150.1 ms
+    /// waiting for the hotkey's keys to be released) or `precheck=elevated; total 0.0ms`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
         if let Some(u) = self.precheck {
@@ -323,6 +329,9 @@ impl fmt::Display for CaptureTrace {
             write!(f, "{}={} {:.1}ms", step.step, step.result, ms(step.elapsed))?;
             if step.attempts > 1 {
                 write!(f, " x{}", step.attempts)?;
+            }
+            if let Some(wait) = step.key_wait {
+                write!(f, " keys={:.1}ms", ms(wait))?;
             }
             if let Some(element) = step.element {
                 write!(f, " ({})", element.label())?;

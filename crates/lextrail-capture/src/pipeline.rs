@@ -119,6 +119,7 @@ impl Pipeline {
                 element: output.element,
                 attempts: output.attempts,
                 note: output.note,
+                key_wait: output.key_wait,
             });
             match output.result {
                 Ok(CaptureOutcome::Captured(selection)) => {
@@ -392,6 +393,28 @@ mod tests {
         assert!(line.starts_with("fixed=timed_out "), "{line}");
         assert!(line.contains("(hwnd_focus)"), "{line}");
         assert!(!line.contains("secret"), "{line}");
+    }
+
+    #[test]
+    fn trace_shows_the_key_wait() {
+        use std::time::Duration;
+        let trace = CaptureTrace {
+            steps: vec![StepTrace {
+                step: "clipboard",
+                result: "captured",
+                elapsed: Duration::from_micros(160_200),
+                element: None,
+                attempts: 1,
+                note: Some("ctrl_insert"),
+                key_wait: Some(Duration::from_micros(150_100)),
+            }],
+            precheck: None,
+            total: Duration::from_micros(160_300),
+        };
+        assert_eq!(
+            trace.to_string(),
+            "clipboard=captured 160.2ms keys=150.1ms [ctrl_insert]; total 160.3ms"
+        );
     }
 
     #[test]

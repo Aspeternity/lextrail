@@ -20,7 +20,7 @@ mod webview;
 use std::sync::atomic::{AtomicIsize, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use lextrail_capture::{CaptureTrace, TextCapture, result_label};
 use lextrail_config::PopupMode;
@@ -98,7 +98,12 @@ fn platform_capture() -> Arc<dyn TextCapture> {
 
 /// Starts a lookup: records the foreground window and focus *before* the popup can
 /// change anything, then captures in the background while the popup gets ready.
-pub fn lookup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+/// `pressed` is when the hotkey fired.
+///
+/// The capture thread starts before the popup is asked to show: on the first lookup that
+/// creates the window, which blocks this (main) thread for a while, and the capture runs
+/// alongside it instead of after it (R3-P3).
+pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result<()> {
     let state = app.state::<PopupState>();
     let id = state.next_request.fetch_add(1, Ordering::SeqCst) + 1;
     if let Some(t) = &state.timings {
@@ -129,17 +134,12 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     );
 
     dispatch_request(app, request::Event::Started { id });
-    dispatch(app, Event::ShowRequested);
-
-    let timer_app = app.clone();
-    spawn("popup-delay", move || {
-        thread::sleep(request::LOADING_DELAY);
-        dispatch_request(&timer_app, request::Event::DelayElapsed { id });
-    });
 
     let capture_app = app.clone();
     let capture = Arc::clone(&state.capture);
     spawn("popup-capture", move || {
+        #[cfg(debug_assertions)]
+        let start = pressed.elapsed();
         let source_app = target
             .as_ref()
             .ok()
@@ -156,13 +156,26 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         // One line per capture, without the captured text: method, result, time and
         // where the element came from.
         #[cfg(debug_assertions)]
-        eprintln!("capture #{id}: {} | {trace}", result_label(&result));
+        eprintln!(
+            "capture #{id}: {} | start +{:.1}ms; {trace}",
+            result_label(&result),
+            start.as_secs_f64() * 1000.0
+        );
         if let Some(t) = &capture_app.state::<PopupState>().timings {
             t.capture(id, trace.total);
         }
         let content = Content::from_capture(result, source_app);
         dispatch_request(&capture_app, request::Event::Captured { id, content });
     });
+
+    let timer_app = app.clone();
+    spawn("popup-delay", move || {
+        thread::sleep(request::LOADING_DELAY);
+        dispatch_request(&timer_app, request::Event::DelayElapsed { id });
+    });
+
+    // May create the window and block for a while (first lookup).
+    dispatch(app, Event::ShowRequested);
     Ok(())
 }
 
