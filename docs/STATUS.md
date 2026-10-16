@@ -25,14 +25,25 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
 - **句子带列表符号**：`sentence_around` 去掉开头的 •、-、*、1.、(2)、a)、一、、① 等；行首的 "1." 不再被当作句末。
 - 顺带修了悬浮窗中间多出一条横线（`#app` 没有高度）。
 
+**第一轮手动测试（R1）全部完成**（2026-10-16），结果和问题表（R1-1 至 R1-11）见 `docs/specs/m1-capture-manual-tests.md`。修复分两个阶段，**第一阶段已完成**：
+- A1（R1-5、R1-10）：悬浮窗在前台时再按快捷键，忽略并保留结果；桌面上取词显示"没有选中文字"。
+- A2（R1-2）：获取焦点改为 `SetForegroundWindow`，被拒时检查 `IsHungAppWindow` 后用 `AttachThreadInput` 重试并立即解除挂接（`popup/activation.rs`），不再用 Tauri 模拟 Alt 的后备做法；获取焦点期间的前台变化不再隐藏悬浮窗；仍失败时不带焦点显示结果，右上角新增 × 关闭按钮（关闭方式见 ARCHITECTURE 9.3）。debug 版可用 `LEXTRAIL_DEBUG_SKIP_ACTIVATION=1` 模拟这种状态。
+- A3（R1-1）：快捷键触发时 Alt 仍按着，就补发未分配的虚拟键 `0xE8`（`keyboard.rs`，见 D014 补充）。用 `tools/e2e/key-log.html` 确认：修复前程序只收到 Alt 按下/松开（X 的按下被快捷键拦截），修复后中间多了 `keyCode=232`。**VS Code 菜单栏被框住的现象我用模拟输入没能复现**（无论有无屏蔽键），需项目负责人用真实键盘复测（R2-1）。debug 版可用 `LEXTRAIL_DEBUG_NO_ALT_MASK=1` 关掉屏蔽键做对比。
+- A4（R1-9）：提示文字不再提尚未实现的"连按两次 Ctrl+C"；做完该功能时加回（已写进 ROADMAP）。
+- A5（R1-7）：`text::clean_control_chars` 过滤控制字符（`\u{7}` 等变空格），PDFium 的行末连字符 `\u{2}` 还原为 `-`；`text::resolve_line_end_hyphens` 已实现（去掉连字符后词典里查得到就合并），词典接入时调用（M1 任务已加）。
+- A6（R1-8）：每次显示悬浮窗时按目标显示器当前缩放设置尺寸（无法自测，因需要改系统缩放设置，待 R2-11 复测）。
+- A7（R1-6）：Chrome 的 PDF 阅读器实测选区正确（截图核对 5 个词），继续用 UIA；`[chromium_pdf]` 只针对 Edge。
+
+第二轮复测清单（R2-1 至 R2-12）已写在手动测试清单里，**等项目负责人复测**。
+
 手动测试第 1 节（浏览器）通过（Firefox 未安装）。第 2 节（Edge 内置 PDF）发现并处理（2026-10-16）：
 - **选中文字错位**：用 `examples/uia_dump.rs` 打印原始数据确认，是 **Edge 的 PDF 阅读器本身**报告的选区范围错位（选区 range 的 `GetText()` 就是错的，如 "between" → "ween di"），不是 LexTrail 用偏移截取文字；报告的"段落"也会从段落中间开始（句子缺开头同一原因）。无法判断哪次可信，所以检测到 Chromium PDF 时 UIA 返回 `unsupported [chromium_pdf]`，等剪贴板兜底接手。补了"偏移与文字不一致"的单元测试（原有逻辑已会退回按文字查找）。
 - **刚打开 PDF 时 no_selection**：PDF 现在一律不走 UIA。评估后**不在 no_selection 时重试**（实测重试拿不到早于无障碍树的选区，只会耗尽预算），留到剪贴板兜底时决定是否用剪贴板确认（已加入 ROADMAP）。
 - 句子开头的省略号、过长上下文的截取：已加入 ROADMAP（低优先级）。
 
 代码现状（详见各文件）：
-- `crates/lextrail-core`：`text::sentence_around`（从段落切出选中文字所在的句子；处理缩写、小数、省略号、引号、中文标点、硬换行、开头的列表符号；位置提示无效时退回按文字查找）；`Hlc`（定宽小写文本、严格解析、按字符串比较即为先后）+ `HlcClock`（本地 `now`、收到远端 `receive`、计数器溢出借 1 ms、`restore` 回滚）+ 可注入的 `Clock`（`SystemClock` / 测试用 `ManualClock`）；`lookup` 模块：`LookupKind`、`CaptureMethod`、文本规范化（合并空白、最多 2000 字符）、30 秒去重判定。43 个测试
-- `crates/lextrail-capture`（D041）：`TextCapture`（`snapshot` / `capture` / `capture_context`）、`CaptureOutcome` / `Unavailable`（取不到）与 `CaptureError`（出错，平台无关）；`Pipeline` 按顺序尝试各步骤（与平台无关，有测试）；`WindowsCapture`：`snapshot` 只做 Win32 调用（前台窗口、进程名、类名、标题、权限级别、`GetGUIThreadInfo` 的 hwndFocus / hwndCaret），UIA 在专用 MTA 线程上（预算 180 ms、卡死 5 秒放弃重建、最多 2 个被放弃的线程）；`capture_context` 目前返回 `None`（连按两次 Ctrl+C 时实现）；Chromium 窗口在预算内重试，Chromium PDF 不走 UIA。20 个测试；`examples/capture_probe.rs` 用于手动测试真实窗口。`capture_traced` 返回 `CaptureTrace`（每一步的方式、结果、耗时、焦点元素来源，不含文字）；debug 构建每次取词打印一行，如 `capture #2: captured | uia=captured 3.1ms (uia_focus); total 3.1ms`
+- `crates/lextrail-core`：`text::sentence_around`（从段落切出选中文字所在的句子；处理缩写、小数、省略号、引号、中文标点、硬换行、开头的列表符号；位置提示无效时退回按文字查找）；`Hlc`（定宽小写文本、严格解析、按字符串比较即为先后）+ `HlcClock`（本地 `now`、收到远端 `receive`、计数器溢出借 1 ms、`restore` 回滚）+ 可注入的 `Clock`（`SystemClock` / 测试用 `ManualClock`）；`lookup` 模块：`LookupKind`、`CaptureMethod`、文本规范化（合并空白、最多 2000 字符）、30 秒去重判定；`text::clean_control_chars`、`resolve_line_end_hyphens`。46 个测试
+- `crates/lextrail-capture`（D041）：`TextCapture`（`snapshot` / `capture` / `capture_context`）、`CaptureOutcome` / `Unavailable`（取不到）与 `CaptureError`（出错，平台无关）；`Pipeline` 按顺序尝试各步骤（与平台无关，有测试）；`WindowsCapture`：`snapshot` 只做 Win32 调用（前台窗口、进程名、类名、标题、权限级别、`GetGUIThreadInfo` 的 hwndFocus / hwndCaret），UIA 在专用 MTA 线程上（预算 180 ms、卡死 5 秒放弃重建、最多 2 个被放弃的线程）；`capture_context` 目前返回 `None`（连按两次 Ctrl+C 时实现）；Chromium 窗口在预算内重试，Edge PDF 不走 UIA，桌面直接返回没有选中文字。21 个测试；`examples/capture_probe.rs` 用于手动测试真实窗口。`capture_traced` 返回 `CaptureTrace`（每一步的方式、结果、耗时、焦点元素来源，不含文字）；debug 构建每次取词打印一行，如 `capture #2: captured | uia=captured 3.1ms (uia_focus); total 3.1ms`
 - `crates/lextrail-store`（D037、D040）：`Store::open_in_dir`（创建目录、`lextrail.db`）/ `open_in_memory_with_clock`；`user_version` 迁移（`src/migrations/0001_init.sql`：`meta`、`lookups`，STRICT 表）；版本更高时拒绝打开且不改文件；WAL、`synchronous=NORMAL`、`foreign_keys`、`busy_timeout` 5 秒；`meta` 存 `device_id`（UUIDv7）和最近一次 HLC，与数据写入同一事务；`record_lookup`（规范化、去重、空查询忽略）、`delete_lookup`（软删除）、`lookup`、`recent_lookups`。20 个测试。**桌面端尚未接入**
 - `crates/lextrail-config`（D035）：`Settings`（`version`、`hotkeys.lookup`、`popup.mode`）+ `SettingsFile`（TOML、原子写入、损坏时备份为 `.corrupt` 并恢复默认、更新版本写的文件不覆盖）+ `SecretStore` 适配器（`WindowsCredentialStore` / `MemorySecretStore`）。17 个测试，其中 1 个真实读写 Windows 凭据管理器（用临时 key，测完删除）
 - `apps/desktop/src-tauri`：
@@ -76,8 +87,13 @@ M1 第一项"评审数据模型公共部分"已完成（D039 改为 ✅）：同
 
 ## 下一步
 
-1. **项目负责人正在**按 `docs/specs/m1-capture-manual-tests.md` 手动测试五类软件，从第 2 节重新开始（Edge PDF 现在应显示"这个窗口暂时无法取词"），然后第 3 节 Word（debug 版看日志，release 版看最终效果，构建命令在清单第 0 节），测完会把填好的清单发回来；之后根据结果修正取词问题。
-2. 剪贴板兜底（D011）：完成后在 `WindowsCapture` 的 `Pipeline` 中加在 UIA 之后，并验证取词完成后悬浮窗仍能获得焦点（清单 6.10）。
+1. 项目负责人按手动测试清单的"第一阶段修复后的复测（R2）"复测，结果发回后处理。
+2. **第二阶段：剪贴板兜底**（D011），按已确认的计划：
+   - B1：修饰键松开后模拟 Ctrl+C（终端用 Ctrl+Insert，Windows Terminal 和 conhost 分别实测），用剪贴板序列号确认更新；恢复原剪贴板时写清恢复哪些格式，写回的内容加"不进入剪贴板历史"的标记（目标程序复制产生的那条历史无法避免，写进已知限制）。作为 `Pipeline` 第二步，排在 UIA 之后。
+   - B2：UIA 返回"没有选中文字"时，只对 UIA 不可靠的程序（Chromium 系窗口类名、PDF 等）用剪贴板确认，记事本、Word 等可靠程序不做；结论记入 DECISIONS（新编号）。注意 VS Code 编辑器在没有选区时 Ctrl+C 会复制整行，可用剪贴板中的 `vscode-editor-data` 格式（`isFromEmptySelection`）排除。
+   - B3：查 VS Code 编辑器和集成终端 UIA 返回 `no_selection` 的原因（`editor.accessibilitySupport`），不改用户设置，由剪贴板兜底覆盖；集成终端只在有选区时 Ctrl+C 才是复制。
+   - B4：验证剪贴板路径下悬浮窗仍能获得焦点（清单 6.10），用 e2e 脚本加截图。
+   - 做完后同样给出只需复测的清单。用模拟输入调查前后都要告诉项目负责人。
 3. 然后做连按两次 Ctrl+C（实现 `capture_context`）、dict-builder（D038）、词典等任务。
 4. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。
 5. M1、M2、M3、M6 都有"重测性能预算"任务，结果追加到 `docs/specs/m0-benchmark.md` 第 7 节。
