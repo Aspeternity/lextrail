@@ -393,6 +393,13 @@ fn activate<R: Runtime>(app: &AppHandle<R>, window: &WebviewWindow<R>) -> tauri:
     window.show()?;
     let target = window.clone();
     app.run_on_main_thread(move || {
+        // Debug builds only: LEXTRAIL_DEBUG_SKIP_ACTIVATION=1 leaves the popup without
+        // focus, to test that state (close button, foreground watching) by hand.
+        #[cfg(debug_assertions)]
+        if std::env::var_os("LEXTRAIL_DEBUG_SKIP_ACTIVATION").is_some() {
+            eprintln!("popup: activation skipped (LEXTRAIL_DEBUG_SKIP_ACTIVATION)");
+            return;
+        }
         let how = bring_to_front(&target);
         #[cfg(debug_assertions)]
         eprintln!("popup: bring to front: {how}");
