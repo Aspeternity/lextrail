@@ -50,7 +50,7 @@ impl<T: CaptureStep + ?Sized> CaptureStep for std::sync::Arc<T> {
 /// [`Unavailable::NoSelection`], later steps run only if they
 /// [confirm](CaptureStep::confirms_no_selection) it for this target. When no step captures
 /// anything, the result is the most useful of what they reported:
-/// `NoSelection` > `TimedOut` > an error > `Unsupported`.
+/// `NoSelection` > `KeysHeld` > `TimedOut` > an error > `Unsupported`.
 pub struct Pipeline {
     steps: Vec<Box<dyn CaptureStep>>,
     own_process_id: u32,
@@ -145,7 +145,8 @@ impl Pipeline {
 
 fn rank(result: &Result<Unavailable, CaptureError>) -> u8 {
     match result {
-        Ok(Unavailable::NoSelection) => 4,
+        Ok(Unavailable::NoSelection) => 5,
+        Ok(Unavailable::KeysHeld) => 4,
         Ok(Unavailable::TimedOut) => 3,
         Err(_) => 2,
         Ok(_) => 1,
@@ -312,6 +313,14 @@ mod tests {
                 unavailable(TimedOut),
             ),
             (vec![error(), unavailable(TimedOut)], unavailable(TimedOut)),
+            (
+                vec![unavailable(TimedOut), unavailable(KeysHeld)],
+                unavailable(KeysHeld),
+            ),
+            (
+                vec![unavailable(Unsupported), unavailable(KeysHeld)],
+                unavailable(KeysHeld),
+            ),
             (vec![unavailable(Unsupported), error()], error()),
             (vec![unavailable(Unsupported)], unavailable(Unsupported)),
             (vec![], unavailable(Unsupported)),

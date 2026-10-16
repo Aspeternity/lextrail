@@ -2,7 +2,8 @@
 //! the text, and put the user's clipboard back.
 //!
 //! 1. Wait until the hotkey's modifiers are released (otherwise Ctrl+C would arrive as
-//!    e.g. Ctrl+Alt+C).
+//!    e.g. Ctrl+Alt+C), for up to [`MODIFIER_WAIT`]; still held after that →
+//!    [`Unavailable::KeysHeld`] (D043).
 //! 2. Save every clipboard format that holds plain memory ([`is_restorable_format`]).
 //!    Formats that are GDI handles (bitmaps, metafiles, palettes) are skipped; the system
 //!    synthesizes them from the memory formats (e.g. `CF_BITMAP` from `CF_DIB`).
@@ -47,8 +48,8 @@ use crate::{
     StepContext, StepOutput, Unavailable,
 };
 
-/// How long to wait for the user to release the hotkey's modifiers.
-const MODIFIER_WAIT: Duration = Duration::from_millis(600);
+/// How long to wait for the user to release the hotkey's modifiers (D043).
+const MODIFIER_WAIT: Duration = Duration::from_secs(3);
 /// How long the target has to put the copy on the clipboard.
 const COPY_WAIT: Duration = Duration::from_millis(400);
 /// Retrying `OpenClipboard` while another program holds it.
@@ -140,7 +141,7 @@ impl ClipboardStep {
         let output = if released {
             self.copy_released(keys)
         } else {
-            unavailable(Unavailable::TimedOut, Some("modifiers_held"))
+            unavailable(Unavailable::KeysHeld, None)
         };
         StepOutput { key_wait, ..output }
     }

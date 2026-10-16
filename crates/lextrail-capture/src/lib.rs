@@ -175,6 +175,9 @@ pub enum Unavailable {
     Unsupported,
     /// Every method ran out of time.
     TimedOut,
+    /// The hotkey's keys were still held after the wait, so the clipboard fallback could
+    /// not send its copy keys (D043). The user should release them and try again.
+    KeysHeld,
 }
 
 /// Something went wrong while capturing. Platform errors are converted inside the
@@ -312,6 +315,7 @@ impl Unavailable {
             Self::NoForegroundWindow => "no_foreground_window",
             Self::Unsupported => "unsupported",
             Self::TimedOut => "timed_out",
+            Self::KeysHeld => "keys_held",
         }
     }
 }
@@ -353,6 +357,7 @@ impl fmt::Display for Unavailable {
             Self::NoForegroundWindow => "no foreground window",
             Self::Unsupported => "unsupported target",
             Self::TimedOut => "timed out",
+            Self::KeysHeld => "hotkey still held",
         })
     }
 }

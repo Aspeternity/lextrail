@@ -67,6 +67,7 @@ fn reason(u: Unavailable) -> &'static str {
         Unavailable::NoForegroundWindow => "no_foreground_window",
         Unavailable::Unsupported => "unsupported",
         Unavailable::TimedOut => "timed_out",
+        Unavailable::KeysHeld => "keys_held",
     }
 }
 
@@ -130,6 +131,12 @@ mod tests {
         assert_eq!(
             Content::from_capture(Ok(CaptureOutcome::Unavailable(Unavailable::Elevated)), None),
             Content::Unavailable { reason: "elevated" }
+        );
+        assert_eq!(
+            Content::from_capture(Ok(CaptureOutcome::Unavailable(Unavailable::KeysHeld)), None),
+            Content::Unavailable {
+                reason: "keys_held"
+            }
         );
         let err = CaptureError::WorkerUnavailable("gone".into());
         assert!(matches!(
