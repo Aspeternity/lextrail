@@ -2,7 +2,9 @@
 
 > 自动化测试覆盖不到真实程序的 UI Automation 行为，每次修改取词或悬浮窗焦点逻辑后按本清单手动测一遍。
 > 结果填在每个表格的"结果"列（✅ / ❌ / 说明），并在末尾写明日期、Windows 版本和各软件版本。
-> 规格见 `ARCHITECTURE.md` 4.1、4.2、9.3，决定见 D041、D042。
+> 规格见 `ARCHITECTURE.md` 4.1、4.2、9.3，决定见 D041、D042、D043。
+>
+> **改动快捷键或键盘相关逻辑之后**（`hotkey.rs`、`keyboard.rs` 屏蔽键、剪贴板兜底的模拟按键等），除了 R2-1、R2-2（VS Code、Word、记事本、Edge 不激活菜单栏 / KeyTips），**必须复测 Windows Terminal 选词**（5.1：取到单词、选区保留）。R3-9 中屏蔽键就是这样在 Windows Terminal 中引入了回归，而 R2 没有测到。
 
 ## 0. 准备
 
@@ -142,25 +144,26 @@
 
 | # | 对应 | 步骤 | 预期 | 结果 |
 |---|---|---|---|---|
-| R3-1 | 2.1、R1-4 | **[release]** Edge 打开本地 PDF，选中一个单词 → 快捷键 | 取到单词（没有句子行）；日志 `uia=unsupported ... [chromium_pdf]; clipboard=captured`；悬浮窗获得焦点；剪贴板保持 | |
-| R3-2 | 2.2 | Edge PDF 中选中跨行短语 | 取到短语，换行合并为空格 | |
-| R3-3 | R1-4 | Chrome 刚打开 PDF 时立即选词查词（第一轮出现过 `no_selection`） | 取到单词：UIA 说没选中时由剪贴板确认（`uia=no_selection ...; clipboard=captured`）；剪贴板保持 | |
-| R3-4 | 4.1、R1-3 | VS Code 编辑器中选中一个单词 | 取到单词（`uia=no_selection; clipboard=captured`）；剪贴板保持 | |
-| R3-5 | 4.1 | VS Code 编辑器中什么都不选（光标停在某行） | 显示"没有选中文字"（`[vscode_empty_selection]`），不显示整行；剪贴板保持 | |
-| R3-6 | 4.3、R1-3 | VS Code 集成终端中选中一个单词 | 取到单词（`[ctrl_insert]`）；剪贴板保持 | |
-| R3-7 | 4.3 | VS Code 集成终端中运行 `ping -t 127.0.0.1`，什么都不选，按快捷键 | 显示"没有选中文字"；ping 继续运行，没有被中断 | |
-| R3-8 | 5.3 | 旧版控制台（conhost）中选中一个单词；再什么都不选按一次 | 取到单词（`[ctrl_insert]`）；不选时显示"没有选中文字"，命令行里没有多余字符 | |
-| R3-9 | 5.1 | Windows Terminal 中选词 | 仍由 UIA 取到（日志里没有 `clipboard=`） | |
-| R3-10 | B2 | 记事本、Word 中什么都不选按快捷键 | 显示"没有选中文字"，日志里没有 `clipboard=`（可靠程序不做剪贴板确认），响应很快 | |
-| R3-11 | D043 | 做完 R3-1 后按 Win+V 打开剪贴板历史 | 有一条目标程序复制的单词（已知限制，无法避免）；**没有**第二条"R3 原剪贴板"（LexTrail 写回的不进历史） | |
-| R3-12 | D043 | 复制一张图片（如截图）到剪贴板，再在 Edge PDF 中查词，然后粘贴到画图 | 粘贴出的仍是原来的图片 | |
-| R3-13 | D043 | 复制一个文件（资源管理器中 Ctrl+C），再在 Edge PDF 中查词，然后在别的文件夹粘贴 | 粘贴出的是原来的文件 | |
-| R3-14 | 回归 | Edge 网页（1.1）、Word（3.1）各查一次 | 与之前相同，日志里没有 `clipboard=` | |
+| R3-1 | 2.1、R1-4 | **[release]** Edge 打开本地 PDF，选中一个单词 → 快捷键 | 取到单词（没有句子行）；日志 `uia=unsupported ... [chromium_pdf]; clipboard=captured`；悬浮窗获得焦点；剪贴板保持 || ✅ debug 版、release 版（资源管理器双击启动）都取到单词，悬浮窗获得焦点，剪贴板保持 |
+| R3-2 | 2.2 | Edge PDF 中选中跨行短语 | 取到短语，换行合并为空格 || ✅ |
+| R3-3 | R1-4 | Chrome 刚打开 PDF 时立即选词查词（第一轮出现过 `no_selection`） | 取到单词：UIA 说没选中时由剪贴板确认（`uia=no_selection ...; clipboard=captured`）；剪贴板保持 || ✅ Chrome 刚打开 PDF 时出现过 `uia=no_selection 83.8ms x3; clipboard=captured 59.5ms`，剪贴板确认生效 |
+| R3-4 | 4.1、R1-3 | VS Code 编辑器中选中一个单词 | 取到单词（`uia=no_selection; clipboard=captured`）；剪贴板保持 || ✅ |
+| R3-5 | 4.1 | VS Code 编辑器中什么都不选（光标停在某行） | 显示"没有选中文字"（`[vscode_empty_selection]`），不显示整行；剪贴板保持 || ✅ 3 次都是 `clipboard=no_selection [vscode_empty_selection]` |
+| R3-6 | 4.3、R1-3 | VS Code 集成终端中选中一个单词 | 取到单词（`[ctrl_insert]`）；剪贴板保持 || ✅ |
+| R3-7 | 4.3 | VS Code 集成终端中运行 `ping -t 127.0.0.1`，什么都不选，按快捷键 | 显示"没有选中文字"；ping 继续运行，没有被中断 || ✅ `clipboard=no_selection 550.8ms [clipboard_unchanged]`，显示"没有选中文字"，ping 未被中断 |
+| R3-8 | 5.3 | 旧版控制台（conhost）中选中一个单词；再什么都不选按一次 | 取到单词（`[ctrl_insert]`）；不选时显示"没有选中文字"，命令行里没有多余字符 || ✅ |
+| R3-9 | 5.1 | Windows Terminal 中选词 | 仍由 UIA 取到（日志里没有 `clipboard=`） || ❌ UIA 报 `no_selection`（4/4），查完选区高亮消失。设 `LEXTRAIL_DEBUG_NO_ALT_MASK=1` 后 3/3 取到、选区保留：屏蔽键 `0xE8` 让 Windows Terminal 清掉了选区（R1-1 的修复引入，R2 没测 WT；见问题 R3-P1） |
+| R3-10 | B2 | 记事本、Word 中什么都不选按快捷键 | 显示"没有选中文字"，日志里没有 `clipboard=`（可靠程序不做剪贴板确认），响应很快 || ✅ |
+| R3-11 | D043 | 做完 R3-1 后按 Win+V 打开剪贴板历史 | 有一条目标程序复制的单词（已知限制，无法避免）；**没有**第二条"R3 原剪贴板"（LexTrail 写回的不进历史） || ✅ 测前清空了 Win+V 历史。写回的原内容没有进历史；这次 Edge 复制的单词也没有进历史（可能是时序原因，D043 仍保留"可能进入"的说法） |
+| R3-12 | D043 | 复制一张图片（如截图）到剪贴板，再在 Edge PDF 中查词，然后粘贴到画图 | 粘贴出的仍是原来的图片 || ✅ |
+| R3-13 | D043 | 复制一个文件（资源管理器中 Ctrl+C），再在 Edge PDF 中查词，然后在别的文件夹粘贴 | 粘贴出的是原来的文件 || ✅ |
+| R3-14 | 回归 | Edge 网页（1.1）、Word（3.1）各查一次 | 与之前相同，日志里没有 `clipboard=` || ✅ |
 
 ## 记录
 
 | 日期 | 测试人 | Windows 版本 | 备注 |
 |---|---|---|---|
+| 2026-10-16 | 项目负责人 | Windows 11 | 第三轮（R3）：剪贴板兜底后的复测，debug 版全项 + release 版 R3-1。13 项通过，R3-9（Windows Terminal）失败；另发现问题 R3-P1 至 R3-P4（见下） |
 | 2026-10-16 | 项目负责人 | Windows 11 | 第二轮（R2）：第一阶段修复后的复测，12 项全部通过，第一阶段验收 |
 | 2026-10-16 | 项目负责人 | Windows 11 | 第一轮（R1）：debug 版全项 + release 版（资源管理器双击启动）复查 Edge、Word、VS Code 预览。上表"结果"列为本轮结果 |
 
@@ -179,3 +182,17 @@
 | R1-9 | 提示文字提到尚未实现的"连按两次 Ctrl+C" | 第一阶段 A4：先去掉，功能完成后再加回并检查 |
 | R1-10 | Windows Terminal 跨行时句子带提示符；桌面显示"暂时无法取词" | 桌面改为"没有选中文字"（A1）；提示符以后处理 |
 | R1-11 | 句子开头的 "..."；源代码文本框中上下文是很长的一整行 | 已在 ROADMAP（低优先级） |
+
+### 第三轮发现的问题
+
+| 编号 | 问题 | 处理 |
+|---|---|---|
+| R3-P1（高） | Windows Terminal 选词后查词，UIA 报 `no_selection`（4/4），选区高亮消失；关掉屏蔽键后 3/3 正常。屏蔽键 `0xE8` 是普通按键，Windows Terminal 收到非修饰键就清除选区（R3-9） | 修改屏蔽键做法（D014 补充），方案待项目负责人确认；修复后 WT 选词、R2-1、R2-2 都要通过 |
+| R3-P2（中） | 走剪贴板的程序（Edge PDF、VS Code）中按住 Ctrl+Alt 超过约 0.6 秒：`clipboard=timed_out 604ms [modifiers_held]`，提示"取词超时 / 程序响应较慢"，原因不对，松手后也不补取（走 UIA 的程序按住也能取词） | 项目负责人决定：一直等到松开修饰键再复制，兜底约 3 秒；超过时提示"请松开快捷键后再试"（D043 补充） |
+| R3-P3（待查） | 两轮 debug 测试中，启动后第一次取词的剪贴板步骤只用约 10 ms（如 `uia=unsupported 12.4ms; clipboard=captured 12.5ms; total 25.0ms`），之后每次 150–210 ms（在等松开修饰键，已用实验确认）。怀疑第一次没等修饰键 | 查等待修饰键的逻辑；日志中单独打印"等修饰键"的时间 |
+| R3-P4（观察） | 走剪贴板时每次都要等松开修饰键（约 150–200 ms），所以都会先闪一下"正在取词…"再出结果（release 版确认） | 结合 R3-P2 的改法，提出调整显示阈值的方案 |
+
+记录，暂不处理：
+- Word 中什么都不选时偶发一次 `uia=timed_out 193.7ms`，随后剪贴板兜底给出 `no_selection [clipboard_unchanged]`，共 598 ms；之后重测 3 次都是 3.6–5.5 ms，未复现。
+- Word 中出现过一次句子开头少字：`text: "jumps", sentence: "he quick brown fox jumps over the lazy dog."`。原文档已无法确认；在新文档第一行输入同一句重测，`jumps`、`The` 的句子都完整，未复现。
+- Word 句子切分正确处理了 `Mr.`、`3.14`、`p.m.`、`e.g.`。

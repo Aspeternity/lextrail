@@ -37,7 +37,8 @@
 - [x] `lextrail-capture` 统一接口 + Windows 实现：UI Automation 取词（含上下文）（D041）
 - [x] 悬浮窗焦点方案 B：取词期间不抢焦点、约 100 ms 后显示"正在取词"、前台窗口变化时隐藏、取词完成后获取焦点（D042）（新增）
 - [x] `lextrail-core` 切句：`sentence_around`（新增）
-- [ ] 按 `docs/specs/m1-capture-manual-tests.md` 在浏览器、PDF 阅读器、Word、VS Code、终端中手动测试并记录结果（新增）：R1、R2 已完成，R3（剪贴板兜底后）待测
+- [ ] 按 `docs/specs/m1-capture-manual-tests.md` 在浏览器、PDF 阅读器、Word、VS Code、终端中手动测试并记录结果（新增）：R1、R2、R3 已完成；R3 发现的问题修复后做 R4
+- [ ] 修复 R3 复测发现的问题（新增）：屏蔽键让 Windows Terminal 清掉选区（R3-P1）；剪贴板兜底一直等到松开修饰键、兜底约 3 秒、超时提示"请松开快捷键后再试"（R3-P2，D043 补充）；查启动后第一次取词的修饰键等待并在日志中单独打印（R3-P3）；走剪贴板时"正在取词…"的显示阈值（R3-P4）；然后按 R4 清单复测
 - [ ] 获取焦点的后备路径（`AttachThreadInput`、被拒后不带焦点显示）在真实环境中触发时记录场景并核对（新增，R2-5）
 - [ ] Windows Terminal 跨行选中时句子带上提示符：终端里按行切上下文、识别提示符（新增，R1-10，优先级低）
 - [ ] 前端测试：引入 Vitest，测试悬浮窗页面的内容渲染（新增）
