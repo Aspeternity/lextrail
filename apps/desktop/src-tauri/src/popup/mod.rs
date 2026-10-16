@@ -103,6 +103,16 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         t.start(id);
     }
     let target = state.capture.snapshot();
+    // The popup itself is in front (hotkey pressed again while reading a result): keep
+    // the result instead of trying to capture from the popup.
+    if target
+        .as_ref()
+        .is_ok_and(|t| is_popup_window(app, t.native_window()))
+    {
+        #[cfg(debug_assertions)]
+        eprintln!("hotkey ignored: the popup is in front");
+        return Ok(());
+    }
     // M5: the application blacklist is checked here, after the snapshot and before
     // the capture (ARCHITECTURE.md 4.1).
 
@@ -152,6 +162,20 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         dispatch_request(&capture_app, request::Event::Captured { id, content });
     });
     Ok(())
+}
+
+/// Whether `native` is the popup window and it is on screen.
+#[cfg(windows)]
+fn is_popup_window<R: Runtime>(app: &AppHandle<R>, native: isize) -> bool {
+    native != 0
+        && app.get_webview_window(LABEL).is_some_and(|w| {
+            w.is_visible().unwrap_or(false) && w.hwnd().is_ok_and(|h| h.0 as isize == native)
+        })
+}
+
+#[cfg(not(windows))]
+fn is_popup_window<R: Runtime>(_app: &AppHandle<R>, _native: isize) -> bool {
+    false
 }
 
 /// Debug builds only: `LEXTRAIL_DEBUG_CAPTURE_DELAY_MS` slows every capture down, to

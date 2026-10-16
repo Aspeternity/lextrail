@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crate::{
     CaptureError, CaptureOutcome, CaptureTarget, CaptureTrace, Pipeline, RawContext, TextCapture,
+    Unavailable,
 };
 use uia::UiaStep;
 
@@ -29,6 +30,11 @@ impl WindowsCapture {
     }
 }
 
+/// The desktop window classes (wallpaper and icons).
+fn is_desktop_class(class: &str) -> bool {
+    class == "Progman" || class == "WorkerW"
+}
+
 impl Default for WindowsCapture {
     fn default() -> Self {
         Self::new()
@@ -46,6 +52,22 @@ impl TextCapture for WindowsCapture {
         &self,
         target: &CaptureTarget,
     ) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace) {
+        // The desktop has nothing to select: say so rather than "unsupported".
+        if target
+            .window
+            .as_ref()
+            .and_then(|w| w.class_name.as_deref())
+            .is_some_and(is_desktop_class)
+        {
+            let trace = CaptureTrace {
+                precheck: Some(Unavailable::NoSelection),
+                ..CaptureTrace::default()
+            };
+            return (
+                Ok(CaptureOutcome::Unavailable(Unavailable::NoSelection)),
+                trace,
+            );
+        }
         self.pipeline.run_traced(target)
     }
 
@@ -56,5 +78,29 @@ impl TextCapture for WindowsCapture {
     ) -> Result<Option<RawContext>, CaptureError> {
         // Implemented together with the double Ctrl+C trigger (D012).
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::WindowInfo;
+
+    #[test]
+    fn desktop_gives_no_selection_without_running_steps() {
+        assert!(is_desktop_class("Progman"));
+        assert!(is_desktop_class("WorkerW"));
+        assert!(!is_desktop_class("Notepad"));
+
+        let mut window = WindowInfo::for_tests("explorer.exe");
+        window.class_name = Some("Progman".into());
+        let (result, trace) =
+            WindowsCapture::new().capture_traced(&CaptureTarget::for_tests(Some(window)));
+        assert_eq!(
+            result,
+            Ok(CaptureOutcome::Unavailable(Unavailable::NoSelection))
+        );
+        assert_eq!(trace.precheck, Some(Unavailable::NoSelection));
+        assert!(trace.steps.is_empty());
     }
 }
