@@ -56,3 +56,24 @@ jobs:
       # Plain `cargo build` runs Tauri in dev mode (loads devUrl); `tauri build` produces
       # the real app with the frontend embedded. Bundling (installers) comes in M6.
       - run: pnpm --filter @lextrail/desktop tauri build --no-bundle -- --locked
+
+  # Builds the compact dictionary from the pinned ECDICT source (D038). The download is
+  # cached by the pinned source (source.rs), the result by the builder's inputs.
+  dict:
+    name: Build dictionary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: data/raw
+          key: ecdict-raw-${{ hashFiles('tools/dict-builder/src/source.rs') }}
+      - id: dict-cache
+        uses: actions/cache@v6
+        with:
+          path: data/build
+          key: dict-build-${{ hashFiles('tools/dict-builder/**', 'crates/lextrail-dict/**', 'Cargo.lock') }}
+      - if: steps.dict-cache.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@v2
+      - if: steps.dict-cache.outputs.cache-hit != 'true'
+        run: cargo run -p lextrail-dict-builder --release --locked
