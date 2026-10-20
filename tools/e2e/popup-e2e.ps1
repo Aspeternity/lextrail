@@ -76,6 +76,10 @@ public static class LtE2e {
   [StructLayout(LayoutKind.Sequential)] public struct R { public int L, T, Ri, B; }
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r);
+  [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int a, out R r, int size);
+  // The visible frame (DWMWA_EXTENDED_FRAME_BOUNDS): GetWindowRect also covers the
+  // invisible resize borders, which show whatever window is behind.
+  public static R Visible(IntPtr h) { R r; if (DwmGetWindowAttribute(h, 9, out r, 16) != 0) GetWindowRect(h, out r); return r; }
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, IntPtr e);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string t);
@@ -126,8 +130,9 @@ public static class LtE2e {
 # Real pixel coordinates for screenshots on scaled displays.
 [void][LtE2e]::SetProcessDPIAware()
 
+# Only the window's own pixels (no full-screen captures: other windows are the user's).
 function Save-Screenshot([IntPtr]$Hwnd, [string]$Path) {
-  $r = New-Object LtE2e+R; [void][LtE2e]::GetWindowRect($Hwnd, [ref]$r)
+  $r = [LtE2e]::Visible($Hwnd)
   $bmp = New-Object System.Drawing.Bitmap ($r.Ri - $r.L), ($r.B - $r.T)
   [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size)
   $bmp.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
