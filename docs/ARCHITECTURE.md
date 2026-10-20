@@ -12,7 +12,7 @@ LexTrail 是一款常驻后台的桌面翻译与词汇学习工具：
 
 - 在**任何软件**中选中英文单词、短语或句子，按快捷键即可在鼠标旁弹出翻译。
 - 显示音标、词性、按常用程度排序的释义，以及 **AI 给出的当前语境含义**、例句和翻译。
-- 一键收藏到生词本，自动保存遇见时的原句和来源。
+- 一键收藏到生词本，自动保存遇见时的原句。
 - 使用 FSRS 算法复习，并可在手机上通过 PWA 离线复习，多设备自动同步。
 
 ---
@@ -159,7 +159,6 @@ pub enum CaptureError {
 pub struct Selection {
     pub text: String,
     pub context: Option<RawContext>,
-    pub url: Option<String>,          // 预留，浏览器扩展提供
     pub method: CaptureMethod,        // 来自 lextrail-core：uia / clipboard / clipboard_double_copy / ocr
 }
 
@@ -330,7 +329,7 @@ pub trait AiProvider {
 ### 6.3 `lookups`（查询历史，D039）
 
 ```sql
--- 实际定义见 crates/lextrail-store/src/migrations/0001_init.sql（表为 STRICT）
+-- 实际定义见 crates/lextrail-store/src/migrations/（0001_init.sql 建表，0002 删除来源两列；表为 STRICT）
 CREATE TABLE lookups (
   id          TEXT    PRIMARY KEY,
   created_at  INTEGER NOT NULL,
@@ -341,8 +340,6 @@ CREATE TABLE lookups (
   kind        TEXT    NOT NULL CHECK (kind IN ('word', 'phrase', 'sentence')),
   lemma       TEXT,              -- 词形还原后的原形；句子或词典中查不到时为 NULL
   context     TEXT,              -- 所在句子，最多 2000 字符
-  source_app  TEXT,              -- 进程名，如 chrome.exe
-  url         TEXT,              -- 预留，浏览器扩展提供
   method      TEXT    NOT NULL CHECK (method IN ('uia', 'clipboard', 'clipboard_double_copy', 'ocr'))
 );
 CREATE INDEX lookups_lemma_created ON lookups (lemma, created_at);
@@ -350,8 +347,7 @@ CREATE INDEX lookups_created ON lookups (created_at);
 ```
 
 - **只新增、只软删除，不修改**（与 `review_logs` 一样，合并不会冲突）。AI 结果（使用的模型、语境含义）与查询记录的关联在 M2/M3 设计"你见过 N 次"时确定，通过迁移增加字段或表。
-- **不保存窗口标题**：窗口标题常含邮件主题、文件名等隐私内容，而查询历史会同步到服务器。取词时仍可读取窗口标题（例如判断是否为终端），但不写入数据库。
-- **`url`**：接入浏览器扩展时再评审隐私处理（例如是否只保存域名、是否允许关闭）。
+- **不保存来源**（D022、D039 的修改，2026-10-21）：不保存单词来自哪个程序、哪个网址（原来的 `source_app`、`url` 两列已由迁移 2 删除），对用户没有意义。取词时前台窗口的进程名、类名、标题只在内存里用于取词判断（终端用 Ctrl+Insert、Chromium 确认、Edge PDF 判断、以后的应用黑名单），不显示（debug 版悬浮窗除外）、不写入数据库。
 - **去重**：同一 `query` + 同一 `context` 在 30 秒内重复查询只记一次（未删除的记录；按时间差的绝对值判断，系统时间回拨不会误判）。去重逻辑放在 `lextrail-core` / `lextrail-store`，不放在界面层。
 - **"不记录查询历史"开关**：打开后不写入 `lookups`，也不打开数据库。目前是设置文件中的 `[history] record = false`（默认 `true`），设置界面做好后加到界面上。应用黑名单中的程序本来就不会产生查询（D032）。
 - **桌面端写入**（`apps/desktop/src-tauri/src/history.rs`）：取到英文文字时记录（纯中文等不记录，D045）；`query` 是悬浮窗显示的文字（合并行末断词之后），`context` 是显示的原句，`kind` 来自 `Dictionary::classify`（没有词典时不查词典直接分类），`lemma` 是整词查到时的原形（拆成部分、查不到、句子为空）。结果发给悬浮窗之后才在取词线程上写入，第一次写入时打开数据库（约 5 ms）；打开失败时提示一次，本次运行不再记录，查词不受影响。bench 运行时（`LEXTRAIL_BENCH_TIMINGS`）写到临时目录 `lextrail-bench-data`；debug 版可用 `LEXTRAIL_DEBUG_DATA_DIR`、`LEXTRAIL_DEBUG_CONFIG_DIR` 指定数据和设置目录（自动测试用，`paths.rs`），都不碰用户自己的历史和设置。
@@ -362,7 +358,7 @@ CREATE INDEX lookups_created ON lookups (created_at);
 | 表 | 是否同步 | 内容 |
 |---|---|---|
 | `vocab_items` | 是 | 收藏的词条：lemma、`type`（word/phrase）、词典快照、AI 解析快照（含例句）、标签 |
-| `encounters` | 是 | 遇见记录：词条 ID、原句、来源软件、网址、当时的语境含义 |
+| `encounters` | 是 | 遇见记录：词条 ID、原句、当时的语境含义 |
 | `review_logs` | 是 | 复习日志，**只追加** |
 | `cards` | 由日志计算 | FSRS 状态（稳定性、难度、下次复习时间），可在本地缓存，但以 `review_logs` 为准 |
 | `sentences` | 是 | 句子收藏（预留，第一版不做界面） |
@@ -417,7 +413,7 @@ GET  /api/v1/health               健康检查与服务端版本
 - **离线复习**：Service Worker 缓存页面；IndexedDB 缓存近期待复习卡片和复习日志；恢复网络后自动同步。
 - 复习算法和合并逻辑使用编译为 WebAssembly 的 `lextrail-core`，与桌面端为同一份代码（D023）。
 - 复用 `packages/ui` 中的复习组件。
-- 复习卡片显示：单词、音标、发音按钮；点击后显示语境含义、用户遇见时的原句及来源、AI 例句；评分按钮：忘记 / 困难 / 良好 / 简单。
+- 复习卡片显示：单词、音标、发音按钮；点击后显示语境含义、用户遇见时的原句、AI 例句；评分按钮：忘记 / 困难 / 良好 / 简单。
 - 第一版不做推送提醒。
 
 ---

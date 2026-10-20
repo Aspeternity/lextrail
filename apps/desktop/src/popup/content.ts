@@ -7,7 +7,8 @@ export type Content =
       kind: 'selection';
       text: string;
       sentence: string | null;
-      source_app: string | null;
+      /** Debug builds only: the program captured from. Release builds never send it. */
+      source_app?: string;
       /** `null` when the dictionary file is missing. */
       lookup: LookupView | null;
     }

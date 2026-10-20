@@ -217,7 +217,6 @@ fn run_capture<R: Runtime>(
             let selection = Selection {
                 text,
                 context,
-                url: None,
                 method: CaptureMethod::ClipboardDoubleCopy,
             };
             (Ok(CaptureOutcome::Captured(selection)), trace, pdf)
@@ -286,6 +285,8 @@ pub fn lookup<R: Runtime>(
     spawn("popup-capture", move || {
         #[cfg(debug_assertions)]
         let start = pressed.elapsed();
+        // Debug builds show the program captured from; release builds never send it.
+        #[cfg(debug_assertions)]
         let source_app = target
             .as_ref()
             .ok()
@@ -307,10 +308,12 @@ pub fn lookup<R: Runtime>(
         let lookup_start = Instant::now();
         let (content, record) = if matches!(result, Ok(CaptureOutcome::Captured(_))) {
             let dictionary = state.dictionary.get();
-            Content::from_capture(result, pdf_clipboard, source_app, dictionary.as_ref())
+            Content::from_capture(result, pdf_clipboard, dictionary.as_ref())
         } else {
-            Content::from_capture(result, false, source_app, None)
+            Content::from_capture(result, false, None)
         };
+        #[cfg(debug_assertions)]
+        let content = content.with_source_app(source_app);
         // One line per capture, without the captured text: method, result, time and
         // where the element came from; then the dictionary lookup's time.
         #[cfg(debug_assertions)]
@@ -398,7 +401,6 @@ fn bench_lookup_text(
         Ok(text) if !text.is_empty() => Ok(CaptureOutcome::Captured(Selection {
             text,
             context: None,
-            url: None,
             method: CaptureMethod::Uia,
         })),
         _ => result,

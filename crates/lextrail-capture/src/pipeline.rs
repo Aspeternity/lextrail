@@ -264,7 +264,6 @@ mod tests {
         Ok(CaptureOutcome::Captured(Selection {
             text: text.into(),
             context: None,
-            url: None,
             method: CaptureMethod::Uia,
         }))
     }

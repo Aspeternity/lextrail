@@ -237,8 +237,6 @@ pub enum CaptureError {
 pub struct Selection {
     pub text: String,
     pub context: Option<RawContext>,
-    /// Reserved for the browser extension; always `None` for now.
-    pub url: Option<String>,
     pub method: CaptureMethod,
 }
 

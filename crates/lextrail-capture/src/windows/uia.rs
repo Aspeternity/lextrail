@@ -523,7 +523,6 @@ fn selection_of(pattern: &IUIAutomationTextPattern) -> windows::core::Result<Opt
             return Ok(Some(Selection {
                 text,
                 context,
-                url: None,
                 method: CaptureMethod::Uia,
             }));
         }

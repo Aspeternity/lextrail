@@ -87,6 +87,9 @@ function Text([int[]]$CodePoints) { -join ($CodePoints | ForEach-Object { [char]
 # hotkey to capture..." (R3-P4).
 $keysHeldTitle = Text 0x8BF7, 0x677E, 0x5F00, 0x5FEB, 0x6377, 0x952E, 0x540E, 0x518D, 0x8BD5
 $holdHint = Text 0x677E, 0x5F00, 0x5FEB, 0x6377, 0x952E, 0x540E, 0x53D6, 0x8BCD, 0x2026
+# Debug builds show where the word came from ("from msedge.exe"); release builds never
+# send it (D046 supplement).
+$expected += (Text 0x6765, 0x81EA) + " msedge.exe"
 if ($HoldMs -gt 3000) { $expected = @($keysHeldTitle) }
 
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing

@@ -208,7 +208,7 @@ AI 已用模拟按键做过的自动检查（2026-10-17，debug 版）：`popup-
 | R5-4 | D044 补充 | **Edge** 打开同一 PDF，拖选 transduc-tion | 显示 transduction（日志 `[chromium_pdf]; clipboard=captured`）；没有原句（剪贴板取词没有上下文） | ✅ |
 | R5-5 | D044 补充 | Edge PDF，拖选 convolu-tional | 显示 convolutional | ✅ |
 | R5-6 | D044 补充 | Edge PDF，拖选 English-to-German | 显示 "English to-German"（Edge 复制时行末连字符原文就丢了，见 `m1-popup-dict.md` 第 6 节）；不合并成 Englishto-German | ⚠️ 标题 "English to-German" 符合预期，但拆开后显示"未收录：English to" → R5-P1，已修复，截图复核通过 |
-| R5-7 | D046 | 查 run 或 set（释义很多） | 正文在窗口内滚动；滚动时标题 "run /rʌn/ …" 固定在顶部；底部原句、"AI 语境解析"、来源不动；滚动条不压住 × | ✅ 正文能滚动，标题、底部原句和来源固定，滚动条没有压住 × |
+| R5-7 | D046 | 查 run 或 set（释义很多） | 正文在窗口内滚动；滚动时标题 "run /rʌn/ …" 固定在顶部；底部原句、"AI 语境解析"、来源（只在 debug 版显示）不动；滚动条不压住 × | ✅ 正文能滚动，标题、底部原句和来源固定，滚动条没有压住 × |
 | R5-8 | D046 | 查一个有专业释义的词（如 transduction）→ 点"▸ 专业释义"→ 按 **Esc** | 展开后显示 "[化] 转导"；按 Esc 悬浮窗关闭，焦点回到原窗口（可直接继续在原窗口操作） | ✅ 能看到 [化] 转导；Esc 后焦点回到记事本 |
 | R5-9 | D046 | 查 left → 点"▸ 更多" → 按 **Esc** | 展开后显示 left 的全部词性行；Esc 关闭，焦点回到原窗口 | ✅ "更多"能展开；Esc 后焦点回来 |
 | R5-10 | D044 补充 | 查 better | "better（good 的比较级）" 和 "good" 两个词条，各自先显示最多 3 行 | ✅ "better（good 的比较级）"在前，good 在后 |

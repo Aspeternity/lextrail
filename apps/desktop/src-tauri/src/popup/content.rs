@@ -25,6 +25,10 @@ pub enum Content {
     Selection {
         text: String,
         sentence: Option<String>,
+        /// The foreground program's process name, debug builds only: shown so a test can
+        /// tell which window was captured. Release builds never send where a word came
+        /// from (D046 supplement), and it is never stored.
+        #[serde(skip_serializing_if = "Option::is_none")]
         source_app: Option<String>,
         /// `None` when the dictionary file is missing or unreadable.
         lookup: Option<LookupView>,
@@ -49,7 +53,6 @@ impl Content {
     pub fn from_capture(
         result: Result<CaptureOutcome, CaptureError>,
         pdf_clipboard: bool,
-        source_app: Option<String>,
         dict: Option<&Dictionary>,
     ) -> (Self, Option<Record>) {
         match result {
@@ -107,13 +110,12 @@ impl Content {
                     kind,
                     lemma,
                     context: sentence.clone(),
-                    source_app: source_app.clone(),
                     method: selection.method,
                 });
                 let content = Self::Selection {
                     sentence,
                     text,
-                    source_app,
+                    source_app: None,
                     lookup: looked.map(|Looked { view, .. }| view),
                 };
                 (content, record)
@@ -126,6 +128,15 @@ impl Content {
                 None,
             ),
         }
+    }
+
+    /// Debug builds: adds the foreground program's process name to a selection.
+    #[cfg(debug_assertions)]
+    pub fn with_source_app(mut self, app: Option<String>) -> Self {
+        if let Self::Selection { source_app, .. } = &mut self {
+            *source_app = app;
+        }
+        self
     }
 }
 
@@ -197,10 +208,9 @@ mod tests {
     fn build(
         result: Result<CaptureOutcome, CaptureError>,
         pdf_clipboard: bool,
-        source_app: Option<String>,
         dict: Option<&Dictionary>,
     ) -> Content {
-        Content::from_capture(result, pdf_clipboard, source_app, dict).0
+        Content::from_capture(result, pdf_clipboard, dict).0
     }
 
     fn captured(
@@ -211,7 +221,6 @@ mod tests {
         Ok(CaptureOutcome::Captured(Selection {
             text: text.into(),
             context,
-            url: None,
             method,
         }))
     }
@@ -254,20 +263,19 @@ mod tests {
             text: "First. We must  address it. Last.".into(),
             selection: Some(16..23),
         };
-        let content = build(
-            uia(" address ", Some(context)),
-            false,
-            Some("chrome.exe".into()),
-            Some(&dict),
-        );
+        let content = build(uia(" address ", Some(context)), false, Some(&dict));
         assert_eq!(
             text_and_sentence(&content),
             ("address", Some("We must address it."))
         );
         assert_eq!(words(&content), ["address"]);
+        // Where it came from is not part of the content (debug builds add it later).
         assert!(matches!(
             content,
-            Content::Selection { source_app: Some(ref app), .. } if app == "chrome.exe"
+            Content::Selection {
+                source_app: None,
+                ..
+            }
         ));
     }
 
@@ -282,7 +290,6 @@ mod tests {
         let content = build(
             uia(&format!(" {selected} "), Some(context(paragraph, selected))),
             false,
-            None,
             Some(&dict),
         );
         assert_eq!(
@@ -299,7 +306,6 @@ mod tests {
         let content = build(
             uia(selected, Some(context(paragraph, selected))),
             false,
-            None,
             Some(&dict),
         );
         assert_eq!(
@@ -326,7 +332,6 @@ mod tests {
             let content = build(
                 captured(text, None, CaptureMethod::Clipboard),
                 pdf,
-                None,
                 Some(&dict),
             );
             text_and_sentence(&content).0.to_owned()
@@ -345,7 +350,6 @@ mod tests {
                 CaptureMethod::ClipboardDoubleCopy,
             ),
             true,
-            None,
             Some(&dict),
         );
         assert_eq!(text_and_sentence(&double).0, "convolutional");
@@ -359,12 +363,11 @@ mod tests {
             build(
                 uia("The", Some(context(paragraph, "The"))),
                 false,
-                None,
                 Some(&dict),
             )
         };
         // No sentence: the selected text's own case first.
-        let content = build(uia("The", None), false, None, Some(&dict));
+        let content = build(uia("The", None), false, Some(&dict));
         assert_eq!(words(&content), ["The", "the"]);
         // At a sentence start: lowercase first.
         assert_eq!(words(&in_paragraph("The model is large.")), ["the", "The"]);
@@ -374,7 +377,7 @@ mod tests {
 
     #[test]
     fn without_a_dictionary_the_text_is_still_shown() {
-        let content = build(uia("transduc\u{2}tion", None), false, None, None);
+        let content = build(uia("transduc\u{2}tion", None), false, None);
         assert_eq!(
             content,
             Content::Selection {
@@ -395,7 +398,6 @@ mod tests {
         let (_, record) = Content::from_capture(
             uia(" models ", Some(context(paragraph, "models"))),
             false,
-            Some("chrome.exe".into()),
             Some(&dict),
         );
         assert_eq!(
@@ -405,7 +407,6 @@ mod tests {
                 kind: LookupKind::Word,
                 lemma: Some("model".into()),
                 context: Some("We use sequence models.".into()),
-                source_app: Some("chrome.exe".into()),
                 method: CaptureMethod::Uia,
             })
         );
@@ -413,7 +414,6 @@ mod tests {
         let (_, record) = Content::from_capture(
             captured("convolu\r\ntional", None, CaptureMethod::Clipboard),
             true,
-            None,
             Some(&dict),
         );
         let record = record.unwrap();
@@ -422,7 +422,7 @@ mod tests {
             ("convolutional", None, CaptureMethod::Clipboard)
         );
         // Without a dictionary: classified on its own.
-        let (_, record) = Content::from_capture(uia("We give up on it.", None), false, None, None);
+        let (_, record) = Content::from_capture(uia("We give up on it.", None), false, None);
         let record = record.unwrap();
         assert_eq!((record.kind, record.lemma), (LookupKind::Sentence, None));
         // Not recorded: no English (D045), nothing captured.
@@ -431,10 +431,7 @@ mod tests {
             uia(" ", None),
             Ok(CaptureOutcome::Unavailable(Unavailable::NoSelection)),
         ] {
-            assert_eq!(
-                Content::from_capture(result, false, None, Some(&dict)).1,
-                None
-            );
+            assert_eq!(Content::from_capture(result, false, Some(&dict)).1, None);
         }
     }
 
@@ -444,14 +441,14 @@ mod tests {
             text: "Hello world.".into(),
             selection: None,
         };
-        let content = build(uia("Hello world.", Some(context)), false, None, None);
+        let content = build(uia("Hello world.", Some(context)), false, None);
         assert!(matches!(content, Content::Selection { sentence: None, .. }));
     }
 
     #[test]
     fn whitespace_only_selection_is_no_selection() {
         assert_eq!(
-            build(uia(" \n ", None), false, None, None),
+            build(uia(" \n ", None), false, None),
             Content::Unavailable {
                 reason: "no_selection"
             }
@@ -460,7 +457,7 @@ mod tests {
 
     #[test]
     fn unavailable_and_error() {
-        let unavailable = |u| build(Ok(CaptureOutcome::Unavailable(u)), false, None, None);
+        let unavailable = |u| build(Ok(CaptureOutcome::Unavailable(u)), false, None);
         assert_eq!(
             unavailable(Unavailable::Elevated),
             Content::Unavailable { reason: "elevated" }
@@ -473,7 +470,7 @@ mod tests {
         );
         let err = CaptureError::WorkerUnavailable("gone".into());
         assert!(matches!(
-            build(Err(err), false, None, None),
+            build(Err(err), false, None),
             Content::Error { message } if message.contains("gone")
         ));
     }
@@ -496,9 +493,16 @@ mod tests {
             source_app: None,
             lookup: Some(LookupView::NotFound),
         };
+        // No source field at all unless a debug build adds one.
         assert_eq!(
             serde_json::to_string(&selection).unwrap(),
-            r#"{"kind":"selection","text":"qux","sentence":null,"source_app":null,"lookup":{"kind":"not_found"}}"#
+            r#"{"kind":"selection","text":"qux","sentence":null,"lookup":{"kind":"not_found"}}"#
+        );
+        #[cfg(debug_assertions)]
+        assert!(
+            serde_json::to_string(&selection.with_source_app(Some("chrome.exe".into())))
+                .unwrap()
+                .contains(r#""source_app":"chrome.exe""#)
         );
     }
 }

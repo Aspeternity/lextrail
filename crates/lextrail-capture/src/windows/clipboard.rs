@@ -186,7 +186,6 @@ impl ClipboardStep {
                 StepOutput::from(Ok(CaptureOutcome::Captured(Selection {
                     text,
                     context: None,
-                    url: None,
                     method: CaptureMethod::Clipboard,
                 })))
             }
