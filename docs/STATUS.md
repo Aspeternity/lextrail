@@ -3,7 +3,7 @@
 > 每次开发结束前更新本文件（见 `AGENTS.md` 的"结束流程"）。
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
-**最后更新**：2026-10-21（连按两次 Ctrl+C 第一阶段审阅、左 Ctrl 卡住修复，分支 `feat/double-copy`）
+**最后更新**：2026-10-21（左 Ctrl 卡住修复已合并到 `main`；连按两次 Ctrl+C 第二阶段代码完成，实机测试待跑，分支 `feat/double-copy`）
 **当前阶段**：M1 · 取词与词典（进行中）。取词（UIA + 剪贴板兜底 + 悬浮窗焦点）经 R1–R4 手动测试验收；词典（`tools/dict-builder`、`lextrail-dict`、悬浮窗词典结果）完成，R5 通过；查询历史已接入桌面端。都已合并到 `main`。M1 剩下：连按两次 Ctrl+C、快捷键设置界面、前端测试等（见 `ROADMAP.md`）。
 
 ---
@@ -29,10 +29,10 @@ M0 全部完成（路线 A 已确认，D036）。M1 已完成：
 
 代码现状（详见各文件）：
 - `crates/lextrail-core`：HLC（`Hlc`、`HlcClock`、可注入的 `Clock`）；`lookup`（`LookupKind`、`CaptureMethod`、`normalize_text`、30 秒去重）；`text`（见上，另有 `join_unmarked_line_breaks`、`starts_sentence`）。48 个测试
-- `crates/lextrail-capture`（D041、D043）：`TextCapture`（`snapshot` / `capture` / `capture_traced` / `capture_context`，最后一个目前返回 `None`，第二阶段实现）；`Pipeline` 按顺序运行各步骤，步骤间用 `StepContext` 传递信息，UIA 的"没有选中"默认就是最终结果；`clipboard_rules.rs`（剪贴板兜底的规则，与平台无关）；`double_copy.rs`（连按两次 Ctrl+C 的判定，与平台无关）；`windows/`：`window.rs`（快照）、`uia.rs`（UIA 步骤）、`clipboard.rs`（剪贴板步骤）。45 个测试，其中 `clipboard_round_trip` 默认忽略（会改动真实剪贴板，需要时用 `cargo test -p lextrail-capture -- --ignored clipboard_round_trip`）。`examples/capture_probe.rs`（手动测试真实窗口）、`examples/uia_dump.rs`（打印原始 UIA 数据）。`capture_traced` 接收进度回调（`CaptureProgress`：等松开快捷键 / 已松开），步骤结果带 `key_wait`
+- `crates/lextrail-capture`（D041、D043）：`TextCapture`（`snapshot` / `capture` / `capture_traced` / `capture_context` / `capture_context_traced`，后两个给连按两次 Ctrl+C 用：在 UIA 工作线程上读上下文，选区和剪贴板文字对不上时不给上下文）；`Pipeline` 按顺序运行各步骤，步骤间用 `StepContext` 传递信息，UIA 的"没有选中"默认就是最终结果；`clipboard_rules.rs`（剪贴板兜底的规则，与平台无关）；`double_copy.rs`（连按两次 Ctrl+C 的判定，与平台无关）；`windows/`：`window.rs`（快照）、`uia.rs`（UIA 步骤，另有只读上下文的任务）、`clipboard.rs`（剪贴板步骤）、`double_copy.rs`（`DoubleCopyListener`，剪贴板监听）。52 个测试，其中 `clipboard_round_trip`、`listener_round_trip` 默认忽略（会改动真实剪贴板，需要时用 `cargo test -p lextrail-capture -- --ignored <名字>`）。`examples/capture_probe.rs`（手动测试真实窗口）、`examples/uia_dump.rs`（打印原始 UIA 数据）。`capture_traced` 接收进度回调（`CaptureProgress`：等松开快捷键 / 已松开），步骤结果带 `key_wait`
 - `crates/lextrail-store`（D037、D040）：SQLite、`user_version` 迁移、`meta` / `lookups` 表、`record_lookup` 等。20 个测试
 - `crates/lextrail-config`（D035）：设置文件与凭据管理器；`[history] record`（"不记录查询历史"开关）。17 个测试
-- `apps/desktop/src-tauri`：托盘、单实例、主窗口（占位）、设置、全局快捷键（`hotkey.rs` + `keyboard.rs` 屏蔽键与防卡键钩子、补发后核对按键状态，16 个测试）、悬浮窗（`popup/`：`lifecycle.rs` 窗口生命周期 20 个测试，`request.rs` 一次查词 15 个测试，`activation.rs` 获取焦点，`foreground.rs` 前台窗口监视，`content.rs` 内容事件，`placement.rs` 位置，`timing.rs` bench 计时）。悬浮窗页面先订阅内容事件再调用 `popup_ready`，之后才显示；权限在 `capabilities/popup.json`（只有 `core:event:allow-listen`）。共 77 个测试
+- `apps/desktop/src-tauri`：托盘、单实例、主窗口（占位）、设置、全局快捷键和连按两次 Ctrl+C（`popup::Trigger`）（`hotkey.rs` + `keyboard.rs` 屏蔽键与防卡键钩子、补发后核对按键状态，16 个测试）、悬浮窗（`popup/`：`lifecycle.rs` 窗口生命周期 20 个测试，`request.rs` 一次查词 15 个测试，`activation.rs` 获取焦点，`foreground.rs` 前台窗口监视，`content.rs` 内容事件，`placement.rs` 位置，`timing.rs` bench 计时）。悬浮窗页面先订阅内容事件再调用 `popup_ready`，之后才显示；权限在 `capabilities/popup.json`（只有 `core:event:allow-listen`）。共 77 个测试
 - `apps/desktop/src`：悬浮窗页面（`popup/`：`content.ts`、`ipc.ts`、`App.vue`），主窗口占位。**前端还没有测试框架**
 - `tools/e2e/`：`popup-e2e.ps1`（悬浮窗内容端到端检查：真实鼠标、真实快捷键、全新 Edge，用 UI Automation 读出悬浮窗文字核对并截图；`-Pdf` 走剪贴板路径；`-HoldMs` 按住 Ctrl+Alt 指定时间）、`stuck-keys.ps1`（屏蔽键防卡键压力测试，`-Observe` 同时运行 `key-observer.ps1` 记录按键事件）、`list-item.html`、`key-log.html`（记录页面收到的键盘事件）
 - `tools/bench`：性能测试；应用在 `LEXTRAIL_BENCH_TIMINGS` 下写出分项计时；`--lookup-text TEXT` 在词典打开的状态下测（m0-benchmark 7.3）。14 个测试
@@ -63,11 +63,13 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
   - 终端实测（spec 第四节）：Windows Terminal、VS Code 终端里第一次 Ctrl+C 复制并清除选区，第二次中断 `ping -t`，剪贴板没有第二次更新——终端里永远不会触发，还会中断程序。
   - 项目负责人 2026-10-21 审阅第一阶段（D012 补充二）：两条待确认都同意，另加 `CanIncludeInClipboardHistory` = 0 也忽略；开关 `[hotkeys] double_ctrl_c`（已加进 `lextrail-config`，还没接入）；自己取词的忽略期改为按查词编号记（`own_copy_started(id, at)` / `own_copy_finished(id, at)`，最后一个结束后再等 300 ms），14 个单元测试；读剪贴板要短开短关、打不开短暂重试（spec 第五节），第二阶段用 Excel 测大片复制。
   - **左 Ctrl 卡住已查明并修复**（D014 补充，2026-10-21）：两个进程几乎同时注入按键时，钩子看到"补发在前、真实松开在后"，按键状态却是反过来更新的，Ctrl 停在按下。现在补发通过钩子后再看 2 ms、读一次按键状态：钩子看到最后一次真实事件是松开、状态仍是按下，就补发松开（Ctrl、Shift 都核对，带自己的 `dwExtraInfo`），`keyboard.rs` 16 个测试。复测：正常模式 600 次按键、105 次补发、0 次卡住，新路径补发松开 2 次；关掉屏蔽键对照 0/60；`popup-e2e.ps1` 通过。真实键盘复测（R4-8 快速连按 20 次）并入连按两次 Ctrl+C 完成后的手动测试。工具：`tools/e2e/key-observer.ps1`（独立进程的低级钩子，父进程退出或 15 分钟后自己退出；日志里有机器上的所有按键，用完即删、不提交），`stuck-keys.ps1 -Observe`。
-  - 下一步：第二阶段（Windows 剪贴板监听、`capture_context`、桌面端接入）。
+  - 左 Ctrl 卡住的修复和第一阶段已合并到 `main`（2026-10-21，项目负责人要求）。
+  - **第二阶段代码完成**（spec 第三、五、六节）：`DoubleCopyListener`（单独线程上的只收消息窗口 + `AddClipboardFormatListener`；忽略期内、LexTrail 自己的窗口在前台、带 `ExcludeClipboardContentFromMonitorProcessing` 时不打开剪贴板；`CanIncludeInClipboardHistory` = 0 忽略；剪贴板主人挂起时不读；打开最多重试约 100 ms，读完马上关闭）；`capture_context` 以剪贴板文字为准，UIA 选区的词和它不同就不给上下文（`context_mismatch`），跑在 UIA 专用线程上、超时相同；桌面端 `popup::Trigger::DoubleCopy`，开关 `[hotkeys] double_ctrl_c` 启动时读一次，快捷键取词前后按编号通知监听器，查询历史记 `clipboard_double_copy`。debug 版每次剪贴板更新打印类型和读取用时（不含文字）。
+  - **下一步：第二阶段的实机测试**（要模拟按键和改动剪贴板，先问项目负责人）：`listener_round_trip`；记事本、Edge 里连按两次 Ctrl+C 看到悬浮窗和原句；Edge PDF（快捷键走剪贴板兜底）和快速连按两次快捷键时不误触发；Excel 复制一大片单元格（读剪贴板用时、是否卡顿）。之后第三阶段（e2e、手动测试清单、R1-9 提示文字）。
 
 ## 下一步
 
-1. 连按两次 Ctrl+C（D012，默认关闭），分支 `feat/double-copy`，分三个阶段提交，每个阶段更新本文件：① spec + 连按判定逻辑和单元测试（已完成）；② Windows 剪贴板监听和 `capture_context`；③ e2e 和文档。完成后把这个用法加回提示文字（R1-9）。之后做快捷键设置界面。
+1. 连按两次 Ctrl+C（D012，默认关闭），分支 `feat/double-copy`，分三个阶段提交，每个阶段更新本文件：① spec + 连按判定逻辑和单元测试（已完成）；② Windows 剪贴板监听和 `capture_context`（代码完成，实机测试待跑）；③ e2e 和文档。完成后把这个用法加回提示文字（R1-9）。之后做快捷键设置界面。
 2. 查询历史的界面（列表、删除）不在 M1；"不记录查询历史"的界面开关随快捷键设置界面一起做。
 
 待跟进（已在 ROADMAP 中，或在此记录）：

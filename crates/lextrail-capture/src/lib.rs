@@ -6,6 +6,9 @@
 //! 3. Call [`TextCapture::capture`] on a background thread; it blocks up to about the
 //!    time budget.
 //!
+//! For a double Ctrl+C (D012), the platform's double-copy listener reports the copied
+//! text; [`TextCapture::capture_context`] then reads only its context.
+//!
 //! "Nothing to capture" ([`CaptureOutcome::Unavailable`]) is a normal result the popup
 //! explains to the user; [`CaptureError`] means something is broken and is logged.
 
@@ -26,6 +29,8 @@ pub use double_copy::{
 pub use lextrail_core::lookup::CaptureMethod;
 pub use pipeline::{CaptureStep, Pipeline};
 pub use text_offsets::utf16_range_to_utf8;
+#[cfg(windows)]
+pub use windows::DoubleCopyListener;
 #[cfg(windows)]
 pub use windows::WindowsCapture;
 
@@ -51,12 +56,23 @@ pub trait TextCapture: Send + Sync {
     ) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace);
 
     /// Reads only the context around `selected_text` (already known, e.g. from a double
-    /// Ctrl+C, D012). `Ok(None)` when no context is available.
+    /// Ctrl+C, D012). `Ok(None)` when no context is available, including when the
+    /// selection found does not hold `selected_text` (the known text always wins).
+    /// Blocks for up to about the UIA time budget.
     fn capture_context(
         &self,
         target: &CaptureTarget,
         selected_text: &str,
-    ) -> Result<Option<RawContext>, CaptureError>;
+    ) -> Result<Option<RawContext>, CaptureError> {
+        self.capture_context_traced(target, selected_text).0
+    }
+
+    /// [`TextCapture::capture_context`] plus what was tried, for diagnostics (no text).
+    fn capture_context_traced(
+        &self,
+        target: &CaptureTarget,
+        selected_text: &str,
+    ) -> (Result<Option<RawContext>, CaptureError>, CaptureTrace);
 }
 
 /// What a running capture reports, so the caller can tell time spent waiting for the user
@@ -120,12 +136,12 @@ impl TextCapture for UnsupportedCapture {
         )
     }
 
-    fn capture_context(
+    fn capture_context_traced(
         &self,
         _target: &CaptureTarget,
         _selected_text: &str,
-    ) -> Result<Option<RawContext>, CaptureError> {
-        Ok(None)
+    ) -> (Result<Option<RawContext>, CaptureError>, CaptureTrace) {
+        (Ok(None), CaptureTrace::default())
     }
 }
 
@@ -310,6 +326,9 @@ pub struct CaptureTrace {
 /// [`StepOutput::note`] of a UIA step that left the window to the clipboard because it is
 /// Edge's PDF viewer (its UIA selection ranges are wrong, D041).
 pub const NOTE_CHROMIUM_PDF: &str = "chromium_pdf";
+/// [`StepOutput::note`] of a context read whose UIA selection did not hold the known
+/// text: no context is given rather than another text's.
+pub const NOTE_CONTEXT_MISMATCH: &str = "context_mismatch";
 
 impl CaptureTrace {
     /// The text came from a Chromium PDF viewer that UIA skipped ([`NOTE_CHROMIUM_PDF`]),

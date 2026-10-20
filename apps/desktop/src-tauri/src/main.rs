@@ -28,7 +28,12 @@ fn main() {
             let handle = app.handle();
             tray::create(handle)?;
             let settings = settings::load(handle);
-            popup::init(handle, settings.popup.mode, settings.history.record);
+            popup::init(
+                handle,
+                settings.popup.mode,
+                settings.history.record,
+                settings.hotkeys.double_ctrl_c,
+            );
             memory::watch({
                 let handle = handle.clone();
                 move || popup::on_low_memory(&handle)

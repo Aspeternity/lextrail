@@ -62,7 +62,12 @@ impl Content {
                     Some(dict) => {
                         let is_word = |w: &str| dict.is_word(w).unwrap_or(false);
                         let mut text = resolve_line_end_hyphens(&selection.text, is_word);
-                        if pdf_clipboard && selection.method == CaptureMethod::Clipboard {
+                        if pdf_clipboard
+                            && matches!(
+                                selection.method,
+                                CaptureMethod::Clipboard | CaptureMethod::ClipboardDoubleCopy
+                            )
+                        {
                             text = join_unmarked_line_breaks(&text, is_word);
                         }
                         let sentence = raw_sentence.map(|s| resolve_line_end_hyphens(s, is_word));
@@ -332,6 +337,18 @@ mod tests {
         assert_eq!(clipboard("sequence\r\naligned", true), "sequence aligned");
         // Other clipboard text keeps its line breaks (as spaces).
         assert_eq!(clipboard("transduc\r\ntion", false), "transduc tion");
+        // A double Ctrl+C in the PDF viewer copies the same way.
+        let double = build(
+            captured(
+                "convolu\r\ntional",
+                None,
+                CaptureMethod::ClipboardDoubleCopy,
+            ),
+            true,
+            None,
+            Some(&dict),
+        );
+        assert_eq!(text_and_sentence(&double).0, "convolutional");
     }
 
     #[test]

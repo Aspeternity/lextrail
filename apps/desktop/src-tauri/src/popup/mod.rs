@@ -25,8 +25,8 @@ use std::time::{Duration, Instant};
 #[cfg(debug_assertions)]
 use lextrail_capture::result_label;
 use lextrail_capture::{
-    CaptureError, CaptureMethod, CaptureOutcome, CaptureProgress, CaptureTrace, Selection,
-    TextCapture,
+    CaptureError, CaptureMethod, CaptureOutcome, CaptureProgress, CaptureTarget, CaptureTrace,
+    DoubleCopy, Selection, TextCapture, Unavailable,
 };
 use lextrail_config::PopupMode;
 use tauri::window::Color;
@@ -72,11 +72,28 @@ struct PopupState {
     dictionary: DictionaryService,
     /// Opened by the first lookup to record.
     history: HistoryService,
+    /// The double Ctrl+C listener, when `hotkeys.double_ctrl_c` is on (D012).
+    #[cfg(windows)]
+    double_copy: std::sync::OnceLock<lextrail_capture::DoubleCopyListener>,
+}
+
+/// What started a lookup.
+#[derive(Debug, Clone)]
+pub enum Trigger {
+    Hotkey,
+    /// A double Ctrl+C: the copied text is known, only its context is read (D012).
+    DoubleCopy(DoubleCopy),
 }
 
 /// Registers the popup state. Call once during setup. `record_history`: the
-/// `history.record` setting.
-pub fn init<R: Runtime>(app: &AppHandle<R>, mode: PopupMode, record_history: bool) {
+/// `history.record` setting; `double_ctrl_c`: `hotkeys.double_ctrl_c` (read once, like
+/// every setting: a change takes effect at the next start).
+pub fn init<R: Runtime>(
+    app: &AppHandle<R>,
+    mode: PopupMode,
+    record_history: bool,
+    double_ctrl_c: bool,
+) {
     let timings = Timings::from_env();
     let data_dir = crate::paths::data_dir(app, timings.is_some());
     app.manage(PopupState {
@@ -95,7 +112,12 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, mode: PopupMode, record_history: boo
                 .ok()
                 .map(|dir| dir.join(lextrail_dict::CORE_DICT_FILE_NAME)),
         ),
+        #[cfg(windows)]
+        double_copy: std::sync::OnceLock::new(),
     });
+    if double_ctrl_c {
+        start_double_copy(app);
+    }
     foreground::init({
         let app = app.clone();
         move |window| {
@@ -105,6 +127,99 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, mode: PopupMode, record_history: boo
             }
         }
     });
+}
+
+/// Starts the double Ctrl+C listener; each double copy starts a lookup on the main
+/// thread, like a hotkey press.
+#[cfg(windows)]
+fn start_double_copy<R: Runtime>(app: &AppHandle<R>) {
+    let handle = app.clone();
+    let started = lextrail_capture::DoubleCopyListener::start(move |double| {
+        let pressed = Instant::now();
+        let app = handle.clone();
+        let _ = handle.run_on_main_thread(move || {
+            if let Err(e) = lookup(&app, pressed, Trigger::DoubleCopy(double)) {
+                eprintln!("cannot start lookup: {e}");
+            }
+        });
+    });
+    match started {
+        Ok(listener) => {
+            let _ = app.state::<PopupState>().double_copy.set(listener);
+        }
+        Err(e) => eprintln!("double Ctrl+C is off: the clipboard listener failed ({e})"),
+    }
+}
+
+#[cfg(not(windows))]
+fn start_double_copy<R: Runtime>(_app: &AppHandle<R>) {}
+
+/// Tells the double Ctrl+C listener that hotkey capture `id` starts or ends, so that
+/// its clipboard fallback's updates are not taken for a double copy.
+fn own_copy<R: Runtime>(app: &AppHandle<R>, id: u64, started: bool) {
+    #[cfg(windows)]
+    if let Some(listener) = app.state::<PopupState>().double_copy.get() {
+        if started {
+            listener.own_copy_started(id);
+        } else {
+            listener.own_copy_finished(id);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = (app, id, started);
+}
+
+/// Runs the capture a trigger calls for: the whole pipeline for the hotkey; for a double
+/// Ctrl+C the copied text, with the context UI Automation finds around it (D012). The
+/// bool: the text came through the clipboard from a Chromium PDF viewer.
+fn run_capture<R: Runtime>(
+    app: &AppHandle<R>,
+    id: u64,
+    capture: &dyn TextCapture,
+    target: Result<CaptureTarget, CaptureError>,
+    trigger: Trigger,
+) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace, bool) {
+    let target = match target {
+        Ok(t) => t,
+        Err(e) => return (Err(e), CaptureTrace::default(), false),
+    };
+    match trigger {
+        Trigger::Hotkey => {
+            let progress = |p: CaptureProgress| {
+                let event = match p {
+                    CaptureProgress::WaitingForKeys => request::Event::WaitingForKeys { id },
+                    CaptureProgress::KeysReleased => request::Event::KeysReleased { id },
+                };
+                dispatch_request(app, event);
+            };
+            own_copy(app, id, true);
+            let (result, trace) = capture.capture_traced(&target, &progress);
+            own_copy(app, id, false);
+            let pdf = trace.from_chromium_pdf();
+            (result, trace, pdf)
+        }
+        Trigger::DoubleCopy(DoubleCopy::NoSelection) => (
+            Ok(CaptureOutcome::Unavailable(Unavailable::NoSelection)),
+            CaptureTrace::default(),
+            false,
+        ),
+        Trigger::DoubleCopy(DoubleCopy::Text(text)) => {
+            let (context, trace) = capture.capture_context_traced(&target, &text);
+            // The context is a bonus: without it the copied text is still looked up.
+            let context = context.unwrap_or_else(|e| {
+                eprintln!("capture: reading the context failed: {e}");
+                None
+            });
+            let pdf = trace.from_chromium_pdf();
+            let selection = Selection {
+                text,
+                context,
+                url: None,
+                method: CaptureMethod::ClipboardDoubleCopy,
+            };
+            (Ok(CaptureOutcome::Captured(selection)), trace, pdf)
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -119,12 +234,16 @@ fn platform_capture() -> Arc<dyn TextCapture> {
 
 /// Starts a lookup: records the foreground window and focus *before* the popup can
 /// change anything, then captures in the background while the popup gets ready.
-/// `pressed` is when the hotkey fired.
+/// `pressed` is when the hotkey fired (or the double Ctrl+C was recognised).
 ///
 /// The capture thread starts before the popup is asked to show: on the first lookup that
 /// creates the window, which blocks this (main) thread for a while, and the capture runs
 /// alongside it instead of after it (R3-P3).
-pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result<()> {
+pub fn lookup<R: Runtime>(
+    app: &AppHandle<R>,
+    pressed: Instant,
+    trigger: Trigger,
+) -> tauri::Result<()> {
     // Only the debug log uses it (`start +N ms`).
     #[cfg(not(debug_assertions))]
     let _ = pressed;
@@ -170,17 +289,8 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result
             .and_then(|t| t.window.as_ref())
             .and_then(|w| w.process_name.clone());
         debug_capture_delay();
-        let progress = |p: CaptureProgress| {
-            let event = match p {
-                CaptureProgress::WaitingForKeys => request::Event::WaitingForKeys { id },
-                CaptureProgress::KeysReleased => request::Event::KeysReleased { id },
-            };
-            dispatch_request(&capture_app, event);
-        };
-        let (result, trace) = match target {
-            Ok(t) => capture.capture_traced(&t, &progress),
-            Err(e) => (Err(e), CaptureTrace::default()),
-        };
+        let (result, trace, pdf_clipboard) =
+            run_capture(&capture_app, id, capture.as_ref(), target, trigger);
         if let Err(e) = &result {
             eprintln!("capture failed: {e}");
         }
@@ -194,12 +304,7 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result
         let lookup_start = Instant::now();
         let (content, record) = if matches!(result, Ok(CaptureOutcome::Captured(_))) {
             let dictionary = state.dictionary.get();
-            Content::from_capture(
-                result,
-                trace.from_chromium_pdf(),
-                source_app,
-                dictionary.as_ref(),
-            )
+            Content::from_capture(result, pdf_clipboard, source_app, dictionary.as_ref())
         } else {
             Content::from_capture(result, false, source_app, None)
         };

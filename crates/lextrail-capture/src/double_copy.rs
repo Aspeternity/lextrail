@@ -134,6 +134,25 @@ impl DoubleCopyDetector {
         found
     }
 
+    /// Whether an update arriving at `at` falls in an own capture's time and is ignored
+    /// anyway: the platform side then need not read the clipboard at all (reading makes
+    /// programs that render on demand produce their data, spec section 5).
+    /// [`Self::on_update`] checks the same; this only lets the read be skipped.
+    pub fn ignores(&mut self, at: Instant) -> bool {
+        let ignored = self.suppressed(at);
+        if ignored {
+            self.last = None;
+        }
+        ignored
+    }
+
+    /// An update that must not count at all (marked "do not monitor" or "not for the
+    /// clipboard history", or made in LexTrail's own window): it is not a copy, and the
+    /// copy before it cannot pair with the one after.
+    pub fn discard(&mut self) {
+        self.last = None;
+    }
+
     fn suppressed(&mut self, at: Instant) -> bool {
         // A capture that never reported its end stops counting.
         self.own
@@ -149,6 +168,13 @@ impl DoubleCopyDetector {
             }
         }
     }
+}
+
+/// Whether the selection UI Automation reports holds the copied text: the same words,
+/// whitespace and line endings aside (a copy may turn line breaks into `\r\n`). When it
+/// does not, the copied text is looked up without context, never UIA's text instead.
+pub(crate) fn selection_holds(copied: &str, selected: &str) -> bool {
+    !copied.trim().is_empty() && copied.split_whitespace().eq(selected.split_whitespace())
 }
 
 /// Whether two consecutive copies make a double Ctrl+C, and which kind.
@@ -456,5 +482,46 @@ mod tests {
             d.on_update(late + Duration::from_millis(200), text("a")),
             found("a")
         );
+    }
+
+    #[test]
+    fn ignores_tells_the_own_capture_time_and_breaks_pairs() {
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        let mut d = DoubleCopyDetector::new();
+        assert!(!d.ignores(ms(0)));
+        assert_eq!(d.on_update(ms(0), text("a")), None);
+        d.own_copy_started(1, ms(100));
+        assert!(d.ignores(ms(150)));
+        d.own_copy_finished(1, ms(200));
+        assert!(d.ignores(ms(499)));
+        assert!(!d.ignores(ms(500)));
+        // The copy at 0 ms was dropped when the capture started.
+        assert_eq!(d.on_update(ms(510), text("a")), None);
+        assert_eq!(d.on_update(ms(700), text("a")), found("a"));
+    }
+
+    #[test]
+    fn the_selection_must_hold_the_copied_text() {
+        assert!(selection_holds("launch", "launch"));
+        assert!(selection_holds("two\r\nlines ", "two\nlines"));
+        assert!(selection_holds("a\u{a0}b", "a b"));
+        assert!(!selection_holds("launch", "launches"));
+        assert!(!selection_holds("launch", "Launch"));
+        assert!(!selection_holds("launch", "launch missiles"));
+        assert!(!selection_holds(" ", " "));
+    }
+
+    #[test]
+    fn a_discarded_update_breaks_a_pair() {
+        // A password manager's marked copy between two copies of the same text.
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        let mut d = DoubleCopyDetector::new();
+        assert_eq!(d.on_update(ms(0), text("a")), None);
+        d.discard();
+        assert_eq!(d.on_update(ms(200), text("a")), None);
+        // The copy after it pairs normally with the next one.
+        assert_eq!(d.on_update(ms(400), text("a")), found("a"));
     }
 }
