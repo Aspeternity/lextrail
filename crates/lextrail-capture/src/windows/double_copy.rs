@@ -28,7 +28,7 @@ use super::clipboard::{
     utf16_until_nul,
 };
 use crate::clipboard_rules::{CHROMIUM_CUSTOM_MIME_FORMAT, is_vscode_empty_selection_copy};
-use crate::{CaptureError, CopiedContent, DoubleCopy, DoubleCopyDetector};
+use crate::{CaptureError, CopiedContent, DoubleCopy, DoubleCopyDetector, check_text};
 
 /// Listens for double Ctrl+C until dropped. Start it only when the setting is on (no
 /// listener, no cost, spec section 1).
@@ -140,8 +140,17 @@ fn listen(
                 }
                 Update::Read(content) => lock(detector).on_update(at, content),
             };
-            if let Some(double) = found {
-                on_double(double);
+            match found {
+                Some(DoubleCopy::Text(text)) => match check_text(&text) {
+                    Ok(()) => on_double(DoubleCopy::Text(text)),
+                    // Quietly ignored: no popup, no history; the reason only, never the text.
+                    #[cfg(debug_assertions)]
+                    Err(why) => eprintln!("double copy: ignored: {why:?}"),
+                    #[cfg(not(debug_assertions))]
+                    Err(_) => {}
+                },
+                Some(double) => on_double(double),
+                None => {}
             }
         } else {
             // SAFETY: dispatching this thread's own message.

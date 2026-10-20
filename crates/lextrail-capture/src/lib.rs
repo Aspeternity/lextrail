@@ -24,7 +24,8 @@ use std::ops::Range;
 use std::time::Duration;
 
 pub use double_copy::{
-    CopiedContent, DoubleCopy, DoubleCopyDetector, MAX_GAP, OWN_COPY_GRACE, OWN_COPY_MAX, SAME_COPY,
+    CopiedContent, DoubleCopy, DoubleCopyDetector, MAX_GAP, MAX_TEXT_CHARS, OWN_COPY_GRACE,
+    OWN_COPY_MAX, Rejected, SAME_COPY, check_text,
 };
 pub use lextrail_core::lookup::CaptureMethod;
 pub use pipeline::{CaptureStep, Pipeline};

@@ -12,7 +12,9 @@
 //! - VS Code's whole-line copies without a selection (D043) count as "nothing selected";
 //! - updates caused by LexTrail's own clipboard fallback are ignored, from the start of
 //!   a hotkey capture until [`OWN_COPY_GRACE`] after the last capture in progress
-//!   finished (two quick hotkey presses overlap, R1-5).
+//!   finished (two quick hotkey presses overlap, R1-5);
+//! - what is copied twice must look like a selection to look up ([`check_text`]): long
+//!   or tabbed text (a block of cells, a whole page) is quietly ignored.
 
 use std::time::{Duration, Instant};
 
@@ -26,6 +28,10 @@ pub const OWN_COPY_GRACE: Duration = Duration::from_millis(300);
 /// An own capture that never reported its end stops suppressing after this long (the
 /// clipboard fallback gives up after about 3.5 s, D043).
 pub const OWN_COPY_MAX: Duration = Duration::from_secs(10);
+/// The most characters (leading and trailing whitespace trimmed) a double Ctrl+C looks
+/// up (D012 supplement): 99.1% of the sentences of a paper, as cut by
+/// `lextrail_core::text`, fit; all longer ones were tables and title blocks.
+pub const MAX_TEXT_CHARS: usize = 500;
 
 /// What one clipboard update holds, as far as double Ctrl+C is concerned.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,6 +173,31 @@ impl DoubleCopyDetector {
                 false
             }
         }
+    }
+}
+
+/// Why a double Ctrl+C on some text is not looked up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rejected {
+    /// More than [`MAX_TEXT_CHARS`] characters once trimmed.
+    TooLong { chars: usize },
+    /// A tab inside: cells of a table or spreadsheet.
+    Tab,
+}
+
+/// Whether text copied twice is looked up (D012 supplement): at most [`MAX_TEXT_CHARS`]
+/// characters once leading and trailing whitespace is trimmed, and no tab inside. Copying
+/// a block of cells or a whole page twice is then quietly ignored: no popup, no history.
+/// One spreadsheet cell copies as its text plus a line break, which the trim drops. The
+/// hotkey has no such limit.
+pub fn check_text(text: &str) -> Result<(), Rejected> {
+    let text = text.trim();
+    if text.contains('\t') {
+        return Err(Rejected::Tab);
+    }
+    match text.chars().count() {
+        chars if chars > MAX_TEXT_CHARS => Err(Rejected::TooLong { chars }),
+        _ => Ok(()),
     }
 }
 
@@ -510,6 +541,34 @@ mod tests {
         assert!(!selection_holds("launch", "Launch"));
         assert!(!selection_holds("launch", "launch missiles"));
         assert!(!selection_holds(" ", " "));
+    }
+
+    #[test]
+    fn text_up_to_500_characters_is_looked_up() {
+        let at_limit = "a".repeat(MAX_TEXT_CHARS);
+        assert_eq!(check_text(&at_limit), Ok(()));
+        // Characters, not bytes, counted after trimming.
+        assert_eq!(check_text(&"\u{e9}".repeat(MAX_TEXT_CHARS)), Ok(()));
+        assert_eq!(check_text(&format!("  \r\n{at_limit}\r\n ")), Ok(()));
+        assert_eq!(
+            check_text(&"a".repeat(MAX_TEXT_CHARS + 1)),
+            Err(Rejected::TooLong { chars: 501 })
+        );
+    }
+
+    #[test]
+    fn text_with_a_tab_is_ignored() {
+        assert_eq!(check_text("cell one\tcell two"), Err(Rejected::Tab));
+        assert_eq!(check_text("a\tb\r\nc\td\r\n"), Err(Rejected::Tab));
+        // A tab at either end is trimmed whitespace, not a cell boundary.
+        assert_eq!(check_text("\tword\t"), Ok(()));
+    }
+
+    #[test]
+    fn one_spreadsheet_cell_is_looked_up() {
+        // Excel copies a single cell as its text and a line break.
+        assert_eq!(check_text("attention\r\n"), Ok(()));
+        assert_eq!(check_text("Attention is all you need.\r\n"), Ok(()));
     }
 
     #[test]
