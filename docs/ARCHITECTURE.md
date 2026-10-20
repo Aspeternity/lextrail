@@ -100,6 +100,7 @@ lextrail/
 │   └── bench/                性能测试工具（crate lextrail-bench，仅 Windows），见 docs/specs/m0-benchmark.md
 └── docs/
     ├── STATUS.md             进度交接单
+    ├── NOTES.md              开发笔记（命令、debug 开关、测试方法）
     ├── ROADMAP.md            里程碑与任务清单
     ├── DECISIONS.md          决策记录
     ├── ARCHITECTURE.md       本文件

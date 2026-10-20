@@ -65,6 +65,7 @@
 - [ ] 按 `m1-capture-manual-tests.md` 第五轮（R5）手动测试悬浮窗词典结果（新增）
 - [ ] 查明第一次显示的悬浮窗比之后高（debug 版 1.5 倍缩放下 592×446 与 592×403）的原因（新增，2026-10-20 截图时发现，与词典无关）
 - [x] 重测性能预算（`lextrail-bench quick`，按 D036 口径），结果追加到 `docs/specs/m0-benchmark.md` 的"历次重测"；悬浮窗加入词典结果后（新增）。`--lookup-text` 让 bench 在词典打开、显示词典结果的状态下测
+- [x] 按节省 token 的方案重整文档（新建 `NOTES.md`，压缩 `STATUS.md`、`AGENTS.md`）；`request: ...` 日志默认只打印内容种类，`LEXTRAIL_DEBUG_LOG_CONTENT=1` 打印完整内容（新增）
 
 **完成标准**：在浏览器、PDF 阅读器、Word、VS Code、终端中都能用快捷键查词，词典结果在 100 ms 内显示。
 

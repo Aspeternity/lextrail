@@ -1,105 +1,52 @@
 # AGENTS.md — LexTrail AI 协作指南
 
-> 本文件写给参与本项目开发的所有 AI 编程助手（Claude Code、网页版 Claude、Cursor、Codex 等）。
-> **每次新对话开始时，你都必须先读完本文件，再按"开始流程"执行。**
-
----
-
-## 项目简介
-
-LexTrail 是一款常驻后台的 Windows 桌面翻译与词汇学习工具（以后支持 macOS）：在任何软件中选中英文、按快捷键即弹出翻译，结合本地词典与用户自选的 AI 给出语境含义，可收藏到生词本，用 FSRS 复习，并通过自建服务器同步到手机 PWA。
-
-- 技术栈：Tauri 2 + Rust + Vue 3 + TypeScript + SQLite
-- 许可证：客户端及共用模块 MIT；`apps/server` AGPL-3.0
-- 项目负责人：中文沟通。文档使用中文；代码、标识符、提交说明使用英文。
-
----
-
-## 必读文件
-
-| 文件 | 内容 | 什么时候读 |
-|---|---|---|
-| `docs/STATUS.md` | 当前进度、下一步、遇到的问题 | **每次开始时必读** |
-| `docs/ROADMAP.md` | 里程碑与任务清单 | **每次开始时必读** |
-| `docs/DECISIONS.md` | 所有已确定的决定及理由 | 开始时至少浏览目录；涉及相关模块时细读 |
-| `docs/ARCHITECTURE.md` | 架构、目录结构、数据模型、性能预算 | 开发某个模块前读对应章节 |
-| `docs/specs/` | 各模块的详细规格 | 开发对应模块时读 |
-
----
+LexTrail：Windows 桌面翻译与词汇学习工具（Tauri 2 + Rust + Vue 3 + SQLite）。客户端 MIT，`apps/server` AGPL-3.0。与项目负责人中文沟通；文档中文，代码和提交说明英文。
 
 ## 铁律
 
-1. **不得推翻已有决定。** `DECISIONS.md` 中的决定未经项目负责人同意不得更改或绕过。你认为某个决定有问题，先说明理由并等待答复。
-2. **不得跳出当前里程碑。** 只做 `STATUS.md` 和 `ROADMAP.md` 中当前的任务；不要顺手实现后续里程碑的功能。
-3. **不确定时先问。** 尤其是会影响架构、数据格式、对外接口、许可证的问题。
-4. **核心逻辑放在 `crates/`，界面层保持很薄**（D006）。
-5. **新增同步方式、AI 服务商、平台支持时，使用适配器，不修改上层代码**（D007）。
-6. **数据库结构必须带同步元数据**（UUID、`updated_at`、`device_id`、`deleted`），复习日志只追加（D024）。
-7. **每个模块都要有自动化测试。** 提交前所有测试必须通过。
-8. **不要用"美化数字"的手段应付性能预算**（例如 `EmptyWorkingSet`）。
-9. **不要把 API Key、Token 写入代码、日志或配置文件明文。**
-10. **crate 和 npm 包名不得使用裸的 `lextrail`**（已被他人占用，D001）。
+1. 不得推翻或绕过 `docs/DECISIONS.md` 的决定；有异议先说理由、等答复。
+2. 只做当前里程碑的任务。
+3. 不确定（架构、数据格式、接口、许可证）先问。
+4. 核心逻辑放 `crates/`，界面层保持很薄（D006）；扩展用适配器（D007）。
+5. 数据库带同步元数据，复习日志只追加（D024）。
+6. 每个模块有自动化测试，提交前全部通过。
+7. 不用"美化数字"的手段应付性能预算。
+8. API Key、Token 不进代码、日志、配置明文。
+9. crate / npm 包名不用裸的 `lextrail`（D001）。
 
----
+## 开始流程
 
-## 开始流程（每次新对话）
+1. 读 `docs/STATUS.md` 全文；ROADMAP 只读当前里程碑一节（`grep -n "^## " docs/ROADMAP.md` 定位后按行号读）；`grep -n "^### D" docs/DECISIONS.md` 浏览决定标题。
+2. `git log --oneline -15`、`git status`。STATUS 与 git 不一致时以 git 为准，并告诉项目负责人哪里不一致。
+3. 项目负责人第一句话说明了任务就直接开始；否则用两三句话复述（里程碑、上次完成、这次要做），等确认。
 
-1. 读取 `AGENTS.md`（本文件）、`docs/STATUS.md`、`docs/ROADMAP.md`。
-2. 浏览 `docs/DECISIONS.md` 的标题；查看最近的 `git log --oneline -15`。
-3. 用两三句话向项目负责人复述：
-   - 当前处于哪个里程碑；
-   - 上次完成了什么；
-   - 这次准备做什么。
-4. **得到确认后再开始写代码。**
+## 节省 token
 
-## 结束流程（结束前，或感觉对话快超出长度时）
+- 一个任务一个会话：任务完成、STATUS 更新后提醒开新会话；中断超过约 1 小时也建议开新会话。
+- 命令输出用 grep / tail / head 过滤，验证只输出结论（PASS / FAIL 和关键几行）；bench 只取摘要行。
+- 不重复读没变的文件；大文件先 `grep -n` 再读片段。DECISIONS 按编号或关键词 grep 后读条目；ARCHITECTURE、specs 只读相关章节，手动测试清单只读当前轮次。
+- 能用 `popup-e2e.ps1`（UIA 读文字）核对就不截图；布局、滚动等才截图，只截悬浮窗区域并缩小。
+- 长时间等待（bench、CI、构建）放后台，只取结果。
+- 文档和提交说明简洁，不重复别处已有内容。
 
-1. 运行全部测试，确保通过。
-2. 更新 `docs/STATUS.md`：完成了什么、正在进行什么（做到哪一步）、下一步、遇到的问题。
-3. 在 `docs/ROADMAP.md` 中勾选已完成的任务；新发现的任务追加到对应里程碑并标注 `（新增）`。
-4. 如果做出了新的决定，追加到 `docs/DECISIONS.md`（新编号，写明理由），并在 `STATUS.md` 中提一句。
-5. 提交并推送代码。
-6. 告诉项目负责人：本次做了什么，下次从哪里继续。
+## 做任务
 
-> 如果对话可能随时中断，**不要等到最后才更新 `STATUS.md`**。每完成一个任务就更新一次并提交。
+- 一次只做一个任务；发现需要的前置工作先告诉项目负责人。
+- 提新方案前 grep `DECISIONS.md`，不重提已否决的方案。
+- 改设计须经项目负责人同意，同意后在同一次提交里更新 ARCHITECTURE 或 specs，并在 DECISIONS 追加记录（新编号，写理由）。
+- 完成的标准是 ROADMAP 的验收标准逐条通过。
 
----
+## 结束流程
+
+1. 运行全部测试（`pnpm check`）。
+2. 更新 ROADMAP（勾选；新任务标"（新增）"）；更新 STATUS 并删掉过时内容；新的约定和测试方法写进 `docs/NOTES.md`。
+3. 代码和文档同一次提交；推送后查 CI；告诉项目负责人做了什么、下次从哪里继续。可能中断时每完成一步就更新 STATUS 并提交。
 
 ## 开发规范
 
-### 提交
-- 小步提交：每完成一个小任务就提交一次。
-- 提交说明使用 Conventional Commits 格式，英文，例如：
-  - `feat(capture): add UIA selection reader`
-  - `fix(popup): resume webview before show`
-  - `docs(status): update after M1 capture work`
-- 每个功能在单独的分支上开发，完成后合并到 `main`；`main` 必须始终能构建通过。
-- **每次推送后**用 `gh run list --branch <分支> --limit 3` 查看 CI 结果；失败时先修复再做别的事，并在汇报里写明 CI 状态（通过 / 失败 / 还在运行）。**合并到 `main` 前必须确认 CI 通过**（项目负责人的要求）。
-- 本地 `pnpm check` 包含 release 配置的 clippy（CI 的 release 构建用 `-D warnings`，只在 debug 版使用的名字在 release 下会报"未使用"）。
-- **不要在提交说明和 PR 描述中添加任何 AI 署名**，例如 `Co-Authored-By: Claude …`、`Generated with Claude Code`、会话链接等（项目负责人的要求）。Claude Code 已通过 `.claude/settings.json` 关闭自动署名；其他 AI 工具请手动遵守。
-- 提交作者使用项目负责人在本机配置的 Git 身份，不要修改 `user.name` / `user.email`。
+- Conventional Commits，英文，小步提交。
+- 每个功能单独分支，`main` 始终能构建。推送后 `gh run list --branch <分支> --limit 3` 查 CI，失败先修，汇报写明 CI 状态；**合并到 `main` 前必须确认 CI 通过**。
+- **提交说明和 PR 描述不加任何 AI 署名**（`Co-Authored-By`、`Generated with …`、会话链接）。不改 Git 的 `user.name` / `user.email`。
+- Rust：库用 `thiserror`、应用可用 `anyhow`；平台代码用 `#[cfg(target_os)]` 隔离在适配器内。前端：悬浮窗不引入 UI 库、路由、状态管理库（D010）；共用组件放 `packages/ui`。同步合并逻辑要有多设备场景测试。
 
-### Rust
-- `cargo fmt` 格式化；`cargo clippy -- -D warnings` 无警告。
-- 错误处理：库代码使用 `thiserror`，应用代码可使用 `anyhow`。
-- 平台相关代码用 `#[cfg(target_os = "...")]` 隔离在取词等适配器内部。
-
-### 前端
-- TypeScript strict 模式；ESLint + Prettier。
-- 悬浮窗页面保持极简：不引入 UI 组件库、路由、状态管理库（D010）。
-- 主窗口与 PWA 共用的组件放在 `packages/ui`。
-
-### 测试
-- Rust：每个 crate 有单元测试；同步合并逻辑必须有多设备场景的测试。
-- 前端：关键组件和流式解析有测试。
-- CI 中全部通过才可合并。
-
----
-
-## 常用命令
-
-> M0 完成后在此补充（安装依赖、开发运行、测试、构建、性能测试）。
-
-```bash
-# 待 M0 补充
-```
+常用命令、debug 开关、编码规范细节、测试方法与坑见 `docs/NOTES.md`。
