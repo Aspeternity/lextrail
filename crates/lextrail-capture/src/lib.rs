@@ -303,6 +303,19 @@ pub struct CaptureTrace {
     pub total: Duration,
 }
 
+/// [`StepOutput::note`] of a UIA step that left the window to the clipboard because it is
+/// Edge's PDF viewer (its UIA selection ranges are wrong, D041).
+pub const NOTE_CHROMIUM_PDF: &str = "chromium_pdf";
+
+impl CaptureTrace {
+    /// The text came from a Chromium PDF viewer that UIA skipped ([`NOTE_CHROMIUM_PDF`]),
+    /// i.e. through the clipboard: line-end hyphens are dropped there, so words broken
+    /// across lines need `lextrail_core::text::join_unmarked_line_breaks`.
+    pub fn from_chromium_pdf(&self) -> bool {
+        self.steps.iter().any(|s| s.note == Some(NOTE_CHROMIUM_PDF))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepTrace {
     pub step: &'static str,
@@ -375,5 +388,32 @@ impl fmt::Display for Unavailable {
             Self::TimedOut => "timed out",
             Self::KeysHeld => "hotkey still held",
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn step(note: Option<&'static str>) -> StepTrace {
+        StepTrace {
+            step: "uia",
+            result: "unsupported",
+            elapsed: Duration::ZERO,
+            element: None,
+            attempts: 1,
+            note,
+            key_wait: None,
+        }
+    }
+
+    #[test]
+    fn trace_tells_chromium_pdf_captures() {
+        let mut trace = CaptureTrace::default();
+        assert!(!trace.from_chromium_pdf());
+        trace.steps.push(step(None));
+        assert!(!trace.from_chromium_pdf());
+        trace.steps.push(step(Some(NOTE_CHROMIUM_PDF)));
+        assert!(trace.from_chromium_pdf());
     }
 }

@@ -177,6 +177,61 @@ pub fn resolve_line_end_hyphens(text: &str, is_word: impl Fn(&str) -> bool) -> S
     out
 }
 
+/// Joins words that a PDF viewer broke across lines without leaving a mark. Edge's PDF
+/// viewer copies "transduc-" / "tion" as `transduc\r\ntion`: the hyphen is gone, so a
+/// hyphenation break looks like any other line break. A single line break between two
+/// letters is removed when the part before it is not a word on its own and the two parts
+/// together are (`is_word`), which leaves ordinary line breaks ("positions\r\nof") alone.
+/// Only for text known to come from such a viewer (D044 supplement); text with
+/// [`LINE_END_HYPHEN`] markers uses [`resolve_line_end_hyphens`].
+pub fn join_unmarked_line_breaks(text: &str, is_word: impl Fn(&str) -> bool) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(['\r', '\n']) {
+        let (before, tail) = rest.split_at(at);
+        let break_len = if tail.starts_with("\r\n") { 2 } else { 1 };
+        let after = &tail[break_len..];
+        let left_start = before
+            .char_indices()
+            .rev()
+            .take_while(|(_, c)| c.is_alphabetic())
+            .last()
+            .map_or(before.len(), |(i, _)| i);
+        let right_len: usize = after
+            .chars()
+            .take_while(|c| c.is_alphabetic())
+            .map(char::len_utf8)
+            .sum();
+        let (left, right) = (&before[left_start..], &after[..right_len]);
+        out.push_str(before);
+        let join = !left.is_empty()
+            && !right.is_empty()
+            && !is_word(left)
+            && is_word(&format!("{left}{right}"));
+        if !join {
+            out.push_str(&tail[..break_len]);
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Whether `selection` is the first word(s) of `sentence`, after opening quotes and
+/// brackets: "The" in "The model is ..." or "“The model ...". Used to put the lowercase
+/// dictionary entry first for a capitalized word at a sentence start.
+pub fn starts_sentence(sentence: &str, selection: &str) -> bool {
+    const OPENERS: &[char] = &['"', '\'', '\u{201c}', '\u{2018}', '(', '[', '{'];
+    let sentence = sentence.trim_start_matches(|c: char| c.is_whitespace() || OPENERS.contains(&c));
+    let selection = selection.trim();
+    !selection.is_empty()
+        && sentence.starts_with(selection)
+        && sentence[selection.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric())
+}
+
 /// Finds the byte range of `selection` in `paragraph` (see [`sentence_around`]).
 fn locate(paragraph: &str, selection: &str, hint: Option<Range<usize>>) -> Option<Range<usize>> {
     let selection = selection.trim();
@@ -614,5 +669,60 @@ mod tests {
             resolve_line_end_hyphens("no markers", is_word),
             "no markers"
         );
+    }
+
+    #[test]
+    fn unmarked_line_breaks_are_joined_only_for_word_fragments() {
+        // As Edge's PDF viewer copies them (R5): the hyphen is gone.
+        let words = [
+            "transduction",
+            "convolutional",
+            "positions",
+            "of",
+            "sequence",
+            "aligned",
+            "sequencealigned",
+            "multi",
+            "multiplicative",
+            "english",
+            "to",
+        ];
+        let is_word = |w: &str| words.contains(&w.to_lowercase().as_str());
+        assert_eq!(
+            join_unmarked_line_breaks(" transduc\r\ntion m", is_word),
+            " transduction m"
+        );
+        assert_eq!(
+            join_unmarked_line_breaks("and convolu\ntional layers", is_word),
+            "and convolutional layers"
+        );
+        // Ordinary line breaks and compounds: the part before the break is a word.
+        for kept in [
+            "positions\r\nof ",
+            "sequence\r\naligned",
+            "English\r\nto-German",
+            // Missed, as the evidence in m1-dict.md shows: "multi" is an entry.
+            "multi\r\nplicative",
+            // A blank line (paragraph break) and breaks next to non-letters.
+            "transduc\r\n\r\ntion",
+            "2014\r\n2017",
+            "transduc \r\ntion",
+        ] {
+            assert_eq!(join_unmarked_line_breaks(kept, is_word), kept);
+        }
+    }
+
+    #[test]
+    fn sentence_start() {
+        assert!(starts_sentence("The model is large.", "The"));
+        assert!(starts_sentence(
+            "\u{201c}The model\u{201d} is large.",
+            "The"
+        ));
+        assert!(starts_sentence("March came.", "March came"));
+        assert!(!starts_sentence("In March we left.", "March"));
+        // A longer word that only begins with the selection.
+        assert!(!starts_sentence("Theory says so.", "The"));
+        assert!(!starts_sentence("The model.", " "));
     }
 }

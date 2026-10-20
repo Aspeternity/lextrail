@@ -19,9 +19,40 @@ body,
 .popup {
   position: relative;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   padding: 12px 16px;
   border: 1px solid #d0d7de;
+}
+
+/* The dictionary result; scrolls inside the fixed-size window. */
+.popup__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* A thin scrollbar whose track starts below the close button. (No standard
+   `scrollbar-width` here: it would disable these styles.) */
+.popup__body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.popup__body::-webkit-scrollbar-track {
+  margin-top: 22px;
+}
+
+.popup__body::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: #c4c9cf;
+}
+
+.popup__footer {
+  flex: none;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid #eaeef2;
 }
 
 .popup__header {
@@ -42,18 +73,139 @@ body,
 }
 
 .popup__sentence {
-  margin: 4px 0 8px;
-  line-height: 1.5;
+  display: -webkit-box;
+  margin: 0 0 4px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.45;
+  font-size: 13px;
+  color: #424a53;
 }
 
-.popup__source {
-  margin: 8px 0 0;
+.popup__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
   font-size: 12px;
   color: #8c959f;
 }
 
+.dict__entry + .dict__entry {
+  margin-top: 8px;
+}
+
+/* Stays at the top while its entry scrolls. */
+.dict__title {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding-bottom: 4px;
+  background: #ffffff;
+}
+
+.dict__word {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.dict__title .dict__relation {
+  margin-left: -8px;
+}
+
+.dict__relation,
+.dict__phonetic {
+  color: #656d76;
+}
+
+.dict__label {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: #eaeef2;
+  font-size: 12px;
+  color: #424a53;
+}
+
+.dict__stars {
+  font-size: 12px;
+  color: #bf8700;
+}
+
+.dict__line,
+.dict__part {
+  margin: 2px 0;
+  line-height: 1.45;
+}
+
+.dict__part {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.dict__part .dict__word {
+  font-size: 14px;
+}
+
+.dict__part > span + span,
+.dict__part .dict__pos {
+  margin-left: 6px;
+}
+
+.dict__pos {
+  margin-right: 6px;
+  font-style: italic;
+  color: #656d76;
+}
+
+.dict__domain {
+  margin-right: 4px;
+  color: #8250df;
+}
+
+.dict__line--domain {
+  font-size: 13px;
+}
+
+.dict__note {
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: #656d76;
+}
+
+.dict__sentence {
+  display: -webkit-box;
+  margin: 0 0 6px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-height: 1.5;
+}
+
+.dict__toggle {
+  margin: 2px 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: #0969da;
+  cursor: pointer;
+}
+
+.dict__toggle:hover {
+  text-decoration: underline;
+}
+
 .popup__close {
   position: absolute;
+  /* Above the sticky entry titles. */
+  z-index: 1;
   top: 6px;
   right: 8px;
   width: 24px;
@@ -75,6 +227,8 @@ body,
 
 /* Keep headings clear of the close button. */
 .popup__header,
-.popup__title {
+.popup__title,
+.dict__title,
+.dict__note:first-child {
   padding-right: 28px;
 }

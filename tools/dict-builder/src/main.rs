@@ -74,8 +74,8 @@ fn main() -> Result<()> {
     let stats = build::build(BufReader::new(File::open(&csv)?), &args.out, &provenance)?;
     let size = fs::metadata(&args.out)?.len();
     eprintln!(
-        "wrote {} in {:.1}s: {} of {} rows, {} senses, {} forms, {} dropped with no senses; \
-         {:.1} MiB, SHA-256 {}",
+        "wrote {} in {:.1}s: {} of {} rows, {} senses, {} forms, {} dropped with no senses, \
+         {} extra words; {:.1} MiB, SHA-256 {}",
         args.out.display(),
         started.elapsed().as_secs_f64(),
         stats.entries,
@@ -83,6 +83,7 @@ fn main() -> Result<()> {
         stats.senses,
         stats.forms,
         stats.empty,
+        stats.extra_words,
         size as f64 / (1024.0 * 1024.0),
         source::sha256_file(&args.out)?,
     );

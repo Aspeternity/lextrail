@@ -31,6 +31,9 @@ pub const SCHEMA: &str = "
         kind TEXT NOT NULL,
         PRIMARY KEY (form, lemma, kind)
     ) STRICT, WITHOUT ROWID;
+    CREATE TABLE extra_words (
+        word TEXT PRIMARY KEY
+    ) STRICT, WITHOUT ROWID;
 ";
 
 /// Indexes, created after the data is in (faster, and a compact index).

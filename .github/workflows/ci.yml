@@ -51,19 +51,10 @@ jobs:
       # The Tauri app embeds the built frontend (apps/desktop/dist) at compile time.
       - run: pnpm --filter @lextrail/desktop build
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - run: cargo test --workspace --locked
-      # Plain `cargo build` runs Tauri in dev mode (loads devUrl); `tauri build` produces
-      # the real app with the frontend embedded. Bundling (installers) comes in M6.
-      - run: pnpm --filter @lextrail/desktop tauri build --no-bundle -- --locked
-
-  # Builds the compact dictionary from the pinned ECDICT source (D038). The download is
-  # cached by the pinned source (source.rs), the result by the builder's inputs.
-  dict:
-    name: Build dictionary
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
+      # The compact dictionary from the pinned ECDICT source (D038): the desktop app
+      # bundles it as a resource, so it must exist before the app compiles. The
+      # download is cached by the pinned source (source.rs), the result by the
+      # builder's inputs.
       - uses: actions/cache@v6
         with:
           path: data/raw
@@ -74,6 +65,9 @@ jobs:
           path: data/build
           key: dict-build-${{ hashFiles('tools/dict-builder/**', 'crates/lextrail-dict/**', 'Cargo.lock') }}
       - if: steps.dict-cache.outputs.cache-hit != 'true'
-        uses: Swatinem/rust-cache@v2
-      - if: steps.dict-cache.outputs.cache-hit != 'true'
         run: cargo run -p lextrail-dict-builder --release --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      # Plain `cargo build` runs Tauri in dev mode (loads devUrl); `tauri build` produces
+      # the real app with the frontend embedded. Bundling (installers) comes in M6.
+      - run: pnpm --filter @lextrail/desktop tauri build --no-bundle -- --locked

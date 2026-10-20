@@ -24,7 +24,10 @@ use std::time::{Duration, Instant};
 
 #[cfg(debug_assertions)]
 use lextrail_capture::result_label;
-use lextrail_capture::{CaptureProgress, CaptureTrace, TextCapture};
+use lextrail_capture::{
+    CaptureError, CaptureMethod, CaptureOutcome, CaptureProgress, CaptureTrace, Selection,
+    TextCapture,
+};
 use lextrail_config::PopupMode;
 use tauri::window::Color;
 use tauri::{
@@ -32,6 +35,7 @@ use tauri::{
     WebviewWindow, WebviewWindowBuilder, WindowEvent,
 };
 
+use crate::dictionary::DictionaryService;
 use content::Content;
 use lifecycle::{Action, Event, Lifecycle};
 use placement::{Point, Rect, Size};
@@ -63,6 +67,8 @@ struct PopupState {
     target_window: AtomicIsize,
     /// Benchmark timings, when `LEXTRAIL_BENCH_TIMINGS` is set.
     timings: Option<Timings>,
+    /// Opened by the first lookup that captured text.
+    dictionary: DictionaryService,
 }
 
 /// Registers the popup state. Call once during setup.
@@ -76,6 +82,12 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, mode: PopupMode) {
         next_request: AtomicU64::new(0),
         target_window: AtomicIsize::new(0),
         timings: Timings::from_env(),
+        dictionary: DictionaryService::new(
+            app.path()
+                .resource_dir()
+                .ok()
+                .map(|dir| dir.join(lextrail_dict::CORE_DICT_FILE_NAME)),
+        ),
     });
     foreground::init({
         let app = app.clone();
@@ -165,18 +177,35 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result
         if let Err(e) = &result {
             eprintln!("capture failed: {e}");
         }
-        // One line per capture, without the captured text: method, result, time and
-        // where the element came from.
-        #[cfg(debug_assertions)]
-        eprintln!(
-            "capture #{id}: {} | start +{:.1}ms; {trace}",
-            result_label(&result),
-            start.as_secs_f64() * 1000.0
-        );
-        if let Some(t) = &capture_app.state::<PopupState>().timings {
+        let state = capture_app.state::<PopupState>();
+        if let Some(t) = &state.timings {
             t.capture(id, trace.total);
         }
-        let content = Content::from_capture(result, source_app);
+        let result = bench_lookup_text(result, state.timings.is_some());
+        #[cfg(debug_assertions)]
+        let label = result_label(&result);
+        let lookup_start = Instant::now();
+        let content = if matches!(result, Ok(CaptureOutcome::Captured(_))) {
+            let dictionary = state.dictionary.get();
+            Content::from_capture(
+                result,
+                trace.from_chromium_pdf(),
+                source_app,
+                dictionary.as_ref(),
+            )
+        } else {
+            Content::from_capture(result, false, source_app, None)
+        };
+        // One line per capture, without the captured text: method, result, time and
+        // where the element came from; then the dictionary lookup's time.
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "capture #{id}: {label} | start +{:.1}ms; {trace}; lookup {:.1}ms",
+            start.as_secs_f64() * 1000.0,
+            lookup_start.elapsed().as_secs_f64() * 1000.0
+        );
+        #[cfg(not(debug_assertions))]
+        let _ = lookup_start;
         dispatch_request(&capture_app, request::Event::Captured { id, content });
     });
 
@@ -208,6 +237,28 @@ fn debug_capture_delay() {
         .and_then(|v| v.parse().ok())
     {
         thread::sleep(Duration::from_millis(ms));
+    }
+}
+
+/// Benchmark only (`LEXTRAIL_BENCH_TIMINGS` set): `LEXTRAIL_BENCH_LOOKUP_TEXT` stands in
+/// for a capture that found no text. The benchmark presses the hotkey over its own
+/// terminal, where nothing is selected; with this it measures the app with the
+/// dictionary open and a dictionary result on screen.
+fn bench_lookup_text(
+    result: Result<CaptureOutcome, CaptureError>,
+    benchmark: bool,
+) -> Result<CaptureOutcome, CaptureError> {
+    if !benchmark || matches!(result, Ok(CaptureOutcome::Captured(_))) {
+        return result;
+    }
+    match std::env::var("LEXTRAIL_BENCH_LOOKUP_TEXT") {
+        Ok(text) if !text.is_empty() => Ok(CaptureOutcome::Captured(Selection {
+            text,
+            context: None,
+            url: None,
+            method: CaptureMethod::Uia,
+        })),
+        _ => result,
     }
 }
 

@@ -91,9 +91,11 @@ pub struct LookupResult {
     /// The text as looked up, after normalization.
     pub query: String,
     /// The text's own entry (if it says more than "past tense of ..."), then its base
-    /// form's entry. A capitalized word with both a lowercase and a capitalized entry gives
-    /// both, lowercase first: `March` is "三月" mid-sentence but "行军" at a sentence start.
-    /// Ordering by context is left to the AI (M2, D019).
+    /// form's entry; the base form first when the text's entry has no exam tag, Collins
+    /// stars or Oxford mark (`improving`). A word with entries in two cases (`March` / `march`) gives both: the
+    /// one in the selected text's exact case first, or the lowercase one first when the
+    /// word starts a sentence ([`LookupOptions::sentence_start`]), where capitalization
+    /// says nothing. Ordering by meaning in context is left to the AI (M2, D019).
     pub entries: Vec<FoundEntry>,
     pub inflection: Option<Inflection>,
 }
@@ -126,6 +128,27 @@ pub struct PartsResult {
     /// Parts that are not in the dictionary either.
     pub not_found: Vec<String>,
 }
+
+/// How to look a text up.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LookupOptions {
+    /// The text is the first word(s) of its sentence (known only when the context was
+    /// captured; `lextrail_core::text::starts_sentence`). A capitalized word then lists
+    /// its lowercase entry first.
+    pub sentence_start: bool,
+}
+
+/// SQLite page cache for the open dictionary, in KiB. A lookup reads a few dozen pages;
+/// the cache stays small because the connection is kept open while the app runs. No
+/// memory mapping (`mmap_size` 0): mapped pages would count towards the app's memory.
+const CACHE_KIB: i64 = 1024;
+
+/// Base forms of a form with their frequency. The join compares without case so it can
+/// use the `entries_word` index; a plain `=` scans every entry (about 30 ms).
+const EXCHANGE_LEMMA_SQL: &str = "SELECT f.lemma, f.kind, e.frq, e.bnc FROM forms f
+     LEFT JOIN entries e ON e.word = f.lemma COLLATE NOCASE
+     WHERE f.form = ?1 COLLATE NOCASE
+     ORDER BY f.lemma, f.kind";
 
 /// Parts of a compound that get no entry of their own (`English-to-German`).
 const FUNCTION_WORDS: &[&str] = &[
@@ -160,19 +183,31 @@ impl Dictionary {
         if found.as_deref() != Some(&FORMAT_VERSION.to_string()) {
             return Err(DictError::UnsupportedFormat { found });
         }
+        conn.execute_batch(&format!(
+            "PRAGMA cache_size = -{CACHE_KIB}; PRAGMA mmap_size = 0;"
+        ))?;
         Ok(Self { conn })
     }
 
-    /// Looks up a word or phrase as a whole. `None` when neither it nor a base form is in
-    /// the dictionary. This is the check for "is this a word" (e.g. joining a line-end
-    /// hyphen, `lextrail_core::text::resolve_line_end_hyphens`); never use
-    /// [`Dictionary::lookup_with_parts`] for that.
+    /// Looks up a word or phrase as a whole, with default [`LookupOptions`]; see
+    /// [`Dictionary::lookup_with`].
     pub fn lookup(&self, text: &str) -> Result<Option<LookupResult>, DictError> {
+        self.lookup_with(text, LookupOptions::default())
+    }
+
+    /// Looks up a word or phrase as a whole. `None` when neither it nor a base form is in
+    /// the dictionary. For deciding whether to join a word broken across lines use
+    /// [`Dictionary::is_word`]; never [`Dictionary::lookup_with_parts`].
+    pub fn lookup_with(
+        &self,
+        text: &str,
+        options: LookupOptions,
+    ) -> Result<Option<LookupResult>, DictError> {
         let query = normalize_query(text);
         if query.is_empty() {
             return Ok(None);
         }
-        let direct = self.entries_for(&query)?;
+        let direct = self.entries_for(&query, options.sentence_start)?;
         let mut inflection = self.exchange_lemma(&query)?;
         let note_only = direct.first().is_some_and(is_form_note);
         if inflection.is_none() && (direct.is_empty() || note_only) {
@@ -202,10 +237,21 @@ impl Dictionary {
             }));
         }
         if let Some(entry) = lemma_entry {
-            entries.push(FoundEntry {
-                entry,
-                role: EntryRole::Lemma,
-            });
+            // The form's own entry comes first (`better`, `left`) unless nothing marks it
+            // as a common word: `improving` ("有启发的", no exam tag, no Collins stars) is
+            // mostly "improve" in running text (D044 supplement).
+            let at = if entries.iter().any(|f| is_marked(&f.entry)) {
+                entries.len()
+            } else {
+                0
+            };
+            entries.insert(
+                at,
+                FoundEntry {
+                    entry,
+                    role: EntryRole::Lemma,
+                },
+            );
         }
         if entries.is_empty() {
             return Ok(None);
@@ -218,10 +264,15 @@ impl Dictionary {
     }
 
     /// Like [`Dictionary::lookup`], but a hyphenated compound that is not in the dictionary
-    /// is split, and its parts are looked up (skipping function words such as `to`).
+    /// is split at hyphens and spaces, and its parts are looked up (skipping function words
+    /// such as `to`). Text without a hyphen is never split.
     /// `None` when no part is found either.
-    pub fn lookup_with_parts(&self, text: &str) -> Result<Option<Found>, DictError> {
-        if let Some(whole) = self.lookup(text)? {
+    pub fn lookup_with_parts(
+        &self,
+        text: &str,
+        options: LookupOptions,
+    ) -> Result<Option<Found>, DictError> {
+        if let Some(whole) = self.lookup_with(text, options)? {
             return Ok(Some(Found::Whole(whole)));
         }
         let query = normalize_query(text);
@@ -231,7 +282,9 @@ impl Dictionary {
         let mut seen: Vec<String> = Vec::new();
         let mut parts = Vec::new();
         let mut not_found = Vec::new();
-        for part in query.split('-').map(str::trim).filter(|p| !p.is_empty()) {
+        // Spaces separate parts too once the text is split: Edge's PDF viewer gives
+        // `English to-German` for a compound broken after its first hyphen.
+        for part in query.split(['-', ' ']).filter(|p| !p.is_empty()) {
             let lower = part.to_lowercase();
             if FUNCTION_WORDS.contains(&lower.as_str()) || seen.contains(&lower) {
                 continue;
@@ -252,6 +305,34 @@ impl Dictionary {
         })))
     }
 
+    /// Whether `word` is a word, for joining a word broken across lines
+    /// (`lextrail_core::text::resolve_line_end_hyphens`, `join_unmarked_line_breaks`):
+    /// a whole-word [`Dictionary::lookup`], else the headword list of the full ECDICT
+    /// (`extra_words`, D044 supplement), directly or through a suffix rule
+    /// (`convolutional`, `hyperparameters` if `hyperparameter` were listed). Compounds
+    /// split into parts never count.
+    pub fn is_word(&self, word: &str) -> Result<bool, DictError> {
+        if self.lookup(word)?.is_some() {
+            return Ok(true);
+        }
+        let lower = normalize_query(word).to_lowercase();
+        if lower.is_empty() || !lower.bytes().all(|b| b.is_ascii_lowercase()) {
+            return Ok(false);
+        }
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT 1 FROM extra_words WHERE word = ?1")?;
+        if stmt.exists([&lower])? {
+            return Ok(true);
+        }
+        for (base, _) in suffix::candidates(&lower) {
+            if stmt.exists([&base])? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Classifies selected text as word, phrase or sentence ([`crate::classify`]), asking
     /// this dictionary whether a multi-word text is an entry as a whole.
     pub fn classify(&self, text: &str) -> Result<Classification, DictError> {
@@ -268,13 +349,13 @@ impl Dictionary {
 
     /// The best entry for `word`; see [`Dictionary::entries_for`].
     fn entry(&self, word: &str) -> Result<Option<Entry>, DictError> {
-        Ok(self.entries_for(word)?.into_iter().next())
+        Ok(self.entries_for(word, false)?.into_iter().next())
     }
 
     /// Entries for `word` in any case: the exact case, else the lowercase entry, else the
-    /// first by source order. A capitalized word (`March`) gives the lowercase entry and
-    /// then its own, when both exist.
-    fn entries_for(&self, word: &str) -> Result<Vec<Entry>, DictError> {
+    /// first by source order. A capitalized word (`March`) with its own and a lowercase
+    /// entry gives both: its own first, or the lowercase one first at a sentence start.
+    fn entries_for(&self, word: &str, sentence_start: bool) -> Result<Vec<Entry>, DictError> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT id, word FROM entries WHERE word = ?1 COLLATE NOCASE ORDER BY id",
         )?;
@@ -287,7 +368,13 @@ impl Dictionary {
         let exact = hits.iter().find(|(_, w)| w == word);
         let lowercase = hits.iter().find(|(_, w)| *w == lower);
         let ids: Vec<i64> = match (exact, lowercase) {
-            (Some(e), Some(l)) if e.0 != l.0 && is_capitalized(word) => vec![l.0, e.0],
+            (Some(e), Some(l)) if e.0 != l.0 && is_capitalized(word) => {
+                if sentence_start {
+                    vec![l.0, e.0]
+                } else {
+                    vec![e.0, l.0]
+                }
+            }
             (Some(e), _) => vec![e.0],
             (None, Some(l)) => vec![l.0],
             (None, None) => hits.first().map(|h| h.0).into_iter().collect(),
@@ -333,12 +420,7 @@ impl Dictionary {
     /// Base form from the `forms` table. Several lemmas (e.g. `found` -> find / found):
     /// the more frequent one.
     fn exchange_lemma(&self, form: &str) -> Result<Option<Inflection>, DictError> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT f.lemma, f.kind, e.frq, e.bnc FROM forms f
-             LEFT JOIN entries e ON e.word = f.lemma
-             WHERE f.form = ?1 COLLATE NOCASE
-             ORDER BY f.lemma, f.kind",
-        )?;
+        let mut stmt = self.conn.prepare_cached(EXCHANGE_LEMMA_SQL)?;
         let rows = stmt
             .query_map([form], |r| {
                 Ok((
@@ -442,6 +524,11 @@ fn same_word(a: &Entry, b: &Entry) -> bool {
     a.word.eq_ignore_ascii_case(&b.word)
 }
 
+/// Has an exam tag, Collins stars or the Oxford 3000 mark.
+fn is_marked(entry: &Entry) -> bool {
+    !entry.tags.is_empty() || entry.collins.is_some_and(|c| c > 0) || entry.oxford
+}
+
 /// `March`: an uppercase first letter and lowercase letters after it.
 fn is_capitalized(word: &str) -> bool {
     let mut chars = word.chars();
@@ -533,13 +620,31 @@ mod tests {
         ("to", Some("tu:"), Some(2), &[("prep.", "到")]),
         ("large", Some("lɑ:dʒ"), Some(200), &[("a.", "大的")]),
         ("optimize", Some("'ɒptimaiz"), None, &[("vt.", "使最优化")]),
+        ("improve", Some("im'pru:v"), Some(400), &[("v.", "改善")]),
+        (
+            "improving",
+            Some("im'pru:viŋ"),
+            None,
+            &[("a.", "有启发的；有教育意义的")],
+        ),
     ];
+
+    /// Exam tags; entries not listed have none.
+    const TAGS: &[(&str, &str)] = &[
+        ("launch", "cet4 cet6"),
+        ("better", "zk gk cet4"),
+        ("improve", "cet4"),
+    ];
+
+    /// Headwords of the full ECDICT that the compact dictionary lacks.
+    const EXTRA_WORDS: &[&str] = &["convolutional", "hyperparameter", "salakhutdinov"];
 
     const FORMS: &[(&str, &str, &str)] = &[
         ("launched", "launch", "d"),
         ("launched", "launch", "p"),
         ("better", "good", "r"),
         ("gave", "give", "p"),
+        ("improving", "improve", "i"),
     ];
 
     fn fixture(dir: &Path) -> Dictionary {
@@ -560,7 +665,7 @@ mod tests {
                     word,
                     phonetic,
                     frq,
-                    (*word == "launch").then_some("cet4 cet6")
+                    TAGS.iter().find(|(w, _)| w == word).map(|(_, t)| *t)
                 ],
             )
             .unwrap();
@@ -572,6 +677,10 @@ mod tests {
                 )
                 .unwrap();
             }
+        }
+        for word in EXTRA_WORDS {
+            conn.execute("INSERT INTO extra_words (word) VALUES (?1)", [word])
+                .unwrap();
         }
         for (form, lemma, kind) in FORMS {
             conn.execute(
@@ -604,8 +713,21 @@ mod tests {
         assert_eq!(r.entries[0].entry.tags, ["cet4", "cet6"]);
         assert_eq!(r.entries[0].entry.senses[1].text, "发动");
         assert_eq!(r.entries[0].role, EntryRole::Query);
-        // Capitalized: the lowercase entry first, then the capitalized one (a name).
-        assert_eq!(words(&dict.lookup("The").unwrap().unwrap()), ["the", "The"]);
+        // Entries in two cases: the selected text's own case first...
+        assert_eq!(words(&dict.lookup("The").unwrap().unwrap()), ["The", "the"]);
+        // ...but the lowercase one first at a sentence start.
+        let start = LookupOptions {
+            sentence_start: true,
+        };
+        assert_eq!(
+            words(&dict.lookup_with("The", start).unwrap().unwrap()),
+            ["the", "The"]
+        );
+        // Lowercase text: its own entry only, at a sentence start too.
+        assert_eq!(
+            words(&dict.lookup_with("the", start).unwrap().unwrap()),
+            ["the"]
+        );
         assert_eq!(words(&dict.lookup("THE").unwrap().unwrap()), ["the"]);
         assert_eq!(words(&dict.lookup("LAUNCH").unwrap().unwrap()), ["launch"]);
         // Exact case wins.
@@ -650,6 +772,53 @@ mod tests {
         }
         assert_eq!(r.entries[1].role, EntryRole::Lemma);
         assert_eq!(r.inflection.unwrap().kinds, [FormKind::Comparative]);
+    }
+
+    #[test]
+    fn unmarked_form_entry_comes_after_the_base_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let dict = fixture(dir.path());
+        // `improving` has its own entry but no exam tag, Collins stars or Oxford mark:
+        // the base form first, then the form with its relation.
+        let r = dict.lookup("improving").unwrap().unwrap();
+        assert_eq!(words(&r), ["improve", "improving"]);
+        assert_eq!(r.entries[0].role, EntryRole::Lemma);
+        match &r.entries[1].role {
+            EntryRole::FormOf(i) => assert_eq!(i.describe_zh(), "improve 的现在分词"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(r.lemma(), "improve");
+    }
+
+    #[test]
+    fn any_mark_counts() {
+        let plain = Entry {
+            word: "x".into(),
+            phonetic: None,
+            tags: vec![],
+            collins: None,
+            oxford: false,
+            bnc: None,
+            frq: None,
+            senses: vec![],
+        };
+        assert!(!is_marked(&plain));
+        assert!(!is_marked(&Entry {
+            collins: Some(0),
+            ..plain.clone()
+        }));
+        assert!(is_marked(&Entry {
+            collins: Some(1),
+            ..plain.clone()
+        }));
+        assert!(is_marked(&Entry {
+            oxford: true,
+            ..plain.clone()
+        }));
+        assert!(is_marked(&Entry {
+            tags: vec!["gre".into()],
+            ..plain
+        }));
     }
 
     #[test]
@@ -717,10 +886,15 @@ mod tests {
         let dict = fixture(dir.path());
         // A word found as a whole never goes through the parts path.
         assert!(matches!(
-            dict.lookup_with_parts("launch").unwrap(),
+            dict.lookup_with_parts("launch", LookupOptions::default())
+                .unwrap(),
             Some(Found::Whole(_))
         ));
-        assert_eq!(dict.lookup_with_parts("tokenizer").unwrap(), None);
+        assert_eq!(
+            dict.lookup_with_parts("tokenizer", LookupOptions::default())
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -730,7 +904,10 @@ mod tests {
         // Not in the dictionary as a whole...
         assert_eq!(dict.lookup("English-to-German").unwrap(), None);
         // ...so its parts, without the function word `to`.
-        let Some(Found::Parts(p)) = dict.lookup_with_parts("English-to-German").unwrap() else {
+        let Some(Found::Parts(p)) = dict
+            .lookup_with_parts("English-to-German", LookupOptions::default())
+            .unwrap()
+        else {
             panic!("expected parts");
         };
         assert_eq!(p.query, "English-to-German");
@@ -739,17 +916,46 @@ mod tests {
         assert!(p.not_found.is_empty());
 
         // Repeated parts once; parts are lemmatized; unknown parts are listed.
-        let Some(Found::Parts(p)) = dict.lookup_with_parts("models-of-models-qux").unwrap() else {
+        let Some(Found::Parts(p)) = dict
+            .lookup_with_parts("models-of-models-qux", LookupOptions::default())
+            .unwrap()
+        else {
             panic!("expected parts");
         };
         assert_eq!(p.parts.len(), 1);
         assert_eq!(p.parts[0].lemma(), "model");
         assert_eq!(p.not_found, ["qux"]);
 
+        // Edge's PDF viewer: `English to-German`, the first hyphen lost at a line end.
+        // Once split, spaces separate parts too.
+        let Some(Found::Parts(p)) = dict
+            .lookup_with_parts("English to-German", LookupOptions::default())
+            .unwrap()
+        else {
+            panic!("expected parts");
+        };
+        let parts: Vec<&str> = p.parts.iter().map(|r| words(r)[0]).collect();
+        assert_eq!(parts, ["English", "German"]);
+        assert!(p.not_found.is_empty());
+        // Without a hyphen a phrase is never split.
+        assert_eq!(
+            dict.lookup_with_parts("English to German", LookupOptions::default())
+                .unwrap(),
+            None
+        );
+
         // No part found: nothing.
-        assert_eq!(dict.lookup_with_parts("foo-to-bar").unwrap(), None);
+        assert_eq!(
+            dict.lookup_with_parts("foo-to-bar", LookupOptions::default())
+                .unwrap(),
+            None
+        );
         // Only function words: nothing.
-        assert_eq!(dict.lookup_with_parts("to-the").unwrap(), None);
+        assert_eq!(
+            dict.lookup_with_parts("to-the", LookupOptions::default())
+                .unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -757,8 +963,8 @@ mod tests {
         use lextrail_core::text::{LINE_END_HYPHEN, resolve_line_end_hyphens};
         let dir = tempfile::tempdir().unwrap();
         let dict = fixture(dir.path());
-        // The desktop's check: whole-word lookup only.
-        let is_word = |w: &str| dict.lookup(w).unwrap().is_some();
+        // The desktop's check: whole words and the full headword list, never parts.
+        let is_word = |w: &str| dict.is_word(w).unwrap();
         let m = LINE_END_HYPHEN;
         // A hyphenation break is joined...
         assert_eq!(
@@ -771,9 +977,40 @@ mod tests {
         let kept = format!("self{m}attention");
         assert_eq!(resolve_line_end_hyphens(&kept, is_word), kept);
         assert!(matches!(
-            dict.lookup_with_parts("self-attention").unwrap(),
+            dict.lookup_with_parts("self-attention", LookupOptions::default())
+                .unwrap(),
             Some(Found::Parts(_))
         ));
+        // A word only in the full ECDICT's headword list (D044 supplement).
+        assert_eq!(
+            resolve_line_end_hyphens(&format!("and convolu{m}tional layers"), is_word),
+            "and convolutional layers"
+        );
+    }
+
+    #[test]
+    fn words_for_joining_include_the_full_headword_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let dict = fixture(dir.path());
+        assert!(dict.is_word("computation").unwrap());
+        assert!(dict.is_word("launched").unwrap());
+        assert!(dict.is_word("Convolutional").unwrap());
+        assert!(dict.is_word("Salakhutdinov").unwrap());
+        // Suffix rules on the headword list too.
+        assert!(dict.is_word("hyperparameters").unwrap());
+        // Not words: fragments, compounds split into parts, non-letters.
+        for not in [
+            "convolu",
+            "tional",
+            "self-attention",
+            "selfattention",
+            "2014",
+            "",
+        ] {
+            assert!(!dict.is_word(not).unwrap(), "{not}");
+        }
+        // Only for joining: lookups do not see the headword list.
+        assert_eq!(dict.lookup("convolutional").unwrap(), None);
     }
 
     #[test]
@@ -787,6 +1024,24 @@ mod tests {
         assert_eq!(classify("gave up."), english(LookupKind::Phrase));
         assert_eq!(classify("We give up."), english(LookupKind::Sentence));
         assert_eq!(classify("注意力"), Ok(Classification::NotEnglish));
+    }
+
+    #[test]
+    fn base_form_query_uses_the_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let dict = fixture(dir.path());
+        let plan: Vec<String> = dict
+            .conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {EXCHANGE_LEMMA_SQL}"))
+            .unwrap()
+            .query_map(["left"], |r| r.get(3))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            plan.iter().all(|step| !step.starts_with("SCAN")),
+            "{plan:?}"
+        );
     }
 
     #[test]

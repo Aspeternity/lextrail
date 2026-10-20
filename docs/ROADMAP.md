@@ -55,14 +55,16 @@
 - [x] 词典覆盖率检查：Attention Is All You Need 全文（第 9 节）（新增）
 - [x] 变形词条标出与原形的关系；带连字符的复合词拆开查，合并行末连字符只用整词查询（D044 补充）（新增）
 - [x] `lextrail-dict`：单词 / 短语 / 句子分类；不含英文字母时提示只支持英文（D045）
-- [ ] 悬浮窗显示词典结果：音标、词性、释义、考试标签
-- [ ] 行末连字符：词典接入后，取词结果先经 `text::resolve_line_end_hyphens` 用 `lextrail-dict` 判断（去掉连字符后查得到就合并，如 compu-tation），再规范化；用 R2-10 中 Chrome PDF 的 `transduc-tion`（应合并为 transduction）验证（新增，R1-7）
+- [x] 悬浮窗显示词典结果：音标、词性、释义、考试标签（D046；`m1-popup-dict.md`）
+- [x] 行末连字符：词典接入后，取词结果先经 `text::resolve_line_end_hyphens` 用 `lextrail-dict` 判断（去掉连字符后查得到就合并，如 compu-tation），再规范化；用 R2-10 中 Chrome PDF 的 `transduc-tion`（应合并为 transduction）验证（新增，R1-7）。完整版词头表（`extra_words`）；选中文字和句子都合并；Edge PDF 剪贴板丢掉了连字符，用猜测规则（D044 补充）
 - [ ] 快捷键设置界面与冲突提示；整理常用软件快捷键清单，确定默认快捷键（D014）。用户设成"只有 Alt 加字母"（没有 Ctrl / Shift）的快捷键时，提示这类组合会让 Windows Terminal 查词时选区消失（屏蔽键只能退回 `0xE8`，D014 补充）
 - [ ] 查询历史写入本地数据库（`lextrail-store` 的 `record_lookup` 已完成，剩桌面端接入：第一次查询时按需打开数据库（D040）；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词）
 - [ ] "不记录查询历史"开关（`ARCHITECTURE.md` 6.3）（新增）
 - [ ] 单元测试：词形还原、义项拆分、输入分类、剪贴板连按判定（前三项已完成，剩剪贴板连按判定，随"连按两次 Ctrl+C"一起做）
 
-- [ ] 重测性能预算（`lextrail-bench quick`，按 D036 口径），结果追加到 `docs/specs/m0-benchmark.md` 的"历次重测"；悬浮窗加入词典结果后（新增）
+- [x] 按 `m1-capture-manual-tests.md` 第五轮（R5）手动测试悬浮窗词典结果（新增）：R5-1 至 R5-18 通过；R5-P1（Edge PDF "English to-German" 拆分）、R5-P2（没有标记的变形词条排在原形后）已修复
+- [ ] 查明第一次显示的悬浮窗比之后高（debug 版 1.5 倍缩放下 592×446 与 592×403）的原因（新增，2026-10-20 截图时发现，与词典无关）
+- [x] 重测性能预算（`lextrail-bench quick`，按 D036 口径），结果追加到 `docs/specs/m0-benchmark.md` 的"历次重测"；悬浮窗加入词典结果后（新增）。`--lookup-text` 让 bench 在词典打开、显示词典结果的状态下测
 
 **完成标准**：在浏览器、PDF 阅读器、Word、VS Code、终端中都能用快捷键查词，词典结果在 100 ms 内显示。
 

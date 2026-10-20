@@ -2090,6 +2090,8 @@ dependencies = [
  "lextrail-capture",
  "lextrail-config",
  "lextrail-core",
+ "lextrail-dict",
+ "rusqlite",
  "serde",
  "serde_json",
  "tauri",
@@ -2097,6 +2099,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-single-instance",
+ "tempfile",
  "webview2-com",
  "windows",
 ]
@@ -2107,6 +2110,8 @@ version = "0.0.0"
 dependencies = [
  "lextrail-core",
  "rusqlite",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.21",
 ]
