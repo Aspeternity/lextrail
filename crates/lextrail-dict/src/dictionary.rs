@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
-use crate::{FORMAT_VERSION, FormKind, Sense, suffix};
+use crate::{Classification, FORMAT_VERSION, FormKind, Sense, suffix};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DictError {
@@ -250,6 +250,20 @@ impl Dictionary {
             parts,
             not_found,
         })))
+    }
+
+    /// Classifies selected text as word, phrase or sentence ([`crate::classify`]), asking
+    /// this dictionary whether a multi-word text is an entry as a whole.
+    pub fn classify(&self, text: &str) -> Result<Classification, DictError> {
+        let mut failed = None;
+        let class = crate::classify(text, |query| match self.lookup(query) {
+            Ok(found) => found.is_some(),
+            Err(e) => {
+                failed = Some(e);
+                false
+            }
+        });
+        failed.map_or(Ok(class), Err)
     }
 
     /// The best entry for `word`; see [`Dictionary::entries_for`].
@@ -760,6 +774,19 @@ mod tests {
             dict.lookup_with_parts("self-attention").unwrap(),
             Some(Found::Parts(_))
         ));
+    }
+
+    #[test]
+    fn classifies_with_this_dictionary() {
+        use lextrail_core::lookup::LookupKind;
+        let dir = tempfile::tempdir().unwrap();
+        let dict = fixture(dir.path());
+        let english = |k| Ok::<_, ()>(Classification::English(k));
+        let classify = |t: &str| dict.classify(t).map_err(|_| ());
+        assert_eq!(classify("launched"), english(LookupKind::Word));
+        assert_eq!(classify("gave up."), english(LookupKind::Phrase));
+        assert_eq!(classify("We give up."), english(LookupKind::Sentence));
+        assert_eq!(classify("注意力"), Ok(Classification::NotEnglish));
     }
 
     #[test]

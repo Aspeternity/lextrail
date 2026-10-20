@@ -8,6 +8,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+lextrail-core = { path = "../lextrail-core" }
 rusqlite = { version = "0.40", features = ["bundled"] }
 thiserror = "2"
 
@@ -15,5 +16,4 @@ thiserror = "2"
 workspace = true
 
 [dev-dependencies]
-lextrail-core = { path = "../lextrail-core" }
 tempfile = "3"

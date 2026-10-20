@@ -7,12 +7,14 @@
 //! in `docs/specs/m1-dict.md`. The parsing helpers here are shared with the builder so the
 //! rules exist only once.
 
+mod classify;
 mod dictionary;
 mod exchange;
 pub mod schema;
 mod senses;
 mod suffix;
 
+pub use classify::{Classification, MAX_PHRASE_WORDS, classify};
 pub use dictionary::{
     DictError, Dictionary, Entry, EntryRole, Found, FoundEntry, Inflection, InflectionSource,
     LookupResult, PartsResult, normalize_query,
