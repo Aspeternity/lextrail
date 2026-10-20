@@ -170,9 +170,11 @@ SQLite 文件 `data/build/lextrail-dict-core.db`，只读，查询时按需从�
 
 `exchange` 还原结果抽查都正确：best / better → good、worse → bad、is / was / were → be、has → have、could → can、found → find、left → leave、took → take、further → far。
 
-## 10. 待决定：收录规则放宽、行末连字符（2026-10-20 数据）
+## 10. 收录规则放宽、行末连字符（2026-10-20 数据与结论）
 
 ### 10.1 放宽单词收录规则
+
+**结论（项目负责人，2026-10-20）：不放宽，保持 B+。** 放宽多 9.8 MiB，第 9 节的缺口只补上 parallelization、overfitting，convolutional、optimizer、subword 仍然收不到；抽样中 36% 是错误、过时或价值很低的词条。专业词交给 D021 的完整词典数据包和 M2 的 AI。下面是做决定时的数据。
 
 假设在 B+ 之外，再收录"单个单词（不含空格）、有中文释义、释义不以领域标记开头"的词条（不要求音标和标记）：
 
@@ -196,6 +198,8 @@ SQLite 文件 `data/build/lextrail-dict-core.db`，只读，查询时按需从�
 | 正常 | 32（64%） | antidromy 反旋、ontologies 本体论、palichnology 古遗迹学、voltaite 绿钾铁矾、swell-mobsman 等，多为生僻专业词 |
 
 ### 10.2 行末连字符：精简版查不到的词无法合并
+
+**结论（项目负责人，2026-10-20）：采用方案 A。** 额外存"完整版有、精简版没有"的纯字母单词词头（约 2.2 MiB），只用于判断行末连字符是否合并，释义仍只查精简词典。判断时词头表也要走后缀规则（合并后是复数、过去式等变形的情况）。理由：B 会把 LSTM-based、COVID-related 这类技术文章里常见的真复合词误合并成不存在的词；A 出错时只是保留连字符，仍然可读。下面是做决定时的数据。
 
 `pdftotext -raw` 提取 1706.03762v7 全文，共 16 处行末断词（行尾"字母-"、下一行以字母开头）。正确答案按原文判断（BerkeleyParser 正文写作一个词）：
 
