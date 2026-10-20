@@ -21,7 +21,7 @@
   capture #2: captured | uia=captured 3.1ms (uia_focus); total 3.1ms
   ```
 
-  依次是：结果类型（`captured` / `no_selection` / `elevated` / `no_foreground_window` / `unsupported` / `timed_out` / `error`）、每一步的取词方式、结果和耗时、焦点元素来源（`uia_focus` = UIA 焦点元素，`hwnd_focus` / `hwnd_caret` = `GetGUIThreadInfo` 的焦点 / 光标窗口，`foreground_window` = 前台窗口），最后是总耗时。前置检查直接决定结果时显示为 `precheck=elevated; total 0.0ms`。另外还有 `request: ...`（悬浮窗显示与焦点）和 `popup: ...`（窗口生命周期）两类日志。
+  依次是：结果类型（`captured` / `no_selection` / `elevated` / `no_foreground_window` / `unsupported` / `timed_out` / `error`）、每一步的取词方式、结果和耗时、焦点元素来源（`uia_focus` = UIA 焦点元素，`hwnd_focus` / `hwnd_caret` = `GetGUIThreadInfo` 的焦点 / 光标窗口，`foreground_window` = 前台窗口），最后是总耗时。前置检查直接决定结果时显示为 `precheck=elevated; total 0.0ms`。另外还有 `request: ...`（悬浮窗显示与焦点）和 `popup: ...`（窗口生命周期）两类日志。`request: ...` 默认只打印内容的种类（如 `SetContent(Selection{..})`、`Unavailable(no_selection)`），不打印取到的文字、句子和词典结果（D032）；需要核对取到的文字和句子时，设 `LEXTRAIL_DEBUG_LOG_CONTENT=1`（只在 debug 构建中有效）打印完整内容。
 - **release 版**（与发布一致，测性能、看最终效果用这个；没有控制台日志）：
 
   ```bash

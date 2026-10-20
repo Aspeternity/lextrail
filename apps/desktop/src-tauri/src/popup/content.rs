@@ -96,6 +96,21 @@ impl Content {
     }
 }
 
+impl Content {
+    /// The kind of content without the captured text, for logs (D032): `Selection{..}`,
+    /// `Unavailable(no_selection)`.
+    pub fn kind(&self) -> String {
+        match self {
+            Self::Empty => "Empty".into(),
+            Self::Loading => "Loading".into(),
+            Self::ReleaseKeys => "ReleaseKeys".into(),
+            Self::Selection { .. } => "Selection{..}".into(),
+            Self::Unavailable { reason } => format!("Unavailable({reason})"),
+            Self::Error { .. } => "Error{..}".into(),
+        }
+    }
+}
+
 fn reason(u: Unavailable) -> &'static str {
     match u {
         Unavailable::NoSelection => "no_selection",

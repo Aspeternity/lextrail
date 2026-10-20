@@ -359,15 +359,31 @@ fn dispatch_request<R: Runtime>(app: &AppHandle<R>, event: request::Event) {
         }
     }
     #[cfg(debug_assertions)]
-    let label = format!("{event:?}");
+    let label = request::describe_event(&event, debug_log_content());
     let actions = lock(&state.request).handle(event);
     #[cfg(debug_assertions)]
-    eprintln!("request: {label} -> {actions:?}");
+    {
+        let full = debug_log_content();
+        let actions: Vec<_> = actions
+            .iter()
+            .map(|a| request::describe_action(a, full))
+            .collect();
+        eprintln!("request: {label} -> [{}]", actions.join(", "));
+    }
     for action in actions {
         if let Err(e) = perform_request(app, &action) {
-            eprintln!("request action {action:?} failed: {e}");
+            let action = request::describe_action(&action, false);
+            eprintln!("request action {action} failed: {e}");
         }
     }
+}
+
+/// Debug builds only: `LEXTRAIL_DEBUG_LOG_CONTENT=1` logs the captured text, sentence and
+/// dictionary result; by default the log shows only the kind of content (D032).
+#[cfg(debug_assertions)]
+fn debug_log_content() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var_os("LEXTRAIL_DEBUG_LOG_CONTENT").is_some_and(|v| v == "1"))
 }
 
 fn perform_request<R: Runtime>(app: &AppHandle<R>, action: &request::Action) -> tauri::Result<()> {

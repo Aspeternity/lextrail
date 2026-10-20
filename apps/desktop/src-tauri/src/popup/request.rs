@@ -79,6 +79,26 @@ pub enum Action {
     },
 }
 
+/// An event for the debug log; the captured content only when `full` (otherwise its kind,
+/// see [`Content::kind`]).
+#[cfg(any(debug_assertions, test))]
+pub fn describe_event(event: &Event, full: bool) -> String {
+    match event {
+        Event::Captured { id, content } if !full => {
+            format!("Captured {{ id: {id}, content: {} }}", content.kind())
+        }
+        event => format!("{event:?}"),
+    }
+}
+
+/// An action for logs; the content only when `full`, as in [`describe_event`].
+pub fn describe_action(action: &Action, full: bool) -> String {
+    match action {
+        Action::SetContent(content) if !full => format!("SetContent({})", content.kind()),
+        action => format!("{action:?}"),
+    }
+}
+
 /// A request whose capture is still running.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Capturing {
@@ -548,5 +568,56 @@ mod tests {
             r.handle(Event::ForegroundChanged),
             [A::WatchForeground(false), A::Hide]
         );
+    }
+
+    fn selection() -> Content {
+        Content::Selection {
+            text: "secret word".into(),
+            sentence: Some("A secret word here.".into()),
+            source_app: Some("notepad.exe".into()),
+            lookup: None,
+        }
+    }
+
+    #[test]
+    fn logs_show_only_the_kind_of_content_by_default() {
+        let event = Event::Captured {
+            id: 3,
+            content: selection(),
+        };
+        assert_eq!(
+            describe_event(&event, false),
+            "Captured { id: 3, content: Selection{..} }"
+        );
+        assert_eq!(
+            describe_action(&A::SetContent(selection()), false),
+            "SetContent(Selection{..})"
+        );
+        assert_eq!(
+            describe_action(&A::SetContent(result()), false),
+            "SetContent(Unavailable(no_selection))"
+        );
+        let error = Content::Error {
+            message: "boom".into(),
+        };
+        assert_eq!(
+            describe_action(&A::SetContent(error), false),
+            "SetContent(Error{..})"
+        );
+        assert_eq!(describe_action(&A::Hide, false), "Hide");
+        assert_eq!(
+            describe_event(&Event::Started { id: 1 }, false),
+            "Started { id: 1 }"
+        );
+    }
+
+    #[test]
+    fn logs_show_the_full_content_when_asked() {
+        let event = Event::Captured {
+            id: 3,
+            content: selection(),
+        };
+        assert!(describe_event(&event, true).contains("secret word"));
+        assert!(describe_action(&A::SetContent(selection()), true).contains("A secret word here."));
     }
 }
