@@ -142,6 +142,13 @@ pub struct LookupOptions {
 /// memory mapping (`mmap_size` 0): mapped pages would count towards the app's memory.
 const CACHE_KIB: i64 = 1024;
 
+/// Base forms of a form with their frequency. The join compares without case so it can
+/// use the `entries_word` index; a plain `=` scans every entry (about 30 ms).
+const EXCHANGE_LEMMA_SQL: &str = "SELECT f.lemma, f.kind, e.frq, e.bnc FROM forms f
+     LEFT JOIN entries e ON e.word = f.lemma COLLATE NOCASE
+     WHERE f.form = ?1 COLLATE NOCASE
+     ORDER BY f.lemma, f.kind";
+
 /// Parts of a compound that get no entry of their own (`English-to-German`).
 const FUNCTION_WORDS: &[&str] = &[
     "a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "nor", "of", "on",
@@ -398,12 +405,7 @@ impl Dictionary {
     /// Base form from the `forms` table. Several lemmas (e.g. `found` -> find / found):
     /// the more frequent one.
     fn exchange_lemma(&self, form: &str) -> Result<Option<Inflection>, DictError> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT f.lemma, f.kind, e.frq, e.bnc FROM forms f
-             LEFT JOIN entries e ON e.word = f.lemma
-             WHERE f.form = ?1 COLLATE NOCASE
-             ORDER BY f.lemma, f.kind",
-        )?;
+        let mut stmt = self.conn.prepare_cached(EXCHANGE_LEMMA_SQL)?;
         let rows = stmt
             .query_map([form], |r| {
                 Ok((
@@ -922,6 +924,24 @@ mod tests {
         assert_eq!(classify("gave up."), english(LookupKind::Phrase));
         assert_eq!(classify("We give up."), english(LookupKind::Sentence));
         assert_eq!(classify("注意力"), Ok(Classification::NotEnglish));
+    }
+
+    #[test]
+    fn base_form_query_uses_the_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let dict = fixture(dir.path());
+        let plan: Vec<String> = dict
+            .conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {EXCHANGE_LEMMA_SQL}"))
+            .unwrap()
+            .query_map(["left"], |r| r.get(3))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            plan.iter().all(|step| !step.starts_with("SCAN")),
+            "{plan:?}"
+        );
     }
 
     #[test]

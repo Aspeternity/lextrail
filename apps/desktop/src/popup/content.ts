@@ -3,9 +3,51 @@ export type Content =
   | { kind: 'empty' }
   | { kind: 'loading' }
   | { kind: 'release_keys' }
-  | { kind: 'selection'; text: string; sentence: string | null; source_app: string | null }
+  | {
+      kind: 'selection';
+      text: string;
+      sentence: string | null;
+      source_app: string | null;
+      /** `null` when the dictionary file is missing. */
+      lookup: LookupView | null;
+    }
   | { kind: 'unavailable'; reason: UnavailableReason }
   | { kind: 'error'; message: string };
+
+// Mirrors `LookupView` in crates/lextrail-dict/src/view.rs.
+export type LookupView =
+  | { kind: 'entries'; note: string | null; entries: EntryView[] }
+  | { kind: 'parts'; parts: PartView[]; not_found: string[] }
+  | { kind: 'not_found' }
+  | { kind: 'sentence' }
+  | { kind: 'not_english' };
+
+export interface EntryView {
+  word: string;
+  relation: string | null;
+  phonetic: string | null;
+  labels: string[];
+  collins: number;
+  general: SenseLine[];
+  domain: SenseLine[];
+  /** Domain senses start unfolded (the entry has no other senses). */
+  domain_open: boolean;
+  /** General lines shown before "更多"; `null` for all. */
+  max_lines: number | null;
+}
+
+export interface SenseLine {
+  pos: string | null;
+  domain: string | null;
+  text: string;
+}
+
+export interface PartView {
+  word: string;
+  relation: string | null;
+  phonetic: string | null;
+  line: SenseLine | null;
+}
 
 export type UnavailableReason =
   'no_selection' | 'elevated' | 'no_foreground_window' | 'unsupported' | 'timed_out' | 'keys_held';
