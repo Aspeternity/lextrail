@@ -175,17 +175,18 @@
 
 | # | 对应 | 步骤 | 预期 | 结果 |
 |---|---|---|---|---|
-| R4-1 | R3-P1、5.1 | **[release]** Windows Terminal 中用鼠标选中一个单词 → 快捷键，重复 3 次；再选跨行文字 1 次 | 取到单词（日志 `uia=captured`，没有 `clipboard=`）；查词后 Windows Terminal 里的选区高亮**还在** | |
-| R4-2 | R2-1 | **[release]** VS Code Markdown 预览中拖选一个词 → 快捷键 → 看到结果后按 Esc → 按 ↓，重复 3 次；再在编辑器和集成终端中各做 1 次 | 没有"文件(F)"被框住，按 ↓ 不弹出菜单 | |
-| R4-3 | R2-2 | Word、记事本、Edge 中各查一次词后按 Esc | Word 不出现 KeyTips，记事本、Edge 不出现菜单栏激活 | |
-| R4-4 | R3-P3、P1 | 退出 LexTrail 后重新启动，**启动后的第一次查词在 VS Code 编辑器里做**（选中一个单词）→ 看到结果后按 Esc → 按 ↓ | 取到单词；菜单栏没有被激活。日志 `start +` 在 20 ms 以内；`keys=` 与之后几次相近（约 100–250 ms，取决于松手快慢），不再是 10 ms 左右 | |
+| R4-1 | R3-P1、5.1 | **[release]** Windows Terminal 中用鼠标选中一个单词 → 快捷键，重复 3 次；再选跨行文字 1 次 | 取到单词（日志 `uia=captured`，没有 `clipboard=`）；查词后 Windows Terminal 里的选区高亮**还在** | ✅（项目负责人，2026-10-20）debug 版 3 次（`uia=captured`，没有 `clipboard=`）；release 版 3 次 + 跨行（取到 "hello lextrail world"）；查词后选区高亮都还在 |
+| R4-2 | R2-1 | **[release]** VS Code Markdown 预览中拖选一个词 → 快捷键 → 看到结果后按 Esc → 按 ↓，重复 3 次；再在编辑器和集成终端中各做 1 次 | 没有"文件(F)"被框住，按 ↓ 不弹出菜单 | ✅（release）VS Code 预览 3 次、编辑器、集成终端，都没有框住"文件(F)"，按 ↓ 不弹出菜单 |
+| R4-3 | R2-2 | Word、记事本、Edge 中各查一次词后按 Esc | Word 不出现 KeyTips，记事本、Edge 不出现菜单栏激活 | ✅ Word（每次都看，没有 KeyTips）、记事本、Edge 网页查词后按 ↓ 都没有弹出菜单 |
+| R4-4 | R3-P3、P1 | 退出 LexTrail 后重新启动，**启动后的第一次查词在 VS Code 编辑器里做**（选中一个单词）→ 看到结果后按 Esc → 按 ↓ | 取到单词；菜单栏没有被激活。日志 `start +` 在 20 ms 以内；`keys=` 与之后几次相近（约 100–250 ms，取决于松手快慢），不再是 10 ms 左右 | ✅ VS Code 首次查词取到 jumps，`start +6.5ms`，`keys=156.7ms`，菜单栏没有被激活 |
 | R4-5 | R3-P3 | 再退出、重新启动，第一次查词在 Edge PDF 里做 | 同 R4-4：取到单词；`keys=` 与之后几次相近 | ✅（AI 模拟按键，2026-10-20，debug 版）`popup-e2e.ps1 -Pdf -HoldMs 200 -Lookups 3`，启动后第 1 次：`start +19.3ms; uia=unsupported 53.1ms x2 [chromium_pdf]; clipboard=captured 170.6ms keys=158.0ms`；第 2、3 次 `keys=196.7ms`、`198.2ms`。三次都取到 launch，悬浮窗获得焦点，截图核对 |
-| R4-6 | R3-P2、P4 | Edge PDF 中选中单词，按快捷键后**按住 Ctrl+Alt 约 2 秒**再松开；再做一次按住超过 3 秒 | 约 2 秒：按住约 1 秒后显示"松开快捷键后取词…"，松手后显示单词；超过 3 秒：显示"请松开快捷键后再试"（不再是"取词超时"），剪贴板保持 | |
-| R4-7 | R3-P4 | **[release]** Edge PDF、VS Code 编辑器中正常快速按一下快捷键，各 3 次 | 直接显示结果，不再先闪"正在取词…" | |
-| R4-8 | D014 补充 | 在记事本里**快速连按快捷键 20 次**（每次看到悬浮窗就按 Esc），然后在记事本里打几个字母 | 打出来的是字母（Ctrl 没有卡住，没有触发 Ctrl+字母的快捷键）；日志中如有 `released first`，记下次数 | |
+| R4-6 | R3-P2、P4 | Edge PDF 中选中单词，按快捷键后**按住 Ctrl+Alt 约 2 秒**再松开；再做一次按住超过 3 秒 | 约 2 秒：按住约 1 秒后显示"松开快捷键后取词…"，松手后显示单词；超过 3 秒：显示"请松开快捷键后再试"（不再是"取词超时"），剪贴板保持 | ✅ Edge PDF，debug、release 一样：按住约 2 秒 `keys=1679.2ms`，松手后取到单词；按住超过 3 秒 `keys_held 3003.1ms`，显示"请松开快捷键后再试"。（VS Code 编辑器中按住超过 3 秒显示"没有选中文字"，见 R4-P2） |
+| R4-7 | R3-P4 | **[release]** Edge PDF、VS Code 编辑器中正常快速按一下快捷键，各 3 次 | 直接显示结果，不再先闪"正在取词…" | ✅（release）Edge PDF、VS Code 编辑器各 3 次，都没有闪"正在取词…" |
+| R4-8 | D014 补充 | 在记事本里**快速连按快捷键 20 次**（每次看到悬浮窗就按 Esc），然后在记事本里打几个字母 | 打出来的是字母（Ctrl 没有卡住，没有触发 Ctrl+字母的快捷键）；日志中如有 `released first`，记下次数 | ✅ 记事本连按 28 次（#22–#49）全部取到，日志中没有 `was released before`，之后打字正常（abcdefg） |
 | R4-9 | R3-7 | VS Code 集成终端中运行 `ping -t 127.0.0.1`，什么都不选，按快捷键 | 显示"没有选中文字"；ping 继续运行，没有被中断 | ✅（AI 模拟按键，2026-10-20，debug 版，单独的 VS Code 测试配置）悬浮窗显示"没有选中文字"（截图 + UIA 读回）；`uia=no_selection 54.9ms x2; clipboard=no_selection 511.2ms keys=101.2ms [clipboard_unchanged]`；前后截图对比 ping 持续输出，没有统计行或 `^C`，ping 进程仍在；剪贴板保持 |
 | R4-10 | 回归 | Edge 网页（1.1）、Word（3.1）、conhost 选词（R3-8）各查一次 | 与之前相同 | ✅（AI 模拟按键，2026-10-20，debug 版，真实鼠标双击选词）Edge 网页：launch + 句子，`uia=captured 56.3ms x2`；Word：arrived + 句子，`uia=captured 21.2ms`，查词后选区保留、没有 KeyTips；conhost：address，`clipboard=captured 155.7ms keys=138.0ms [ctrl_insert]`，命令行没有多余字符，剪贴板保持。三项都截图核对，日志里没有 `released first` |
-| R4-11 | R4-P1 | 悬浮窗挂起后查词：每次查完按 Esc，**等 6 秒以上**（悬浮窗挂起，debug 日志 `SuspendFinished { suspended: true }`）再查下一次；Word、记事本各 5 次 | 每次都显示结果并获得焦点；之后快捷键、托盘仍有响应（R4-P1 中第 3 次查词后程序卡死） | |
+| R4-11 | R4-P1 | 悬浮窗挂起后查词：每次查完按 Esc，**等 6 秒以上**（悬浮窗挂起，debug 日志 `SuspendFinished { suspended: true }`）再查下一次；Word、记事本各 5 次 | 每次都显示结果并获得焦点；之后快捷键、托盘仍有响应（R4-P1 中第 3 次查词后程序卡死） | ✅ Word 5 次、记事本 5 次，每次查词前都已 `SuspendFinished { suspended: true }`，全部正常显示并获得焦点；Word 第 1 次正是 R4-P1 卡死时的顺序（`Captured -> []` 在 `WindowReady` 之前），这次正常；查完托盘仍有响应 |
+| R4-12 | R4-P2 | VS Code 编辑器选中一个单词 → 快捷键后**按住 Ctrl+Alt 超过 3 秒**；再在 Chrome 刚打开 PDF 时（第一轮出现过 `uia=no_selection`）选词，同样按住超过 3 秒 | 显示"请松开快捷键后再试"（日志 `uia=no_selection ...; clipboard=keys_held ...`，结果 `keys_held`），不再是"没有选中文字"；剪贴板保持 | |
 
 AI 用模拟按键做的 R4-P1 回归检查（2026-10-20，debug 版，修复后）：`popup-e2e.ps1 -Lookups 3 -PauseMs 7000 -ResumeDelayMs 300`（挂起后恢复，并用 `LEXTRAIL_DEBUG_RESUME_DELAY_MS` 让 Resume 变慢，使取词结果先于 `WindowReady` 到达）——**修复前第 2 次查词卡死**（`responds=False`，日志停在 `WindowReady -> [SetContent, ShowInactive, Activate]`，与 R4-P1 相同），修复后 3 次全部通过；另外 `-PauseMs 7000`（网页）、`-Pdf -HoldMs 200 -PauseMs 7000`、默认连续 3 次，以及 Word 中挂起后连查 3 次，全部通过，悬浮窗内容用 UIA 读回、截图核对。
 
@@ -229,6 +230,7 @@ AI 已用模拟按键做过的自动检查（2026-10-17，debug 版）：`popup-
 | 编号 | 问题 | 处理 |
 |---|---|---|
 | R4-P1（严重） | debug 版 `b4ba367`：悬浮窗挂起后在 Word 中查词，悬浮窗没有出现，之后快捷键、托盘都无响应（其他程序正常）。日志停在 `request: WindowReady -> [SetContent(...), ShowInactive, Activate]`。原因：R3-P3 改为先启动取词后，恢复路径上第一次出现"取词结果先于 `WindowReady`"的顺序（UIA 7.9 ms 比 Resume 快）。`webview::resume_then` 在 `window.with_webview` 的回调里同步调用 `then()`，于是 `WindowReady` 返回的动作都在回调里执行；Tauri 在主线程上调用 `with_webview` 时，回调执行期间一直持有该 webview 的 `window_id` 锁，而第一个动作 `SetContent`（`emit_to` → `eval_script`）要再拿同一把锁，主线程自己等自己。用临时日志确认卡在 `SetContent` 内部；**内存转储确认**（WinDbg cdb，用同一提交重新构建的 pdb）：主线程栈为 热键回调 → `lookup` → `resume_then` → `with_webview`（`tauri-runtime-wry` 2.12.2 lib.rs:1553，持有锁）→ `send_user_message` 同步执行回调 → `then()` → `emit_to` → `eval_script`（lib.rs:1742）在 `Mutex::lock` 等待；两处 `window_id` 指向同一个 `Arc`（`0x252705485a0`），锁状态为 2（已持有且有等待者），只涉及主线程 | 已修复：`with_webview` 回调里不再调用任何应用代码，`resume_then` 的 `then` 和 `suspend` 的完成通知都改到新线程上、回调返回之后执行（`popup/webview.rs` 模块注释写明了这条规则）。新增 debug 开关 `LEXTRAIL_DEBUG_RESUME_DELAY_MS` 和 `popup-e2e.ps1 -PauseMs / -ResumeDelayMs`（每次查词后检查 UI 线程是否响应），修复前稳定复现、修复后通过。待 R4-11 及重做的 R4 复测 |
+| R4-P2（中） | VS Code 编辑器选中单词（状态栏"已选择5"），按快捷键后按住 Ctrl+Alt 超过 3 秒：显示"没有选中文字"，应为"请松开快捷键后再试"（Edge PDF 中正确）。原因：`pipeline.rs` 的优先级 `NoSelection` > `KeysHeld`。VS Code 等 Chromium 窗口中 UIA 的 `no_selection` 不可靠、需要剪贴板确认（D043），确认步骤因按着键得到 `KeysHeld`，没有确认成功，最后却按优先级采用了未经确认的 `no_selection`。R3 中 #36（`uia=no_selection; clipboard=timed_out [modifiers_held]` → `no_selection`）是同一个问题 | 已修复：确认步骤没能完成检查（`KeysHeld`、`TimedOut` 或出错）时，它的结果压过所确认的那个 `NoSelection`；确认步骤主动不运行（`Unsupported`，如剪贴板过大）时仍报"没有选中文字"（D043 补充）。新增单元测试（修复前失败）。待 R4-12 复测 |
 
 记录，暂不处理：
 - Word 中什么都不选时偶发一次 `uia=timed_out 193.7ms`，随后剪贴板兜底给出 `no_selection [clipboard_unchanged]`，共 598 ms；之后重测 3 次都是 3.6–5.5 ms，未复现。
