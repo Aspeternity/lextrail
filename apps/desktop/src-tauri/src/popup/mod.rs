@@ -77,9 +77,10 @@ struct PopupState {
     dictionary: DictionaryService,
     /// Opened by the first lookup to record.
     history: HistoryService,
-    /// The double Ctrl+C listener, when `hotkeys.double_ctrl_c` is on (D012).
+    /// The double Ctrl+C listener, while `hotkeys.double_ctrl_c` is on (D012). Started
+    /// and stopped from the settings window without a restart.
     #[cfg(windows)]
-    double_copy: std::sync::OnceLock<lextrail_capture::DoubleCopyListener>,
+    double_copy: Mutex<Option<lextrail_capture::DoubleCopyListener>>,
 }
 
 /// What started a lookup.
@@ -91,8 +92,8 @@ pub enum Trigger {
 }
 
 /// Registers the popup state. Call once during setup. `record_history`: the
-/// `history.record` setting; `double_ctrl_c`: `hotkeys.double_ctrl_c` (read once, like
-/// every setting: a change takes effect at the next start).
+/// `history.record` setting; `double_ctrl_c`: `hotkeys.double_ctrl_c`. Both can change
+/// later from the settings window ([`set_double_copy`], [`set_record_history`]).
 pub fn init<R: Runtime>(
     app: &AppHandle<R>,
     mode: PopupMode,
@@ -119,10 +120,10 @@ pub fn init<R: Runtime>(
                 .map(|dir| dir.join(lextrail_dict::CORE_DICT_FILE_NAME)),
         ),
         #[cfg(windows)]
-        double_copy: std::sync::OnceLock::new(),
+        double_copy: Mutex::new(None),
     });
-    if double_ctrl_c {
-        start_double_copy(app);
+    if double_ctrl_c && let Err(e) = start_double_copy(app) {
+        eprintln!("double Ctrl+C is off: the clipboard listener failed ({e})");
     }
     foreground::init({
         let app = app.clone();
@@ -135,10 +136,39 @@ pub fn init<R: Runtime>(
     });
 }
 
-/// Starts the double Ctrl+C listener; each double copy starts a lookup on the main
-/// thread, like a hotkey press.
+/// Turns the double Ctrl+C listener on or off right away (settings window). Turning it on
+/// fails when the clipboard listener cannot start; the reason is for the user.
+pub fn set_double_copy<R: Runtime>(app: &AppHandle<R>, on: bool) -> Result<(), String> {
+    if on {
+        return start_double_copy(app);
+    }
+    #[cfg(windows)]
+    {
+        // Dropped outside the lock: dropping stops the listener thread.
+        let listener = app.state::<PopupState>().double_copy.lock().unwrap().take();
+        drop(listener);
+    }
+    Ok(())
+}
+
+/// Whether lookups are recorded in the history, from the next lookup on.
+pub fn set_record_history<R: Runtime>(app: &AppHandle<R>, on: bool) {
+    app.state::<PopupState>().history.set_enabled(on);
+}
+
+/// Starts the double Ctrl+C listener (if it is not running); each double copy starts a
+/// lookup on the main thread, like a hotkey press.
 #[cfg(windows)]
-fn start_double_copy<R: Runtime>(app: &AppHandle<R>) {
+fn start_double_copy<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    if app
+        .state::<PopupState>()
+        .double_copy
+        .lock()
+        .unwrap()
+        .is_some()
+    {
+        return Ok(());
+    }
     let handle = app.clone();
     let started = lextrail_capture::DoubleCopyListener::start(move |double| {
         let pressed = Instant::now();
@@ -166,22 +196,44 @@ fn start_double_copy<R: Runtime>(app: &AppHandle<R>) {
             });
         });
     });
-    match started {
-        Ok(listener) => {
-            let _ = app.state::<PopupState>().double_copy.set(listener);
-        }
-        Err(e) => eprintln!("double Ctrl+C is off: the clipboard listener failed ({e})"),
-    }
+    let listener = started.map_err(|e| e.to_string())?;
+    let replaced = app
+        .state::<PopupState>()
+        .double_copy
+        .lock()
+        .unwrap()
+        .replace(listener);
+    // Two starts raced (settings commands run one at a time, so not expected).
+    drop(replaced);
+    Ok(())
 }
 
 #[cfg(not(windows))]
-fn start_double_copy<R: Runtime>(_app: &AppHandle<R>) {}
+fn start_double_copy<R: Runtime>(_app: &AppHandle<R>) -> Result<(), String> {
+    Err("not supported on this platform".to_owned())
+}
+
+fn double_copy_on(state: &PopupState) -> bool {
+    #[cfg(windows)]
+    return state.double_copy.lock().unwrap().is_some();
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        false
+    }
+}
 
 /// Tells the double Ctrl+C listener that hotkey capture `id` starts or ends, so that
 /// its clipboard fallback's updates are not taken for a double copy.
 fn own_copy<R: Runtime>(app: &AppHandle<R>, id: u64, started: bool) {
     #[cfg(windows)]
-    if let Some(listener) = app.state::<PopupState>().double_copy.get() {
+    if let Some(listener) = app
+        .state::<PopupState>()
+        .double_copy
+        .lock()
+        .unwrap()
+        .as_ref()
+    {
         if started {
             listener.own_copy_started(id);
         } else {
@@ -332,7 +384,7 @@ pub fn lookup<R: Runtime>(
         } else {
             Content::from_capture(result, false, None)
         };
-        let content = content.with_double_copy_on(state.double_copy.get().is_some());
+        let content = content.with_double_copy_on(double_copy_on(&state));
         #[cfg(debug_assertions)]
         let content = content.with_source_app(source_app);
         // One line per capture, without the captured text: method, result, time and

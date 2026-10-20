@@ -1,7 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "popup",
-  "description": "Lookup popup: receives content events from Rust. App commands (hide_popup, popup_ready, popup_measured, popup_resize) need no permission.",
+  "description": "Lookup popup: receives content events from Rust and calls only its own commands.",
   "windows": ["popup"],
-  "permissions": ["core:event:allow-listen"]
+  "permissions": [
+    "core:event:allow-listen",
+    "allow-hide-popup",
+    "allow-popup-ready",
+    "allow-popup-measured",
+    "allow-popup-resize"
+  ]
 }

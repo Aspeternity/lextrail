@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-hotkey-recording"
+description = "Enables the hotkey_recording command without any pre-configured scope."
+commands.allow = ["hotkey_recording"]
+
+[[permission]]
+identifier = "deny-hotkey-recording"
+description = "Denies the hotkey_recording command without any pre-configured scope."
+commands.deny = ["hotkey_recording"]
