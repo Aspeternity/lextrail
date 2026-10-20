@@ -73,7 +73,7 @@
 | 不带修饰键的单个字母、数字、空格、回车、退格、Tab、方向键等 | "所有软件里都无法再输入 X" |
 | 只有 Shift 加字母或数字 | "所有软件里都无法再输入大写 X / 符号 !" |
 | 常用软件冲突清单（第七节）里的组合 | "在 Visual Studio 中是'工具箱'，在那里会失效"（列出清单里的软件和功能） |
-| 只有 Alt 加字母（没有 Ctrl / Shift） | "这类组合查词时会让 Windows Terminal 的选区消失"（D014 补充：屏蔽键只能退回 `0xE8`） |
+| 只有 Alt 的组合（没有 Ctrl / Shift，主键不限于字母） | "这类组合查词时会让 Windows Terminal 的选区消失"（D014 补充：只按着 Alt 时屏蔽键只能退回 `0xE8`，与主键无关） |
 
 - 规则和提示文字是一张表（`lextrail-config::hotkey` 里的数据，单元测试逐条覆盖），以后补充清单只改表。
 - 一个组合可能有几条提示，全部列出。
@@ -142,39 +142,44 @@
 
 ---
 
-## 七、常用软件快捷键清单（初稿）
+## 七、常用软件快捷键清单（2026-10-21 核对）
 
-用途：确定默认快捷键（D014），以及 3.2 的冲突提示表。**下表是初稿，按软件官方文档逐条核对后再定稿**（核对结果和来源写在本节，标"待核对"的条目未经确认前不进提示表）。只收集带 Ctrl+Alt、Shift+Alt、Alt、Ctrl+Shift 的全局或常用组合，单个 Ctrl+字母的常用快捷键由 3.2 第一行统一处理。
+用途：确定默认快捷键（D014），以及 3.2 的冲突提示表。**只有对照软件官方资料核对过的条目才进提示表**（`lextrail-config::hotkey` 的 `CONFLICTS`，单元测试检查写法）；只有第三方资料或没找到资料的条目列在 7.2，不进提示表。单个 Ctrl+字母的常用快捷键由 3.2 第一行统一处理。
 
-| 软件 | 组合 | 功能 | 状态 |
+### 7.1 已核对（进提示表）
+
+| 软件 | 组合 | 功能 | 来源 |
 |---|---|---|---|
-| Windows | Win+…、Ctrl+Alt+Del、Alt+Tab、Ctrl+Shift+Esc | 系统保留 | 已知 |
-| Windows 中文输入法 | Ctrl+Space、Shift+Space、Ctrl+. 、Ctrl+Shift（只有修饰键） | 中英切换、全半角、中英文标点、切换输入法 | 已知 |
-| Visual Studio | Ctrl+Alt+X、Ctrl+Alt+L | 工具箱、解决方案资源管理器 | 待核对 |
-| IntelliJ 系列 | Ctrl+Alt+L、O、S、V、C、M、F、P、B、T | 格式化、优化导入、设置、提取变量等 | 待核对 |
-| VS Code | Ctrl+Shift+X、P、Z；Shift+Alt+F、↑、↓；Ctrl+Alt+↑、↓ | 扩展、命令面板、重做、格式化、复制行、多光标 | 待核对 |
-| Word / Excel | Ctrl+Alt+1–3、M、F、D、V；Ctrl+Alt+F9 | 标题、批注、脚注、尾注、选择性粘贴、重新计算 | 待核对 |
-| 浏览器 | Alt+D、Alt+F、Ctrl+Shift+N、T、B、Delete、I、J | 地址栏、菜单、无痕窗口、恢复标签页、书签栏、清除数据、开发者工具、下载 | 待核对 |
-| Windows Terminal | Ctrl+Shift+T、W、C、V、Space；Alt+Shift+D | 标签页、复制粘贴、新建窗格 | 待核对 |
-| 微信 | Alt+A、Ctrl+Alt+W | 截图、显示窗口 | 待核对 |
-| QQ | Ctrl+Alt+A、Ctrl+Alt+Z | 截图、提取消息 | 待核对 |
-| 钉钉 / 企业微信 | Ctrl+Shift+A、Alt+Shift+A | 截图 | 待核对 |
-| Snipaste | F1、F3 | 截图、贴图 | 待核对 |
-| PowerToys | Alt+Space、Win+Shift+T、Win+Shift+C | PowerToys Run、文字提取、取色 | 待核对 |
-| NVIDIA / Xbox Game Bar | Alt+Z、Alt+F9、Alt+F10；Win+G | 叠加层、录制 | 待核对 |
-| Zoom / Teams / 腾讯会议 | Alt+A；Ctrl+Shift+M | 静音 | 待核对 |
-| Photoshop | Ctrl+Alt+Z、I、C | 后退一步、图像大小、画布大小 | 待核对 |
-| Adobe Acrobat / Reader | 待查 | 优先核对 | 待核对 |
-| 福昕 PDF 阅读器 | 待查 | 优先核对 | 待核对 |
-| SumatraPDF | 待查 | 优先核对 | 待核对 |
-| 网易云音乐 / QQ 音乐 | Ctrl+Alt+方向键、P 等全局快捷键 | 播放控制、显示歌词 | 待核对 |
-| GoldenDict | Ctrl+C 连按两次 | 弹出查词（和连按两次 Ctrl+C 同类） | 待核对 |
-| DeepL 桌面版 | Ctrl+C 连按两次 | 翻译选中文字（和我们的连按两次 Ctrl+C 冲突，设置说明里提一句） | 待核对 |
-| 有道词典 / 欧路词典 | 取词、划词快捷键 | 和 LexTrail 同类，可能抢同一个组合 | 待核对 |
+| Visual Studio | Ctrl+Alt+A、B、C、D、E、F、G、H、I、J、K、L、N、O、P、Q、R、S、T、U、X、Z | 命令窗口、断点、调用堆栈、反汇编、异常设置、F# Interactive、寄存器、线程、即时窗口、对象浏览器、调用层次结构、解决方案资源管理器、克隆查询、输出、附加到进程、快速监视、Web 浏览器、服务器资源管理器、文档大纲、模块、**工具箱（X）**、进程 | [Microsoft Learn：Visual Studio 键盘快捷方式](https://learn.microsoft.com/en-us/visualstudio/ide/default-keyboard-shortcuts-in-visual-studio) |
+| IntelliJ IDEA | Ctrl+Alt+A、B、F、I、L、M、N、P、R、S、T、V、Z；Alt+Shift+C、G、J；Alt+J | 接受右侧、转到实现、引入字段、自动缩进、格式化代码、提取方法、内联、引入参数、接受左侧、设置、包围、引入变量、回滚等 | [JetBrains：Windows 默认键位](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) |
+| Word | Ctrl+Alt+1、2、3、C、D、F、I、K、L、M、N、O、P、R、S、T、V、Z | 标题、复制 / 粘贴格式、尾注、脚注、打印预览、批注、各种视图、®、™ 等 | [Microsoft Support：Word 键盘快捷方式](https://support.microsoft.com/en-us/office/keyboard-shortcuts-in-word-95ef89dd-7142-4b50-afb2-f762f663ceb2) |
+| VS Code | Ctrl+Alt+↑ / ↓；Alt+Shift+F、A、I、0、方向键；Alt+Z；Ctrl+Shift+P、N、K、L、O、M、E、F、G、D、X、H、U、V、T；F8 | 多光标、格式化、块注释、复制行、选区、自动换行、各面板；F8 是"下一个问题" | [VS Code 键盘快捷方式（Windows，PDF）](https://code.visualstudio.com/shortcuts/keyboard-shortcuts-windows.pdf) |
+| Chrome / Edge | Alt+D、E、F；Ctrl+Shift+N、T、W、O、B、J、R、D | 地址栏、菜单、无痕窗口、恢复标签页、书签、开发者工具、强制刷新 | [Chrome 帮助：键盘快捷键](https://support.google.com/chrome/answer/157179) |
+| Windows Terminal | Ctrl+Alt+1–8、Ctrl+Alt+←；Alt+Shift+D、-、方向键；Alt+Enter | 切换标签页、焦点、拆分窗格、调整窗格、全屏 | [Microsoft Learn：Windows Terminal 操作](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/actions) |
+| 福昕 PDF 编辑器 | Ctrl+Alt+V、D（另有大量 Ctrl+Shift+字母） | 原位粘贴、复制页面 | [Foxit：PDF Editor Windows 键盘快捷键](https://resource-cms.foxit.com/foxit-pdf-editor-for-windows/keyboard-shortcuts) |
+| SumatraPDF | Ctrl+Shift+L、N、S；没有 Ctrl+Alt 组合 | 全屏、新窗口打开、保存批注 | [SumatraPDF：Keyboard shortcuts](https://www.sumatrapdfreader.org/docs/Keyboard-shortcuts) |
+| DeepL 桌面版 | 连按两次 Ctrl+C | 翻译选中文字（和连按两次 Ctrl+C 同时打开时会一起弹出） | [DeepL 支持：桌面应用快捷键](https://support.deepl.com/hc/en-us/articles/360020613059-Use-DeepL-shortcuts-for-desktop-apps) |
 
-**默认快捷键的初步判断**：Ctrl+Alt+X 目前只知道和 Visual Studio 的"工具箱"冲突（待核对），对其他常用软件没有发现冲突；另外在波兰语等键盘布局下 AltGr+X 用来输入字母（ź），中文、英文用户不受影响。核对完清单后给出结论，由项目负责人决定 D014 是否从 🟡 改为 ✅。
+福昕的 Ctrl+Shift+字母只记录在本节，不进提示表（编辑器专用功能多，清单太长）。
 
-**截图 OCR、输入翻译**（只给建议，不注册、不进界面）：核对完清单后从 Ctrl+Alt 加左手字母里挑两个没有冲突的（初步候选：Ctrl+Alt+Q、Ctrl+Alt+E；注意 AltGr+Q / E 在德语布局下是 @、€），写进本节，M5 做这两个功能时再定。
+### 7.2 未能核对（不进提示表）
+
+| 软件 | 情况 |
+|---|---|
+| Adobe Acrobat / Reader | 官方快捷键页面拒绝自动访问（HTTP 403）；第三方资料提到 Ctrl+Alt+F、Ctrl+Alt+S，未确认。**请项目负责人在本机 Acrobat 里看一眼**（帮助 → 键盘快捷键，或直接按 Ctrl+Alt+X 看有没有反应） |
+| 福昕 PDF 阅读器 | 只找到编辑器（7.1）和 Mac 版的官方页面；阅读器在"帮助 → 键盘映射"里能看到 |
+| GoldenDict | 第三方资料说默认是连按两次 Ctrl+C（Ctrl+C+C），没找到官方文档 |
+| 网易云音乐 | 第三方资料（CSDN）说默认全局快捷键 Ctrl+Alt+L 是"喜欢当前歌曲"，和 IntelliJ 的"格式化代码"冲突；未核对 |
+| QQ 音乐、微信、QQ、有道词典 | 没找到官方说明。微信截图 Alt+A、QQ 截图 Ctrl+Alt+A 是常见说法（D014 已据此排除）；有第三方资料说微信截图键可以改成 Ctrl+Alt+X（用户自定义，不是默认） |
+
+### 7.3 默认快捷键的结论（交项目负责人决定）
+
+- **建议保留 Ctrl+Alt+X，D014 由 🟡 改为 ✅。** 已核对的软件里，只有 Visual Studio 用它打开"工具箱"（窗体设计器用，写代码时很少用到）；IntelliJ、Word、VS Code、Chrome / Edge、Windows Terminal、福昕编辑器、SumatraPDF 都不用它。
+- Visual Studio 几乎占用了全部 Ctrl+Alt+字母，换成别的 Ctrl+Alt 组合也避不开它；而 IntelliJ 和 Word 合起来又占了 Ctrl+Alt 的大部分字母，左手区域剩下的只有 Q、W、E、X（还有 G、H、J、U、Y 在右手区域）。
+- 7.2 中 Acrobat、福昕阅读器、几个常用国产软件没能核对，请项目负责人在本机上确认 Ctrl+Alt+X 没有冲突后再定。
+- 另：在波兰语等键盘布局下 AltGr+X 用来输入字母（ź），中文、英文用户不受影响。
+
+**截图 OCR、输入翻译的建议**（不注册、不进界面，M5 做这两个功能时再定）：从左手区域剩下的 Q、W、E 里选，**截图 OCR：Ctrl+Alt+E**，**输入翻译：Ctrl+Alt+Q**（都只和 Visual Studio 冲突：异常设置、快速监视）。W 留作备选（有第三方说法称微信用 Ctrl+Alt+W，未核对）。注意德语布局下 AltGr+Q / E 是 @ / €。
 
 ---
 

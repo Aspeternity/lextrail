@@ -288,9 +288,9 @@ mod tests {
 
     #[test]
     fn recorded_key_is_checked() {
-        let checked = check_key("KeyQ", CTRL_ALT).unwrap();
-        assert_eq!(checked.hotkey.accelerator, "Ctrl+Alt+Q");
-        assert_eq!(checked.hotkey.display, "Ctrl + Alt + Q");
+        let checked = check_key("KeyY", CTRL_ALT).unwrap();
+        assert_eq!(checked.hotkey.accelerator, "Ctrl+Alt+Y");
+        assert_eq!(checked.hotkey.display, "Ctrl + Alt + Y");
         assert_eq!((checked.blocked, checked.warnings.len()), (None, 0));
 
         let ctrl = KeyPress {

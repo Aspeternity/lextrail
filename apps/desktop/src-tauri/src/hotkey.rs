@@ -462,9 +462,9 @@ mod tests {
         // one works.
         let mut reg = FakeRegistrar::default();
         let mut state = started(&mut reg);
-        state.apply(&mut reg, hk("F8"), false, ok_save);
-        assert_eq!(reg.calls, ["+Ctrl+Alt+X", "+F8", "-Ctrl+Alt+X"]);
-        assert_eq!(reg.registered, ["F8"]);
+        state.apply(&mut reg, hk("F9"), false, ok_save);
+        assert_eq!(reg.calls, ["+Ctrl+Alt+X", "+F9", "-Ctrl+Alt+X"]);
+        assert_eq!(reg.registered, ["F9"]);
     }
 
     #[test]
@@ -513,10 +513,10 @@ mod tests {
 
     #[test]
     fn register_failure_keeps_the_old_one() {
-        let mut reg = FakeRegistrar::taking(&["Ctrl+Alt+Q"]);
+        let mut reg = FakeRegistrar::taking(&["Ctrl+Alt+Y"]);
         let mut state = started(&mut reg);
         state.start_recording(&mut reg);
-        let applied = state.apply(&mut reg, hk("Ctrl+Alt+Q"), false, |_| panic!("not saved"));
+        let applied = state.apply(&mut reg, hk("Ctrl+Alt+Y"), false, |_| panic!("not saved"));
         assert_eq!(applied, Applied::RegisterFailed("占用".into()));
         assert_eq!(reg.registered, ["Ctrl+Alt+X"]);
         assert!(state.is_active() && state.error().is_none());
@@ -527,7 +527,7 @@ mod tests {
         let mut reg = FakeRegistrar::default();
         let mut state = started(&mut reg);
         state.start_recording(&mut reg);
-        let applied = state.apply(&mut reg, hk("F8"), false, |_| Err("只读".into()));
+        let applied = state.apply(&mut reg, hk("F9"), false, |_| Err("只读".into()));
         assert_eq!(applied, Applied::SaveFailed("只读".into()));
         assert_eq!(reg.registered, ["Ctrl+Alt+X"]);
         assert_eq!(state.configured(), Some(&hk("Ctrl+Alt+X")));
@@ -554,8 +554,8 @@ mod tests {
     #[test]
     fn restore_failure_after_register_failure_is_reported() {
         let (mut reg, mut state) = taken_while_recording();
-        reg.taken.push("F8".into());
-        let applied = state.apply(&mut reg, hk("F8"), false, |_| panic!("not saved"));
+        reg.taken.push("F9".into());
+        let applied = state.apply(&mut reg, hk("F9"), false, |_| panic!("not saved"));
         assert!(matches!(applied, Applied::RegisterFailed(_)));
         assert!(!state.is_active());
         assert_eq!(state.error(), Some("占用"));
@@ -564,7 +564,7 @@ mod tests {
     #[test]
     fn restore_failure_after_save_failure_is_reported() {
         let (mut reg, mut state) = taken_while_recording();
-        let applied = state.apply(&mut reg, hk("F8"), false, |_| Err("只读".into()));
+        let applied = state.apply(&mut reg, hk("F9"), false, |_| Err("只读".into()));
         assert!(matches!(applied, Applied::SaveFailed(_)));
         assert!(reg.registered.is_empty());
         assert!(!state.is_active());
@@ -579,11 +579,11 @@ mod tests {
         state.cancel_recording(&mut reg);
         assert!(!state.is_active());
         assert_eq!(
-            state.apply(&mut reg, hk("Ctrl+Shift+L"), false, ok_save),
+            state.apply(&mut reg, hk("Ctrl+Shift+F2"), false, ok_save),
             Applied::Changed
         );
         assert!(state.is_active() && state.error().is_none());
-        assert_eq!(reg.registered, ["Ctrl+Shift+L"]);
+        assert_eq!(reg.registered, ["Ctrl+Shift+F2"]);
     }
 
     #[test]
@@ -592,9 +592,9 @@ mod tests {
         let mut state = LookupHotkey::startup("nonsense", &mut reg);
         assert_eq!(state.configured(), None);
         assert_eq!(
-            state.apply(&mut reg, hk("Ctrl+Alt+Q"), false, ok_save),
+            state.apply(&mut reg, hk("Ctrl+Alt+Y"), false, ok_save),
             Applied::Changed
         );
-        assert_eq!(reg.registered, ["Ctrl+Alt+Q"]);
+        assert_eq!(reg.registered, ["Ctrl+Alt+Y"]);
     }
 }

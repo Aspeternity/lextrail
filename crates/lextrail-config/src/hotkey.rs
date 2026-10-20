@@ -355,35 +355,136 @@ const COMMON: [(Modifiers, &str, &str); 27] = {
     ]
 };
 
-/// A combination some well-known program uses (spec section 7). Only entries checked
-/// against the program's documentation belong here.
-struct Conflict {
-    modifiers: Modifiers,
-    key: &'static str,
-    program: &'static str,
-    function: &'static str,
-}
-
-const fn conflict(
-    modifiers: Modifiers,
-    key: &'static str,
-    program: &'static str,
-    function: &'static str,
-) -> Conflict {
-    Conflict {
-        modifiers,
-        key,
-        program,
-        function,
-    }
-}
-
-const CONFLICTS: &[Conflict] = &[conflict(
-    Modifiers::of(true, true, false),
-    "X",
-    "Visual Studio",
-    "工具箱",
-)];
+/// Combinations well-known programs use (spec section 7): `(program, combination,
+/// function)`. Only entries checked against the program's own documentation belong here;
+/// the sources are listed in the spec.
+const CONFLICTS: &[(&str, &str, &str)] = &[
+    // Visual Studio (Microsoft Learn, default keyboard shortcuts): nearly every
+    // Ctrl+Alt+letter opens a tool window.
+    ("Visual Studio", "Ctrl+Alt+A", "命令窗口"),
+    ("Visual Studio", "Ctrl+Alt+B", "断点"),
+    ("Visual Studio", "Ctrl+Alt+C", "调用堆栈"),
+    ("Visual Studio", "Ctrl+Alt+D", "反汇编"),
+    ("Visual Studio", "Ctrl+Alt+E", "异常设置"),
+    ("Visual Studio", "Ctrl+Alt+F", "F# Interactive"),
+    ("Visual Studio", "Ctrl+Alt+G", "寄存器"),
+    ("Visual Studio", "Ctrl+Alt+H", "线程"),
+    ("Visual Studio", "Ctrl+Alt+I", "即时窗口"),
+    ("Visual Studio", "Ctrl+Alt+J", "对象浏览器"),
+    ("Visual Studio", "Ctrl+Alt+K", "调用层次结构"),
+    ("Visual Studio", "Ctrl+Alt+L", "解决方案资源管理器"),
+    ("Visual Studio", "Ctrl+Alt+N", "克隆查询"),
+    ("Visual Studio", "Ctrl+Alt+O", "输出"),
+    ("Visual Studio", "Ctrl+Alt+P", "附加到进程"),
+    ("Visual Studio", "Ctrl+Alt+Q", "快速监视"),
+    ("Visual Studio", "Ctrl+Alt+R", "Web 浏览器"),
+    ("Visual Studio", "Ctrl+Alt+S", "服务器资源管理器"),
+    ("Visual Studio", "Ctrl+Alt+T", "文档大纲"),
+    ("Visual Studio", "Ctrl+Alt+U", "模块"),
+    ("Visual Studio", "Ctrl+Alt+X", "工具箱"),
+    ("Visual Studio", "Ctrl+Alt+Z", "进程"),
+    // IntelliJ IDEA (JetBrains, Windows default keymap).
+    ("IntelliJ IDEA", "Ctrl+Alt+A", "接受右侧"),
+    ("IntelliJ IDEA", "Ctrl+Alt+B", "转到实现"),
+    ("IntelliJ IDEA", "Ctrl+Alt+F", "引入字段"),
+    ("IntelliJ IDEA", "Ctrl+Alt+I", "自动缩进"),
+    ("IntelliJ IDEA", "Ctrl+Alt+L", "格式化代码"),
+    ("IntelliJ IDEA", "Ctrl+Alt+M", "提取方法"),
+    ("IntelliJ IDEA", "Ctrl+Alt+N", "内联"),
+    ("IntelliJ IDEA", "Ctrl+Alt+P", "引入参数"),
+    ("IntelliJ IDEA", "Ctrl+Alt+R", "接受左侧"),
+    ("IntelliJ IDEA", "Ctrl+Alt+S", "设置"),
+    ("IntelliJ IDEA", "Ctrl+Alt+T", "包围"),
+    ("IntelliJ IDEA", "Ctrl+Alt+V", "引入变量"),
+    ("IntelliJ IDEA", "Ctrl+Alt+Z", "回滚"),
+    ("IntelliJ IDEA", "Alt+Shift+C", "最近更改"),
+    ("IntelliJ IDEA", "Alt+Shift+G", "在选中的每行添加光标"),
+    ("IntelliJ IDEA", "Alt+Shift+J", "取消最后一个选中项"),
+    ("IntelliJ IDEA", "Alt+J", "选中下一个相同项"),
+    // Word (Microsoft Support, keyboard shortcuts in Word).
+    ("Word", "Ctrl+Alt+1", "标题 1"),
+    ("Word", "Ctrl+Alt+2", "标题 2"),
+    ("Word", "Ctrl+Alt+3", "标题 3"),
+    ("Word", "Ctrl+Alt+C", "复制格式"),
+    ("Word", "Ctrl+Alt+D", "插入尾注"),
+    ("Word", "Ctrl+Alt+F", "插入脚注"),
+    ("Word", "Ctrl+Alt+I", "打印预览"),
+    ("Word", "Ctrl+Alt+K", "自动套用格式"),
+    ("Word", "Ctrl+Alt+L", "插入 LISTNUM 域"),
+    ("Word", "Ctrl+Alt+M", "插入批注"),
+    ("Word", "Ctrl+Alt+N", "草稿视图"),
+    ("Word", "Ctrl+Alt+O", "大纲视图"),
+    ("Word", "Ctrl+Alt+P", "页面视图"),
+    ("Word", "Ctrl+Alt+R", "插入 ® 符号"),
+    ("Word", "Ctrl+Alt+S", "拆分窗口"),
+    ("Word", "Ctrl+Alt+T", "插入 ™ 符号"),
+    ("Word", "Ctrl+Alt+V", "粘贴格式"),
+    ("Word", "Ctrl+Alt+Z", "返回上次修改的位置"),
+    // VS Code (keyboard shortcuts for Windows).
+    ("VS Code", "Ctrl+Alt+Up", "在上方添加光标"),
+    ("VS Code", "Ctrl+Alt+Down", "在下方添加光标"),
+    ("VS Code", "Alt+Shift+F", "格式化文档"),
+    ("VS Code", "Alt+Shift+A", "切换块注释"),
+    ("VS Code", "Alt+Shift+I", "在每行末尾添加光标"),
+    ("VS Code", "Alt+Shift+0", "切换编辑器布局"),
+    ("VS Code", "Alt+Shift+Up", "向上复制行"),
+    ("VS Code", "Alt+Shift+Down", "向下复制行"),
+    ("VS Code", "Alt+Shift+Left", "缩小选区"),
+    ("VS Code", "Alt+Shift+Right", "扩大选区"),
+    ("VS Code", "Alt+Z", "自动换行"),
+    ("VS Code", "Ctrl+Shift+P", "命令面板"),
+    ("VS Code", "Ctrl+Shift+N", "新窗口"),
+    ("VS Code", "Ctrl+Shift+K", "删除行"),
+    ("VS Code", "Ctrl+Shift+L", "选中所有相同项"),
+    ("VS Code", "Ctrl+Shift+O", "转到符号"),
+    ("VS Code", "Ctrl+Shift+M", "问题面板"),
+    ("VS Code", "Ctrl+Shift+E", "资源管理器"),
+    ("VS Code", "Ctrl+Shift+F", "全局搜索"),
+    ("VS Code", "Ctrl+Shift+G", "源代码管理"),
+    ("VS Code", "Ctrl+Shift+D", "调试"),
+    ("VS Code", "Ctrl+Shift+X", "扩展"),
+    ("VS Code", "Ctrl+Shift+H", "全局替换"),
+    ("VS Code", "Ctrl+Shift+U", "输出面板"),
+    ("VS Code", "Ctrl+Shift+V", "Markdown 预览"),
+    ("VS Code", "Ctrl+Shift+T", "重新打开关闭的编辑器"),
+    ("VS Code", "F8", "转到下一个问题"),
+    // Chrome (Google Chrome Help, Windows); Edge uses the same ones.
+    ("浏览器", "Alt+D", "选中地址栏"),
+    ("浏览器", "Alt+E", "打开菜单"),
+    ("浏览器", "Alt+F", "打开菜单"),
+    ("浏览器", "Ctrl+Shift+N", "新建无痕窗口"),
+    ("浏览器", "Ctrl+Shift+T", "重新打开关闭的标签页"),
+    ("浏览器", "Ctrl+Shift+W", "关闭窗口"),
+    ("浏览器", "Ctrl+Shift+O", "书签管理器"),
+    ("浏览器", "Ctrl+Shift+B", "显示书签栏"),
+    ("浏览器", "Ctrl+Shift+J", "开发者工具"),
+    ("浏览器", "Ctrl+Shift+R", "强制刷新"),
+    ("浏览器", "Ctrl+Shift+D", "把所有标签页存为书签"),
+    // Windows Terminal (Microsoft Learn, actions).
+    ("Windows Terminal", "Ctrl+Alt+1", "切换到第 1 个标签页"),
+    ("Windows Terminal", "Ctrl+Alt+2", "切换到第 2 个标签页"),
+    ("Windows Terminal", "Ctrl+Alt+3", "切换到第 3 个标签页"),
+    ("Windows Terminal", "Ctrl+Alt+4", "切换到第 4 个标签页"),
+    ("Windows Terminal", "Ctrl+Alt+5", "切换到第 5 个标签页"),
+    ("Windows Terminal", "Ctrl+Alt+6", "切换到第 6 个标签页"),
+    ("Windows Terminal", "Ctrl+Alt+7", "切换到第 7 个标签页"),
+    ("Windows Terminal", "Ctrl+Alt+8", "切换到第 8 个标签页"),
+    ("Windows Terminal", "Ctrl+Alt+Left", "焦点移到上一个窗格"),
+    ("Windows Terminal", "Alt+Shift+D", "拆分窗格"),
+    ("Windows Terminal", "Alt+Shift+Minus", "向下拆分窗格"),
+    ("Windows Terminal", "Alt+Shift+Up", "调整窗格大小"),
+    ("Windows Terminal", "Alt+Shift+Down", "调整窗格大小"),
+    ("Windows Terminal", "Alt+Shift+Left", "调整窗格大小"),
+    ("Windows Terminal", "Alt+Shift+Right", "调整窗格大小"),
+    ("Windows Terminal", "Alt+Enter", "全屏"),
+    // Foxit PDF Editor (Foxit, keyboard shortcuts for Windows).
+    ("福昕 PDF 编辑器", "Ctrl+Alt+V", "原位粘贴"),
+    ("福昕 PDF 编辑器", "Ctrl+Alt+D", "复制页面"),
+    // SumatraPDF (keyboard shortcuts).
+    ("SumatraPDF", "Ctrl+Shift+L", "全屏"),
+    ("SumatraPDF", "Ctrl+Shift+N", "在新窗口中打开"),
+    ("SumatraPDF", "Ctrl+Shift+S", "把批注保存到 PDF"),
+];
 
 /// Decides whether `hotkey` may be used (spec section 3).
 pub fn check(hotkey: &Hotkey) -> Verdict {
@@ -435,11 +536,11 @@ pub fn check(hotkey: &Hotkey) -> Verdict {
         // D014 supplement: only Alt held, so the Alt mask falls back to 0xE8.
         warnings.push("只有 Alt 的组合查词时会让 Windows Terminal 的选区消失".to_owned());
     }
-    for c in CONFLICTS.iter().filter(|c| hotkey.is(c.modifiers, c.key)) {
-        warnings.push(format!(
-            "在 {} 中是「{}」，在那里会失效",
-            c.program, c.function
-        ));
+    for (program, _, function) in CONFLICTS
+        .iter()
+        .filter(|(_, combination, _)| Hotkey::parse(combination).as_ref() == Ok(hotkey))
+    {
+        warnings.push(format!("在 {program} 中是「{function}」，在那里会失效"));
     }
     Verdict::Allowed(warnings)
 }
@@ -574,14 +675,20 @@ mod tests {
         assert!(blocked("Ctrl+Alt+Win+X").contains("Win"));
         // Only the exact combinations: the simulated keys carry no other modifier.
         assert!(warnings("Ctrl+Shift+C").is_empty());
-        assert!(warnings("Ctrl+Alt+C").is_empty());
+        assert!(!warnings("Ctrl+Alt+C").iter().any(|w| w.contains("Ctrl+C")));
         assert!(warnings("Shift+Insert").iter().any(|w| w.contains("Shift")));
         assert!(warnings("Shift+Escape").is_empty());
     }
 
     #[test]
     fn default_and_typical_choices_have_no_warnings() {
-        for text in ["Ctrl+Shift+F1", "F8", "Ctrl+Alt+Q", "Pause", "Ctrl+Shift+L"] {
+        for text in [
+            "Ctrl+Shift+F1",
+            "F9",
+            "Ctrl+Alt+Y",
+            "Pause",
+            "Ctrl+Alt+Shift+L",
+        ] {
             assert_eq!(warnings(text), Vec::<String>::new(), "{text}");
         }
     }
@@ -676,11 +783,15 @@ mod tests {
 
     #[test]
     fn listed_conflicts_name_the_program() {
-        assert!(
-            warnings("Ctrl+Alt+X")
-                .iter()
-                .any(|w| w.contains("Visual Studio") && w.contains("工具箱"))
+        assert_eq!(
+            warnings("Ctrl+Alt+X"),
+            vec!["在 Visual Studio 中是「工具箱」，在那里会失效".to_owned()]
         );
+        // Several programs, each listed.
+        let w = warnings("Ctrl+Alt+L");
+        assert!(w.iter().any(|w| w.contains("IntelliJ IDEA")));
+        assert!(w.iter().any(|w| w.contains("Word")));
+        assert!(w.iter().any(|w| w.contains("Visual Studio")));
     }
 
     #[test]
@@ -689,8 +800,13 @@ mod tests {
             assert!(find_key(k).is_some(), "{k}");
             assert!(!m.win);
         }
-        for c in CONFLICTS {
-            assert!(find_key(c.key).is_some(), "{}", c.key);
+        for (program, combination, _) in CONFLICTS {
+            let hotkey = Hotkey::parse(combination).unwrap();
+            assert_eq!(
+                hotkey.canonical(),
+                *combination,
+                "{program}: write it canonically"
+            );
         }
     }
 }
