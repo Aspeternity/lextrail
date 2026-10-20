@@ -53,6 +53,7 @@
 - [x] `dict-builder` 下载固定版本 ECDICT 并校验 SHA-256；CI 缓存下载与生成结果（D038）（新增）
 - [x] `lextrail-dict`：查询、词形还原（`exchange` 词形 + 后缀规则兜底；`docs/specs/m1-dict.md` 第 8 节）
 - [x] 词典覆盖率检查：Attention Is All You Need 全文（第 9 节）（新增）
+- [x] 变形词条标出与原形的关系；带连字符的复合词拆开查，合并行末连字符只用整词查询（D044 补充）（新增）
 - [ ] `lextrail-dict`：单词 / 短语 / 句子分类
 - [ ] 悬浮窗显示词典结果：音标、词性、释义、考试标签
 - [ ] 行末连字符：词典接入后，取词结果先经 `text::resolve_line_end_hyphens` 用 `lextrail-dict` 判断（去掉连字符后查得到就合并，如 compu-tation），再规范化；用 R2-10 中 Chrome PDF 的 `transduc-tion`（应合并为 transduction）验证（新增，R1-7）

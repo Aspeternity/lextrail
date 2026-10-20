@@ -56,11 +56,11 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
   - **R4-P1**（挂起后查词卡死）：Tauri 在主线程上调用 `with_webview` 时，回调执行期间持有 webview 的 `window_id` 锁，回调里再 `emit_to` 就会主线程自己等自己（已用内存转储确认）。规则：`with_webview` 回调里不调用应用代码（`popup/webview.rs` 模块注释）。回归测试：`popup-e2e.ps1 -PauseMs 7000 -ResumeDelayMs 300`。
   - **R4-P2**：剪贴板确认没能完成时，不采用未经确认的"没有选中"（D043 补充）。
   - **CI**：2026-10-16 至 10-20 所有分支的 CI 都因 release 构建的"未使用"警告失败，已修复；`pnpm check` 现在包含 release 配置的 clippy；AGENTS.md 要求每次推送后查看 CI。
-- 分支 `feat/dict-builder`（已合入 `main`，还没有合并回 `main`）：`tools/dict-builder` 已完成（D044）；`lextrail-dict` 的查询和词形还原已完成（`Dictionary::lookup`，规则见 `docs/specs/m1-dict.md` 第 8 节）；Attention Is All You Need 覆盖率检查结果见第 9 节（查不到 219 个不同的词，大多是人名、缩写、公式变量；普通词汇缺口如 convolutional、softmax、hyperparameters）。等项目负责人看过覆盖率结果和"变形词条与原形词条都给出"的做法。
+- 分支 `feat/dict-builder`（已合入 `main`，还没有合并回 `main`）：`tools/dict-builder` 已完成（D044）；`lextrail-dict` 的查询和词形还原已完成（`Dictionary::lookup`，规则见 `docs/specs/m1-dict.md` 第 8 节）；Attention Is All You Need 覆盖率检查结果见第 9 节（查不到 219 个不同的词，大多是人名、缩写、公式变量；普通词汇缺口如 convolutional、softmax、hyperparameters）。按项目负责人的意见（D044 补充）：变形词条标出和原形的关系（"better（good 的比较级）"）；带连字符的复合词整体查不到时拆开查（`lookup_with_parts`），合并行末连字符只用整词查询。普通词汇缺口在完整版 ECDICT 中的情况见第 9 节，等项目负责人决定是否调整收录规则。
 
 ## 下一步
 
-1. 项目负责人看覆盖率结果后，决定是否处理普通词汇缺口和带连字符的复合词（如 self-attention 是否拆开查）。
+1. 项目负责人根据 `m1-dict.md` 第 9 节决定是否调整收录规则（convolutional、optimizer、overfitting 等完整版有、被 B+ 过滤）。
 2. `lextrail-dict` 的输入分类（单词 / 短语 / 句子）。
 3. 之后按 `ROADMAP.md` 继续 M1：连按两次 Ctrl+C（实现 `capture_context`，完成后把这个用法加回提示文字，R1-9）→ 悬浮窗显示词典结果 → 行末连字符接入词典（用 `transduc-tion` 验证）→ 查询历史接入桌面端 → 快捷键设置界面。
 4. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。

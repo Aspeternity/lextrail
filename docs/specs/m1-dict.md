@@ -113,30 +113,59 @@ SQLite 文件 `data/build/lextrail-dict-core.db`，只读，查询时按需从�
 5. **短语**：直接查不到时，把每个词换成 `exchange` 原形再查（`gave up` → `give up`）。
 
 结果：
-- `entries`：查到的词条自己的词条（如果它不只是"xx 的过去式"之类说明），然后是原形的词条。例如 `launched` 只给 `launch`；`better` 给 `better`（更好的、改善）和 `good` 两个。
+- `entries`：查到的词条自己的词条（如果它不只是"xx 的过去式"之类说明），然后是原形的词条，每个都带角色：
+  - `Query`：查的词本身；
+  - `FormOf`：查的词本身、同时是另一个词的变形——**显示时必须标出和原形的关系**，如"left（leave 的过去式、过去分词）""better（good 的比较级）"（`Inflection::describe_zh()`）。否则像 `found`（自身释义"建立"，但多数时候是 find 的过去式）这种情况，变形在前会误导；
+  - `Lemma`：原形的词条。
+
+  例如 `launched` 只给 `launch`；`better` 给 `better`（good 的比较级）和 `good`。两个词条按语境排序留到 M2（D019）。
 - `inflection`：原形、词形种类（过去式、复数等）和来源（`exchange` / 后缀规则 / 短语）。
 - `lemma()`：写入查询历史 `lookups.lemma` 的原形。
 
-带连字符的复合词（`self-attention`）目前整体查不到就返回 `None`，不拆开查。
+### 8.1 带连字符的复合词（D044 补充）
+
+`Dictionary::lookup_with_parts(text)` 返回 `Found::Whole`（整词查到，同 `lookup`）或 `Found::Parts`（拆开查到）：
+- **只在整体查不到时拆**（按 `-` 拆），结果里标明"词典没有整词，以下是各部分的释义"；
+- 跳过虚词（a、an、the、and、or、but、nor、of、to、in、on、at、by、for、from、with、as、into、onto、via、vs、per），不显示它们的词条；重复的部分只查一次；每个部分照常做词形还原；查不到的部分列在 `not_found`；
+- 所有部分都查不到时返回 `None`。
+
+**判断"是不是一个词"只能用 `lookup`（整词）**，不能用 `lookup_with_parts`。`lextrail_core::text::resolve_line_end_hyphens` 合并行末连字符时只能根据整词查到的结果判断：`compu-tation` 合并为 computation，`English-to-German`、`self-attention` 保持原样（测试 `line_end_hyphens_join_only_whole_words`）。
+- 已知限制：词典里没有的词，行末断词不会被合并（覆盖率检查中 `convolu-` / `tional`，因为 convolutional 不在精简版中）。
 
 ## 9. 覆盖率检查：Attention Is All You Need（1706.03762v7）
 
-方法：`pdftotext` 提取 arXiv PDF 全文，用 `cargo run -p lextrail-dict --release --example coverage -- <词典> <文本>` 统计（字母串，保留词内 `'` 和 `-`；去掉单个字母；行末连字符在合并后的词能查到时合并）。
+方法：`pdftotext -raw`（xpdf 4.06，Git for Windows 自带）提取 arXiv PDF 全文，用 `cargo run -p lextrail-dict --release --example coverage -- <词典> <文本>` 统计（字母串，保留词内 `'` 和 `-`；去掉单个字母；行末连字符在合并后的词能整词查到时合并）。
 
-| 项 | 不同的词 | 出现次数 |
+**注意**：`pdftotext` 默认模式会把行末连字符直接去掉合并（`attention-` + `based` → `attentionbased`），第一次统计因此出现了 attentionbased、sequencealigned、positionwise、sourcetarget、Englishto-German；`-raw` 和 `-layout` 模式保留连字符。这是提取工具的行为，不是 LexTrail 取词的问题：Edge / Chrome PDF（PDFium）在行末断词处给出标记 `\u{2}`，由 `resolve_line_end_hyphens` 按整词查询决定是否合并；在接入词典之前，`clean_control_chars` 把它一律还原为 `-`。其他 PDF 阅读器（Adobe Acrobat、SumatraPDF 等）的行为还没有测过。
+
+| 项（`-raw` 文本） | 不同的词 | 出现次数 |
 |---|---|---|
-| 全部 | 1,548 | 5,302 |
-| 直接查到 | 881 | 3,738 |
-| 经 `exchange` 词形查到 | 384 | 1,001 |
-| 经后缀规则查到（embeddings → embedding、subspaces → subspace） | 3 | 9 |
-| 带连字符、整体查不到的复合词 | 61（其中 55 个各部分都能查到） | — |
-| 查不到 | 219 | 409 |
+| 全部 | 1,553 | 5,321 |
+| 直接查到 | 884 | 3,755 |
+| 经 `exchange` 词形查到 | 385 | 1,003 |
+| 经后缀规则查到（embeddings → embedding、subspaces → subspace 等） | 4 | 11 |
+| 带连字符、整体查不到的复合词 | 61（其中 56 个各部分都能查到） | — |
+| 查不到 | 219 | 406 |
 
 查不到的 219 个词分类：
 - **人名、机构、会议、产品名**（约 150 个）：Vaswani、Shazeer、Bengio、Google、NVIDIA、WMT、ACL、arXiv、ByteNet、Xception 等。
 - **缩写**：GPU(s)、LSTM、RNN(s)、ReLU、FFN、PCFG、TFLOPS 等。
 - **公式变量和 PDF 提取残片**：dmodel、dv、dff、logk、headi、Pdrop、QK、ϵls，以及邮箱 / 网址片段。
-- **PDF 提取时丢了连字符的复合词**：attentionbased、sequencealigned、positionwise、sourcetarget。
-- **真正的普通词汇缺口**（ECDICT 没有的学术 / 技术词）：convolutional（9 次）、softmax（7）、codebase（3）、warmup（3）、hyperparameters（2）、parallelization（2）、optimizer（2）、treebank（2）、overfitting、parallelizable、subword、depthwise、params（各 1）。
+- **行末断词没合并的残片**：convolu、tional（convolutional 不在精简版，见 8.1）。
+- **普通词汇缺口**：convolutional（7 次）、softmax（6）、codebase（3）、warmup（3）、hyperparameters（2）、parallelization（2）、optimizer（2）、treebank（2）、overfitting、parallelizable、subword、depthwise、params（各 1）。
+
+这些词在完整版 ECDICT（77 万）中的情况：
+
+| 词 | 完整版 | 说明 |
+|---|---|---|
+| convolutional | 有，被 B+ 过滤 | 没有音标，也没有词频 / 考试 / 柯林斯 / 牛津标记；释义 `[计] 卷积的 / [医] 脑回的` |
+| parallelization | 有，被 B+ 过滤 | 同上；释义"并行化" |
+| optimizer | 有，被 B+ 过滤 | 同上；释义 `[计] 优化程序 / [化] 最优控制器` |
+| overfitting | 有，被 B+ 过滤 | 同上；释义"过适；[数] 过度拟合"（overfit 也被过滤，"[网络] 过拟合"） |
+| subword | 有，被 B+ 过滤 | 同上；释义 `[计] 子字` |
+| GPU | 有，被 B+ 过滤 | 同上；释义是"地面动力装置（ground power unit）"，不是图形处理器 |
+| softmax、codebase、hyperparameter(s)、parallelizable、treebank、depthwise、LSTM、RNN、ReLU | 完整版也没有 | — |
+| warmup | 完整版也没有 | 但 warm-up（热身、预热）在精简版中 |
+| parallelisation、optimiser | 完整版也没有 | 英式拼写 |
 
 `exchange` 还原结果抽查都正确：best / better → good、worse → bad、is / was / were → be、has → have、could → can、found → find、left → leave、took → take、further → far。
