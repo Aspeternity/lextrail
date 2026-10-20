@@ -11,6 +11,12 @@ hotkey (Ctrl+Alt+X) and then checks the popup:
     contains the word and the sentence without the list marker.
 Each lookup is also saved as a screenshot for a human look.
 
+With -PauseMs N the script waits N ms after closing each popup. Over about 6 s the hidden
+popup is suspended (D009), so the next lookup resumes it. -ResumeDelayMs makes that resume
+slow (debug builds, LEXTRAIL_DEBUG_RESUME_DELAY_MS), so the captured text is ready before
+the resumed window: the order that hung the app in R4 (R4-P1). After every lookup the app
+must still answer window messages; a hung UI thread fails the lookup.
+
 With -Pdf the same page is printed to a PDF and opened in Edge's PDF viewer, where UIA
 is not used (D041) and the word comes through the clipboard fallback (D043): this checks
 that the popup still gets focus after the simulated Ctrl+C. There is no sentence then.
@@ -29,13 +35,16 @@ any check fails.
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Pdf
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Pdf -HoldMs 2000
+pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Lookups 3 -PauseMs 7000 -ResumeDelayMs 300
 #>
 param(
   [string]$App = "target\debug\lextrail-desktop.exe",
   [int]$Lookups = 2,
   [string]$OutDir = (Join-Path $env:TEMP "lextrail-e2e"),
   [switch]$Pdf,
-  [int]$HoldMs = 0
+  [int]$HoldMs = 0,
+  [int]$PauseMs = 600,
+  [int]$ResumeDelayMs = 0
 )
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
@@ -65,6 +74,9 @@ public static class LtE2e {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int hh, bool r);
+  [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h, uint msg, IntPtr w, IntPtr l, uint flags, uint ms, out IntPtr result);
+  // WM_NULL with a timeout: false when the window's thread does not process messages.
+  public static bool Responds(IntPtr h, uint ms) { IntPtr r; return SendMessageTimeout(h, 0, IntPtr.Zero, IntPtr.Zero, 2, ms, out r) != IntPtr.Zero; }
   [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
   [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint type);
   public static void Key(byte vk, bool up) { keybd_event(vk, (byte)MapVirtualKey(vk, 0), up ? 2u : 0u, IntPtr.Zero); }
@@ -109,7 +121,9 @@ function Get-PopupText([IntPtr]$Hwnd, [string]$Want = $expected[0]) {
 $failures = 0
 Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
 $log = Join-Path $OutDir "app.log"
+if ($ResumeDelayMs -gt 0) { $env:LEXTRAIL_DEBUG_RESUME_DELAY_MS = "$ResumeDelayMs" }
 Start-Process $App -RedirectStandardError $log -WindowStyle Hidden
+Remove-Item Env:LEXTRAIL_DEBUG_RESUME_DELAY_MS -ErrorAction SilentlyContinue
 Start-Sleep 4
 
 $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
@@ -161,6 +175,8 @@ try {
     }
 
     $popup = [LtE2e]::FindWindow("Tauri Window", "LexTrail")
+    # The popup's window belongs to the app's UI thread: if that thread hangs, so does this.
+    $responds = $popup -ne [IntPtr]::Zero -and [LtE2e]::Responds($popup, 2000)
     $visible = $popup -ne [IntPtr]::Zero -and [LtE2e]::IsWindowVisible($popup)
     $focused = $visible -and ([LtE2e]::GetForegroundWindow() -eq $popup)
     $text = @(); $shot = ""
@@ -171,14 +187,15 @@ try {
     $missing = @($expected | Where-Object { $text -notcontains $_ })
     # Held for over a second (and read before the 3 s limit): the hint must be up.
     $hintOk = -not ($HoldMs -gt 1400 -and $HoldMs -le 3000) -or ($heldText -contains $holdHint)
-    $ok = $visible -and $focused -and $missing.Count -eq 0 -and $hintOk
+    $ok = $responds -and $visible -and $focused -and $missing.Count -eq 0 -and $hintOk
     if (-not $ok) { $failures++ }
-    "lookup ${i}: " + $(if ($ok) { "PASS" } else { "FAIL" }) + " (visible=$visible focused=$focused)"
+    "lookup ${i}: " + $(if ($ok) { "PASS" } else { "FAIL" }) + " (responds=$responds visible=$visible focused=$focused)"
     "  popup text: " + ($text -join " | ")
     if ($missing.Count) { "  missing: " + ($missing -join " | ") }
     if ($HoldMs -gt 0) { "  while held: " + ($heldText -join " | ") + $(if ($hintOk) { "" } else { "  (hint missing)" }) }
     if ($shot) { "  screenshot: $shot" }
-    $ws.SendKeys("{ESC}"); Start-Sleep -Milliseconds 600
+    if (-not $responds) { "  the app's UI thread does not respond (hung); stopping"; break }
+    $ws.SendKeys("{ESC}"); Start-Sleep -Milliseconds $PauseMs
   }
 } finally {
   Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -187,6 +204,6 @@ try {
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 "app log: $log"
-Get-Content $log | Select-String "capture #|bring to front" | ForEach-Object { "  " + $_.Line }
+Get-Content $log | Select-String "capture #|bring to front|WindowReady|resume delayed|Captured|activated" | ForEach-Object { "  " + $_.Line }
 if ($failures) { "FAILED: $failures lookup(s)"; exit 1 }
 "all lookups passed"
