@@ -50,12 +50,12 @@ pub const MAX_AREA_SHARE: f64 = 0.6;
 
 /// The popup's height in physical pixels for content `natural` logical pixels tall, on a
 /// monitor with `scale` and a work area `area_height` physical pixels tall: the content's
-/// height, at most [`MAX_HEIGHT`] or [`MAX_AREA_SHARE`] of the work area, whichever is
+/// height, at most `max` ([`MAX_HEIGHT`]) or [`MAX_AREA_SHARE`] of the work area, whichever is
 /// smaller (beyond it, the body scrolls), and at least [`MIN_HEIGHT`] (which wins over
 /// the 60% on a tiny work area). Never more than the work area itself.
-pub fn popup_height(natural: f64, scale: f64, area_height: i32) -> i32 {
+pub fn popup_height(natural: f64, scale: f64, area_height: i32, max: f64) -> i32 {
     let min = (MIN_HEIGHT * scale).round() as i32;
-    let max = ((MAX_HEIGHT * scale).round() as i32)
+    let max = ((max * scale).round() as i32)
         .min((f64::from(area_height) * MAX_AREA_SHARE).floor() as i32);
     let wanted = (natural.max(0.0) * scale).ceil() as i32;
     wanted.min(max).max(min).min(area_height.max(1))
@@ -190,32 +190,32 @@ mod tests {
     #[test]
     fn height_follows_short_content_with_a_floor() {
         // 1.0x, 1040 px work area: a one-line hint is raised to the minimum.
-        assert_eq!(popup_height(40.0, 1.0, 1040), 72);
-        assert_eq!(popup_height(150.4, 1.0, 1040), 151);
+        assert_eq!(popup_height(40.0, 1.0, 1040, MAX_HEIGHT), 72);
+        assert_eq!(popup_height(150.4, 1.0, 1040, MAX_HEIGHT), 151);
         // 1.5x: the same content in physical pixels.
-        assert_eq!(popup_height(150.4, 1.5, 1560), 226);
-        assert_eq!(popup_height(10.0, 1.5, 1560), 108);
+        assert_eq!(popup_height(150.4, 1.5, 1560, MAX_HEIGHT), 226);
+        assert_eq!(popup_height(10.0, 1.5, 1560, MAX_HEIGHT), 108);
     }
 
     #[test]
     fn height_is_capped_at_520_or_60_percent_of_the_work_area() {
         // Tall content on a large work area: 520 logical.
-        assert_eq!(popup_height(2000.0, 1.0, 1040), 520);
-        assert_eq!(popup_height(2000.0, 1.5, 1560), 780);
-        assert_eq!(popup_height(2000.0, 2.0, 2080), 1040);
+        assert_eq!(popup_height(2000.0, 1.0, 1040, MAX_HEIGHT), 520);
+        assert_eq!(popup_height(2000.0, 1.5, 1560, MAX_HEIGHT), 780);
+        assert_eq!(popup_height(2000.0, 2.0, 2080, MAX_HEIGHT), 1040);
         // A short work area (1366x768 laptop, 728 px): 60% of it, 436.
-        assert_eq!(popup_height(2000.0, 1.0, 728), 436);
+        assert_eq!(popup_height(2000.0, 1.0, 728, MAX_HEIGHT), 436);
         // 1.25x on 1080p (work area 1032 physical): 60% = 619 < 650.
-        assert_eq!(popup_height(2000.0, 1.25, 1032), 619);
+        assert_eq!(popup_height(2000.0, 1.25, 1032, MAX_HEIGHT), 619);
         // Exactly at the cap is not scrolled.
-        assert_eq!(popup_height(520.0, 1.0, 1040), 520);
+        assert_eq!(popup_height(520.0, 1.0, 1040, MAX_HEIGHT), 520);
     }
 
     #[test]
     fn height_never_exceeds_a_tiny_work_area() {
         // 60% (60) is below the minimum: the minimum wins, still inside the work area.
-        assert_eq!(popup_height(2000.0, 1.0, 100), 72);
-        assert_eq!(popup_height(10.0, 2.0, 100), 100);
+        assert_eq!(popup_height(2000.0, 1.0, 100, MAX_HEIGHT), 72);
+        assert_eq!(popup_height(10.0, 2.0, 100, MAX_HEIGHT), 100);
     }
 
     #[test]

@@ -956,7 +956,12 @@ fn move_near<R: Runtime>(
     let area = monitor.work_area();
     let size = Size {
         width: (WIDTH * scale).round() as i32,
-        height: placement::popup_height(height.unwrap_or(HEIGHT), scale, area.size.height as i32),
+        height: placement::popup_height(
+            height.unwrap_or(HEIGHT),
+            scale,
+            area.size.height as i32,
+            max_height(),
+        ),
     };
     let work_area = Rect {
         x: area.position.x,
@@ -974,6 +979,20 @@ fn move_near<R: Runtime>(
     Ok(size)
 }
 
+/// The popup's highest, in logical pixels ([`placement::MAX_HEIGHT`]). Debug builds only:
+/// LEXTRAIL_DEBUG_MAX_HEIGHT lowers it, so tests can reach it with dictionary content
+/// (no word is that long; M2's AI results will be).
+fn max_height() -> f64 {
+    #[cfg(debug_assertions)]
+    if let Some(max) = std::env::var("LEXTRAIL_DEBUG_MAX_HEIGHT")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+    {
+        return max;
+    }
+    placement::MAX_HEIGHT
+}
+
 /// The shown window takes content `height` (logical pixels): its top edge stays, it
 /// grows downwards and moves up only when the bottom would leave the work area.
 fn resize_shown<R: Runtime>(window: &WebviewWindow<R>, height: f64) -> tauri::Result<()> {
@@ -988,7 +1007,7 @@ fn resize_shown<R: Runtime>(window: &WebviewWindow<R>, height: f64) -> tauri::Re
     let area = monitor.work_area();
     let size = Size {
         width: (WIDTH * scale).round() as i32,
-        height: placement::popup_height(height, scale, area.size.height as i32),
+        height: placement::popup_height(height, scale, area.size.height as i32, max_height()),
     };
     let work_area = Rect {
         x: area.position.x,

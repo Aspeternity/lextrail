@@ -54,7 +54,8 @@ is printed, and all lookups of a run must have the same height (the first popup 
 be taller). -Word run looks up "run" (run-word.html) instead of "launch": many senses.
 -Expand then unfolds every section through UI Automation (no mouse): the window must
 reach its highest (min(520 logical px, 60% of the monitor's work area)) and its body
-must scroll.
+must scroll. No dictionary entry is that long: -MaxHeight N lowers the highest to N
+logical px (debug builds: LEXTRAIL_DEBUG_MAX_HEIGHT), e.g. 200 with -Word run.
 
 With -Chrome the page opens in Google Chrome instead of Edge (incognito unless
 -NoInPrivate; not with -Pdf). -ExpectIgnored checks the opposite of a lookup: no popup
@@ -98,6 +99,7 @@ param(
   [switch]$ForceAttach,
   [ValidateSet("launch", "run")][string]$Word = "launch",
   [switch]$Expand,
+  [int]$MaxHeight = 520,
   [ValidateSet("Esc", "Click", "ClickThenEsc")][string]$CloseBy = "Esc"
 )
 $ErrorActionPreference = "Stop"
@@ -106,8 +108,10 @@ $App = (Resolve-Path $App).Path
 # Only debug builds honour the directory overrides below.
 if ($App -like "*\release\*") { throw "use a debug build: release builds would use the real settings and history" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
-$expected = if ($Word -eq "run") { @("run", "run the tests again.") }
-  elseif ($Pdf) { @("launch") } else { @("launch", "launch missiles at ships.") }
+# @(...) keeps a one-item result an array (PowerShell unwraps it otherwise, and += would
+# then append to the string).
+$expected = @(if ($Word -eq "run") { "run", "run the tests again." }
+  elseif ($Pdf) { "launch" } else { "launch", "launch missiles at ships." })
 if ($Word -eq "run" -and $Pdf) { throw "-Word run is for the web page only" }
 # The clipboard fallback gives up after 3 s of held keys (D043).
 # Built from code points: Windows PowerShell reads a script without BOM in the ANSI code page.
@@ -130,6 +134,7 @@ public static class LtE2e {
   [StructLayout(LayoutKind.Sequential)] public struct R { public int L, T, Ri, B; }
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r);
+  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out R r);
   [DllImport("dwmapi.dll")] static extern int DwmGetWindowAttribute(IntPtr h, int a, out R r, int size);
   // The visible frame (DWMWA_EXTENDED_FRAME_BOUNDS): GetWindowRect also covers the
   // invisible resize borders, which show whatever window is behind.
@@ -230,7 +235,7 @@ function Get-PopupText([IntPtr]$Hwnd, [string]$Want = $expected[0]) {
 function Get-MaxHeight([IntPtr]$Hwnd) {
   $scale = [LtE2e]::GetDpiForWindow($Hwnd) / 96.0
   $area = [System.Windows.Forms.Screen]::FromHandle($Hwnd).WorkingArea.Height
-  [Math]::Min([Math]::Round(520 * $scale), [Math]::Floor($area * 0.6))
+  [Math]::Min([Math]::Round($MaxHeight * $scale), [Math]::Floor($area * 0.6))
 }
 
 # Unfolds every folded section ("more", "specialist senses") through UI Automation.
@@ -251,19 +256,35 @@ function Expand-All([IntPtr]$Hwnd) {
   $count
 }
 
-# Whether some element of the popup scrolls vertically.
+# Whether the popup's content goes on beyond its edges, i.e. the body scrolls (WebView2
+# offers no UIA scroll pattern): some element starts above or ends below the window.
+# (Unfolding through UIA scrolls the unfolded section into view.)
 function Test-Scrollable([IntPtr]$Hwnd) {
+  $frame = [LtE2e]::Visible($Hwnd)
+  $top = $frame.T; $bottom = $frame.B
   $root = [System.Windows.Automation.AutomationElement]::FromHandle($Hwnd)
   foreach ($e in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
       [System.Windows.Automation.Condition]::TrueCondition)) {
-    $pattern = $null
-    if ($e.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$pattern) -and
-        $pattern.Current.VerticallyScrollable) { return $true }
+    $r = $e.Current.BoundingRectangle
+    if (-not $r.IsEmpty -and $r.Height -gt 0 -and ($r.Bottom -gt $bottom + 1 -or $r.Top -lt $top - 1)) { return $true }
   }
   $false
 }
 
-function Get-Height([IntPtr]$Hwnd) { $r = [LtE2e]::Visible($Hwnd); $r.B - $r.T }
+# The window's own height (client area, as the app sets it; the visible frame adds a border).
+# The hotkey Ctrl+Alt+X at a person's speed: SendKeys releases every key within a
+# millisecond of the press, faster than any hand, and races the Alt mask's hook (D014;
+# tools/e2e/stuck-keys.ps1 tests those races on purpose).
+function Send-Hotkey {
+  [LtE2e]::Key(0xA2, $false); Start-Sleep -Milliseconds 15
+  [LtE2e]::Key(0xA4, $false); Start-Sleep -Milliseconds 15
+  [LtE2e]::Key(0x58, $false); Start-Sleep -Milliseconds 40
+  [LtE2e]::Key(0x58, $true); Start-Sleep -Milliseconds 30
+  [LtE2e]::Key(0xA4, $true); Start-Sleep -Milliseconds 20
+  [LtE2e]::Key(0xA2, $true)
+}
+
+function Get-Height([IntPtr]$Hwnd) { $r = New-Object LtE2e+R; [void][LtE2e]::GetClientRect($Hwnd, [ref]$r); $r.B - $r.T }
 
 $failures = 0
 $heights = @()
@@ -271,6 +292,7 @@ Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
 $log = Join-Path $OutDir "app.log"
 if ($ResumeDelayMs -gt 0) { $env:LEXTRAIL_DEBUG_RESUME_DELAY_MS = "$ResumeDelayMs" }
 if ($ForceAttach) { $env:LEXTRAIL_DEBUG_FORCE_ATTACH = "1" }
+if ($MaxHeight -ne 520) { $env:LEXTRAIL_DEBUG_MAX_HEIGHT = "$MaxHeight" }
 $configDir = Join-Path $OutDir ("config-" + [guid]::NewGuid())
 $dataDir = Join-Path $OutDir ("data-" + [guid]::NewGuid())
 if ($DoubleCopy -or $DoubleCopySetting) {
@@ -280,7 +302,7 @@ if ($DoubleCopy -or $DoubleCopySetting) {
 $env:LEXTRAIL_DEBUG_CONFIG_DIR = $configDir
 $env:LEXTRAIL_DEBUG_DATA_DIR = $dataDir
 Start-Process $App -RedirectStandardError $log -WindowStyle Hidden
-Remove-Item Env:LEXTRAIL_DEBUG_RESUME_DELAY_MS, Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR, Env:LEXTRAIL_DEBUG_FORCE_ATTACH -ErrorAction SilentlyContinue
+Remove-Item Env:LEXTRAIL_DEBUG_RESUME_DELAY_MS, Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR, Env:LEXTRAIL_DEBUG_FORCE_ATTACH, Env:LEXTRAIL_DEBUG_MAX_HEIGHT -ErrorAction SilentlyContinue
 Start-Sleep 4
 
 $edge = if ($Chrome) { "$env:ProgramFiles\Google\Chrome\Application\chrome.exe" }
@@ -306,7 +328,7 @@ Start-Sleep 6
 $ws = New-Object -ComObject WScript.Shell
 $page = Get-Process $browserProc | Where-Object { $_.MainWindowTitle -like "lextrail-e2e*" } | Select-Object -First 1
 # Where "launch" is, in logical pixels from the window's top left corner.
-$word = if ($Pdf) { @(283, 230) } elseif ($Word -eq "run") { @(90, 110) } else { @(160, 110) }
+$wordAt = if ($Pdf) { @(283, 230) } elseif ($Word -eq "run") { @(90, 110) } else { @(160, 110) }
 if ($Pdf -and $page) { [LtE2e]::Resize($page.MainWindowHandle, 1050, 1000); Start-Sleep 1 }
 
 try {
@@ -316,7 +338,7 @@ try {
     # Close any Edge bubble (e.g. "translate this page?") that would hold focus.
     $ws.SendKeys("{ESC}"); Start-Sleep -Milliseconds 300
     Assert-Foreground $page.MainWindowHandle "test page"
-    [LtE2e]::DoubleClick($page.MainWindowHandle, $word[0], $word[1]); Start-Sleep -Milliseconds 400
+    [LtE2e]::DoubleClick($page.MainWindowHandle, $wordAt[0], $wordAt[1]); Start-Sleep -Milliseconds 400
     Assert-Foreground $page.MainWindowHandle "test page"
     Save-Screenshot $page.MainWindowHandle (Join-Path $OutDir "page-$i.png")
     $heldText = @()
@@ -341,12 +363,12 @@ try {
       }
       Start-Sleep -Milliseconds 900
     } else {
-      $ws.SendKeys("^%x")
+      Send-Hotkey
       if ($PressTwiceMs -gt 0) {
         Start-Sleep -Milliseconds $PressTwiceMs
         # Still the page (the first press's popup does not take focus while capturing).
         $fg = [LtE2e]::GetForegroundWindow()
-        if ($fg -eq $page.MainWindowHandle -or $fg -eq [LtE2e]::FindWindow("Tauri Window", "LexTrail")) { $ws.SendKeys("^%x") }
+        if ($fg -eq $page.MainWindowHandle -or $fg -eq [LtE2e]::FindWindow("Tauri Window", "LexTrail")) { Send-Hotkey }
         else { "  second press not sent: foreground is another window ($fg)" }
       }
       Start-Sleep -Milliseconds 900
