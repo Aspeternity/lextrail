@@ -54,7 +54,8 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
 
 - 分支 `fix/r3-hotkey-and-clipboard`：R3-P1 至 R3-P4 和 R4-P1 已修复并推送，**还没有合并到 `main`**：等 R4 通过后合并。
   - **R4-P1**（详见 `docs/specs/m1-capture-manual-tests.md` 第四轮问题）：Tauri 在主线程上调用 `with_webview` 时，回调执行期间持有 webview 的 `window_id` 锁；`resume_then` 在回调里调用了 `then()`，`emit_to` 再拿这把锁，主线程自己等自己。修复：`with_webview` 回调里不再调用应用代码，后续动作都在新线程上执行（规则写在 `popup/webview.rs` 模块注释里）。用 `popup-e2e.ps1 -PauseMs 7000 -ResumeDelayMs 300` 修复前稳定复现、修复后通过。
-  - 项目负责人提供的卡死内存转储还没有用调试器看过（本机没有 cdb / WinDbg）；结论来自临时日志（卡在 `SetContent` 内部）和 Tauri 源码。
+  - 卡死内存转储已用 WinDbg（cdb）确认：主线程在 `with_webview` 中持有 webview 的 `window_id` 锁，又在 `emit_to` → `eval_script` 中等待同一把锁（同一个 `Arc`，锁状态"已持有且有等待者"）。分析方法：在同一路径检出出问题的提交、构建 debug 版取得 pdb，cdb 加 `.symopt+ 0x40` 加载。
+  - **CI 修复**：从 2026-10-16 的 `38771443044` 起，所有分支的 CI 都在 Windows 的 `tauri build` 步骤失败：release 构建里 `result_label`、`pressed` 只在 debug 日志中使用，CI 的 `RUSTFLAGS=-D warnings` 把"未使用"当作错误。本地 `pnpm check` 只跑 debug 版 clippy，所以没发现。已修复（`2b129fe`），并在 `pnpm lint` 中加入 release 配置的 clippy。`main` 和 `feat/dict-builder` 在本分支合并前仍会失败。
 - 分支 `feat/dict-builder`：`tools/dict-builder` 已完成并推送（D044），等上面的分支合并后再把 `main` 合进去。
 
 ## 下一步
