@@ -3,7 +3,7 @@
 > 每次开发结束前更新本文件（见 `AGENTS.md` 的"结束流程"）。
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
-**最后更新**：2026-10-20（`feat/lookup-history` CI 通过，已合并到 `main`；文档修正；下一步在新分支做连按两次 Ctrl+C）
+**最后更新**：2026-10-21（连按两次 Ctrl+C 第一阶段审阅、左 Ctrl 卡住修复，分支 `feat/double-copy`）
 **当前阶段**：M1 · 取词与词典（进行中）。取词（UIA + 剪贴板兜底 + 悬浮窗焦点）经 R1–R4 手动测试验收；词典（`tools/dict-builder`、`lextrail-dict`、悬浮窗词典结果）完成，R5 通过；查询历史已接入桌面端。都已合并到 `main`。M1 剩下：连按两次 Ctrl+C、快捷键设置界面、前端测试等（见 `ROADMAP.md`）。
 
 ---
@@ -29,12 +29,12 @@ M0 全部完成（路线 A 已确认，D036）。M1 已完成：
 
 代码现状（详见各文件）：
 - `crates/lextrail-core`：HLC（`Hlc`、`HlcClock`、可注入的 `Clock`）；`lookup`（`LookupKind`、`CaptureMethod`、`normalize_text`、30 秒去重）；`text`（见上，另有 `join_unmarked_line_breaks`、`starts_sentence`）。48 个测试
-- `crates/lextrail-capture`（D041、D043）：`TextCapture`（`snapshot` / `capture` / `capture_traced` / `capture_context`，最后一个目前返回 `None`，做连按两次 Ctrl+C 时实现）；`Pipeline` 按顺序运行各步骤，步骤间用 `StepContext` 传递信息，UIA 的"没有选中"默认就是最终结果；`clipboard_rules.rs`（剪贴板兜底的规则，与平台无关）；`windows/`：`window.rs`（快照）、`uia.rs`（UIA 步骤）、`clipboard.rs`（剪贴板步骤）。33 个测试，其中 `clipboard_round_trip` 默认忽略（会改动真实剪贴板，需要时用 `cargo test -p lextrail-capture -- --ignored clipboard_round_trip`）。`examples/capture_probe.rs`（手动测试真实窗口）、`examples/uia_dump.rs`（打印原始 UIA 数据）。`capture_traced` 接收进度回调（`CaptureProgress`：等松开快捷键 / 已松开），步骤结果带 `key_wait`
+- `crates/lextrail-capture`（D041、D043）：`TextCapture`（`snapshot` / `capture` / `capture_traced` / `capture_context`，最后一个目前返回 `None`，第二阶段实现）；`Pipeline` 按顺序运行各步骤，步骤间用 `StepContext` 传递信息，UIA 的"没有选中"默认就是最终结果；`clipboard_rules.rs`（剪贴板兜底的规则，与平台无关）；`double_copy.rs`（连按两次 Ctrl+C 的判定，与平台无关）；`windows/`：`window.rs`（快照）、`uia.rs`（UIA 步骤）、`clipboard.rs`（剪贴板步骤）。45 个测试，其中 `clipboard_round_trip` 默认忽略（会改动真实剪贴板，需要时用 `cargo test -p lextrail-capture -- --ignored clipboard_round_trip`）。`examples/capture_probe.rs`（手动测试真实窗口）、`examples/uia_dump.rs`（打印原始 UIA 数据）。`capture_traced` 接收进度回调（`CaptureProgress`：等松开快捷键 / 已松开），步骤结果带 `key_wait`
 - `crates/lextrail-store`（D037、D040）：SQLite、`user_version` 迁移、`meta` / `lookups` 表、`record_lookup` 等。20 个测试
 - `crates/lextrail-config`（D035）：设置文件与凭据管理器；`[history] record`（"不记录查询历史"开关）。17 个测试
-- `apps/desktop/src-tauri`：托盘、单实例、主窗口（占位）、设置、全局快捷键（`hotkey.rs` + `keyboard.rs` 屏蔽键与防卡键钩子，10 个测试）、悬浮窗（`popup/`：`lifecycle.rs` 窗口生命周期 20 个测试，`request.rs` 一次查词 15 个测试，`activation.rs` 获取焦点，`foreground.rs` 前台窗口监视，`content.rs` 内容事件，`placement.rs` 位置，`timing.rs` bench 计时）。悬浮窗页面先订阅内容事件再调用 `popup_ready`，之后才显示；权限在 `capabilities/popup.json`（只有 `core:event:allow-listen`）。共 77 个测试
+- `apps/desktop/src-tauri`：托盘、单实例、主窗口（占位）、设置、全局快捷键（`hotkey.rs` + `keyboard.rs` 屏蔽键与防卡键钩子、补发后核对按键状态，16 个测试）、悬浮窗（`popup/`：`lifecycle.rs` 窗口生命周期 20 个测试，`request.rs` 一次查词 15 个测试，`activation.rs` 获取焦点，`foreground.rs` 前台窗口监视，`content.rs` 内容事件，`placement.rs` 位置，`timing.rs` bench 计时）。悬浮窗页面先订阅内容事件再调用 `popup_ready`，之后才显示；权限在 `capabilities/popup.json`（只有 `core:event:allow-listen`）。共 77 个测试
 - `apps/desktop/src`：悬浮窗页面（`popup/`：`content.ts`、`ipc.ts`、`App.vue`），主窗口占位。**前端还没有测试框架**
-- `tools/e2e/`：`popup-e2e.ps1`（悬浮窗内容端到端检查：真实鼠标、真实快捷键、全新 Edge，用 UI Automation 读出悬浮窗文字核对并截图；`-Pdf` 走剪贴板路径；`-HoldMs` 按住 Ctrl+Alt 指定时间）、`stuck-keys.ps1`（屏蔽键防卡键压力测试）、`list-item.html`、`key-log.html`（记录页面收到的键盘事件）
+- `tools/e2e/`：`popup-e2e.ps1`（悬浮窗内容端到端检查：真实鼠标、真实快捷键、全新 Edge，用 UI Automation 读出悬浮窗文字核对并截图；`-Pdf` 走剪贴板路径；`-HoldMs` 按住 Ctrl+Alt 指定时间）、`stuck-keys.ps1`（屏蔽键防卡键压力测试，`-Observe` 同时运行 `key-observer.ps1` 记录按键事件）、`list-item.html`、`key-log.html`（记录页面收到的键盘事件）
 - `tools/bench`：性能测试；应用在 `LEXTRAIL_BENCH_TIMINGS` 下写出分项计时；`--lookup-text TEXT` 在词典打开的状态下测（m0-benchmark 7.3）。14 个测试
 - `crates/lextrail-dict`（D044–D046）：查询、词形还原、输入分类、`is_word`（合并断词用，含完整版词头表 `extra_words`）、`view`（显示用的结果）。`examples/view.rs` 打印某个词的显示结果（JSON）
 - `apps/desktop/src-tauri/src/dictionary.rs`：词典常驻服务（第一次取到文字时打开）；`popup/content.rs` 合并断词、分类、查词，并给出查询历史要记的内容（`history::Record`）；悬浮窗页面 `popup/DictResult.vue`
@@ -58,11 +58,16 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
 
 ## 正在进行
 
-- 无。下一步在新分支上做连按两次 Ctrl+C。
+- **连按两次 Ctrl+C**（分支 `feat/double-copy`，spec `docs/specs/m1-double-copy.md`，D012 补充）：
+  - 第一阶段完成：spec；`lextrail-capture::double_copy`（`DoubleCopyDetector`：50 ms 内算同一次复制、50–500 ms 算连按、两次必须是相同文字、VS Code 整行复制算"没有选中"、自己取词期间到写回后 300 ms 的更新忽略），11 个单元测试。
+  - 终端实测（spec 第四节）：Windows Terminal、VS Code 终端里第一次 Ctrl+C 复制并清除选区，第二次中断 `ping -t`，剪贴板没有第二次更新——终端里永远不会触发，还会中断程序。
+  - 项目负责人 2026-10-21 审阅第一阶段（D012 补充二）：两条待确认都同意，另加 `CanIncludeInClipboardHistory` = 0 也忽略；开关 `[hotkeys] double_ctrl_c`（已加进 `lextrail-config`，还没接入）；自己取词的忽略期改为按查词编号记（`own_copy_started(id, at)` / `own_copy_finished(id, at)`，最后一个结束后再等 300 ms），14 个单元测试；读剪贴板要短开短关、打不开短暂重试（spec 第五节），第二阶段用 Excel 测大片复制。
+  - **左 Ctrl 卡住已查明并修复**（D014 补充，2026-10-21）：两个进程几乎同时注入按键时，钩子看到"补发在前、真实松开在后"，按键状态却是反过来更新的，Ctrl 停在按下。现在补发通过钩子后再看 2 ms、读一次按键状态：钩子看到最后一次真实事件是松开、状态仍是按下，就补发松开（Ctrl、Shift 都核对，带自己的 `dwExtraInfo`），`keyboard.rs` 16 个测试。复测：正常模式 600 次按键、105 次补发、0 次卡住，新路径补发松开 2 次；关掉屏蔽键对照 0/60；`popup-e2e.ps1` 通过。真实键盘复测（R4-8 快速连按 20 次）并入连按两次 Ctrl+C 完成后的手动测试。工具：`tools/e2e/key-observer.ps1`（独立进程的低级钩子，父进程退出或 15 分钟后自己退出；日志里有机器上的所有按键，用完即删、不提交），`stuck-keys.ps1 -Observe`。
+  - 下一步：第二阶段（Windows 剪贴板监听、`capture_context`、桌面端接入）。
 
 ## 下一步
 
-1. 连按两次 Ctrl+C（D012，默认关闭），新分支，分三个阶段提交，每个阶段更新本文件：① spec + 连按判定逻辑和单元测试；② Windows 剪贴板监听和 `capture_context`；③ e2e 和文档。完成后把这个用法加回提示文字（R1-9）。之后做快捷键设置界面。
+1. 连按两次 Ctrl+C（D012，默认关闭），分支 `feat/double-copy`，分三个阶段提交，每个阶段更新本文件：① spec + 连按判定逻辑和单元测试（已完成）；② Windows 剪贴板监听和 `capture_context`；③ e2e 和文档。完成后把这个用法加回提示文字（R1-9）。之后做快捷键设置界面。
 2. 查询历史的界面（列表、删除）不在 M1；"不记录查询历史"的界面开关随快捷键设置界面一起做。
 
 待跟进（已在 ROADMAP 中，或在此记录）：
@@ -79,8 +84,7 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
 
 ## 遇到的问题 / 需要项目负责人决定
 
-- **（新发现，2026-10-20）屏蔽键压力测试又出现左 Ctrl 卡住**：`stuck-keys.ps1` 在间隔 0 ms（松开与补发同时）时约 1/4 的按键之后左 Ctrl 仍是按下状态（40 次中 6 次、20 次中 5 次；1–20 ms 的间隔都正常）。日志里这些按键钩子看到的顺序是 `A2v* A2^`（补发在前、真实松开在后，按设计不该卡住），但 700 ms 后 `GetAsyncKeyState` 仍报告按下。屏蔽键代码 10-17 以来没有改过，当时 120 次没有卡住；原因未查。`popup-e2e.ps1`（WScript `SendKeys "^%x"`）也出现过：钩子看到 `A4^ A2v*`，没有看到真实的 Ctrl 松开，结束时左 Ctrl 仍按着（之后 `-Pdf` 那次失败就是因为它）。真实键盘松开没有这么快，影响可能小，但卡住的 Ctrl 会作用到用户接下来的按键。**需要项目负责人决定：先查这个，还是先做连按两次 Ctrl+C。** 两个 e2e 脚本现在退出前会松开仍按着的修饰键（只发松开）并算作失败。
-- 其他无需要现在决定的事项。服务端许可证写法和 `apps/server` 是否加入 Cargo workspace 推迟到 M4（见 `DECISIONS.md` 待确认事项）。
+- 没有需要现在决定的事项。服务端许可证写法和 `apps/server` 是否加入 Cargo workspace 推迟到 M4（见 `DECISIONS.md` 待确认事项）。
 - 需要关注：冷启动两次重测分别为 351 ms 和 281 ms（预算 400 ms），波动较大；冷启动几乎全部是窗口创建和页面加载（约 257–274 ms）；取词原来排在创建窗口之后（R3-P3），现已改为先启动取词线程，两者并行。2026-10-20 接入词典后三次为 301–376 ms，同时测的 `main` 为 390 ms（m0-benchmark 7.3），继续观察。
 
 已知情况（不需要处理）：
