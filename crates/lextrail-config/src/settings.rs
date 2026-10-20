@@ -26,20 +26,24 @@ impl Default for Settings {
     }
 }
 
-/// Global hotkeys as accelerator strings, e.g. `"Ctrl+Alt+X"`. Validation happens where
-/// they are registered, so an invalid value is reported to the user instead of
-/// making the whole file unreadable.
+/// How lookups are triggered: global hotkeys (accelerator strings, e.g. `"Ctrl+Alt+X"`)
+/// and other trigger switches. Hotkeys are validated where they are registered, so an
+/// invalid value is reported to the user instead of making the whole file unreadable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HotkeySettings {
     /// Capture the selection and show the popup. Provisional default per D014.
     pub lookup: String,
+    /// Look up a selection by pressing Ctrl+C twice quickly (D012, off by default;
+    /// `docs/specs/m1-double-copy.md`).
+    pub double_ctrl_c: bool,
 }
 
 impl Default for HotkeySettings {
     fn default() -> Self {
         Self {
             lookup: "Ctrl+Alt+X".to_owned(),
+            double_ctrl_c: false,
         }
     }
 }
@@ -84,6 +88,7 @@ mod tests {
         let settings = Settings::default();
         assert_eq!(settings.version, SCHEMA_VERSION);
         assert_eq!(settings.hotkeys.lookup, "Ctrl+Alt+X"); // D014
+        assert!(!settings.hotkeys.double_ctrl_c); // D012
         assert_eq!(settings.popup.mode, PopupMode::Responsive); // D009
         assert!(settings.history.record);
     }
@@ -96,6 +101,7 @@ mod tests {
             },
             hotkeys: HotkeySettings {
                 lookup: "Ctrl+Shift+F1".into(),
+                double_ctrl_c: true,
             },
             history: HistorySettings { record: false },
             ..Settings::default()

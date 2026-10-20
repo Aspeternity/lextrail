@@ -11,7 +11,8 @@
 //!   and a program that writes something else shortly after does not trigger;
 //! - VS Code's whole-line copies without a selection (D043) count as "nothing selected";
 //! - updates caused by LexTrail's own clipboard fallback are ignored, from the start of
-//!   the hotkey capture until [`OWN_COPY_GRACE`] after it finished.
+//!   a hotkey capture until [`OWN_COPY_GRACE`] after the last capture in progress
+//!   finished (two quick hotkey presses overlap, R1-5).
 
 use std::time::{Duration, Instant};
 
@@ -57,18 +58,15 @@ struct Copy {
     fired: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct OwnCopy {
-    started: Instant,
-    finished: Option<Instant>,
-}
-
 /// Follows clipboard updates and reports double Ctrl+C presses. Not thread safe by
 /// itself; the platform side owns one and feeds it from its listener.
 #[derive(Debug, Default)]
 pub struct DoubleCopyDetector {
     last: Option<Copy>,
-    own: Option<OwnCopy>,
+    /// Hotkey captures in progress: their id and start.
+    own: Vec<(u64, Instant)>,
+    /// When the last own capture in progress finished.
+    own_finished: Option<Instant>,
 }
 
 impl DoubleCopyDetector {
@@ -76,21 +74,25 @@ impl DoubleCopyDetector {
         Self::default()
     }
 
-    /// A hotkey capture started at `at`; its clipboard fallback may copy and restore.
-    /// Updates from now until [`OWN_COPY_GRACE`] after [`Self::own_copy_finished`] are
-    /// ignored, and a copy made before cannot pair with one made after.
-    pub fn own_copy_started(&mut self, at: Instant) {
-        self.own = Some(OwnCopy {
-            started: at,
-            finished: None,
-        });
+    /// Hotkey capture `id` (the caller's lookup number) started at `at`; its clipboard
+    /// fallback may copy and restore. Updates are ignored from now until
+    /// [`OWN_COPY_GRACE`] after the last capture in progress finished
+    /// ([`Self::own_copy_finished`]), and a copy made before cannot pair with one made
+    /// after.
+    pub fn own_copy_started(&mut self, id: u64, at: Instant) {
+        self.own.retain(|&(other, _)| other != id);
+        self.own.push((id, at));
+        self.own_finished = None;
         self.last = None;
     }
 
-    /// The hotkey capture that started last finished at `at` (clipboard restored).
-    pub fn own_copy_finished(&mut self, at: Instant) {
-        if let Some(own) = &mut self.own {
-            own.finished = Some(at);
+    /// Hotkey capture `id` finished at `at` (clipboard restored). Unknown ids (already
+    /// finished, or given up on after [`OWN_COPY_MAX`]) are ignored.
+    pub fn own_copy_finished(&mut self, id: u64, at: Instant) {
+        let before = self.own.len();
+        self.own.retain(|&(other, _)| other != id);
+        if self.own.is_empty() && self.own.len() < before {
+            self.own_finished = Some(at);
         }
     }
 
@@ -133,17 +135,19 @@ impl DoubleCopyDetector {
     }
 
     fn suppressed(&mut self, at: Instant) -> bool {
-        let Some(own) = self.own else {
-            return false;
-        };
-        let active = match own.finished {
-            Some(end) => at < end + OWN_COPY_GRACE,
-            None => at.saturating_duration_since(own.started) < OWN_COPY_MAX,
-        };
-        if !active {
-            self.own = None;
+        // A capture that never reported its end stops counting.
+        self.own
+            .retain(|&(_, started)| at.saturating_duration_since(started) < OWN_COPY_MAX);
+        if !self.own.is_empty() {
+            return true;
         }
-        active
+        match self.own_finished {
+            Some(end) if at < end + OWN_COPY_GRACE => true,
+            _ => {
+                self.own_finished = None;
+                false
+            }
+        }
     }
 }
 
@@ -363,10 +367,10 @@ mod tests {
         let t0 = Instant::now();
         let ms = |n: u64| t0 + Duration::from_millis(n);
         let mut d = DoubleCopyDetector::new();
-        d.own_copy_started(ms(0));
+        d.own_copy_started(1, ms(0));
         assert_eq!(d.on_update(ms(160), text("a")), None);
         assert_eq!(d.on_update(ms(400), text("a")), None);
-        d.own_copy_finished(ms(410));
+        d.own_copy_finished(1, ms(410));
         // The restore's notification arriving late is still ignored.
         assert_eq!(d.on_update(ms(600), text("a")), None);
         // After the grace period, copies count again, and nothing pairs with the above.
@@ -380,8 +384,8 @@ mod tests {
         let ms = |n: u64| t0 + Duration::from_millis(n);
         let mut d = DoubleCopyDetector::new();
         assert_eq!(d.on_update(ms(0), text("a")), None);
-        d.own_copy_started(ms(50));
-        d.own_copy_finished(ms(60));
+        d.own_copy_started(1, ms(50));
+        d.own_copy_finished(1, ms(60));
         assert_eq!(d.on_update(ms(400), text("a")), None);
     }
 
@@ -389,8 +393,64 @@ mod tests {
     fn an_own_capture_without_an_end_stops_suppressing() {
         let t0 = Instant::now();
         let mut d = DoubleCopyDetector::new();
-        d.own_copy_started(t0);
+        d.own_copy_started(1, t0);
         let late = t0 + OWN_COPY_MAX;
+        assert_eq!(d.on_update(late, text("a")), None);
+        assert_eq!(
+            d.on_update(late + Duration::from_millis(200), text("a")),
+            found("a")
+        );
+    }
+
+    #[test]
+    fn overlapping_own_captures_suppress_until_the_last_one_ends() {
+        // Two quick hotkey presses (R1-5): the first capture ending must not end the
+        // second one's suppression early.
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        let mut d = DoubleCopyDetector::new();
+        d.own_copy_started(1, ms(0));
+        d.own_copy_started(2, ms(100));
+        d.own_copy_finished(1, ms(300));
+        // Long after the first one's grace period, the second's copy and restore.
+        assert_eq!(d.on_update(ms(700), text("a")), None);
+        assert_eq!(d.on_update(ms(900), text("a")), None);
+        d.own_copy_finished(2, ms(950));
+        assert_eq!(d.on_update(ms(1200), text("a")), None);
+        // Only then do copies count again.
+        assert_eq!(d.on_update(ms(1250), text("a")), None);
+        assert_eq!(d.on_update(ms(1450), text("a")), found("a"));
+    }
+
+    #[test]
+    fn the_second_capture_may_finish_first() {
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        let mut d = DoubleCopyDetector::new();
+        d.own_copy_started(1, ms(0));
+        d.own_copy_started(2, ms(100));
+        d.own_copy_finished(2, ms(300));
+        assert_eq!(d.on_update(ms(700), text("a")), None);
+        d.own_copy_finished(1, ms(800));
+        // A repeated or unknown end changes nothing.
+        d.own_copy_finished(1, ms(900));
+        d.own_copy_finished(7, ms(900));
+        assert_eq!(d.on_update(ms(1050), text("a")), None);
+        assert_eq!(d.on_update(ms(1100), text("a")), None);
+        assert_eq!(d.on_update(ms(1300), text("a")), found("a"));
+    }
+
+    #[test]
+    fn a_capture_without_an_end_does_not_hold_up_the_others() {
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        let mut d = DoubleCopyDetector::new();
+        d.own_copy_started(1, ms(0));
+        d.own_copy_started(2, ms(100));
+        d.own_copy_finished(2, ms(200));
+        // Capture 1 never ends: suppressed until OWN_COPY_MAX after its start.
+        assert_eq!(d.on_update(ms(5000), text("a")), None);
+        let late = ms(0) + OWN_COPY_MAX;
         assert_eq!(d.on_update(late, text("a")), None);
         assert_eq!(
             d.on_update(late + Duration::from_millis(200), text("a")),

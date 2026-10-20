@@ -30,7 +30,11 @@ pub struct Binding {
 
 /// The bindings configured in the settings file.
 pub fn bindings_from(settings: &HotkeySettings) -> Vec<Binding> {
-    let HotkeySettings { lookup } = settings;
+    // Double Ctrl+C is a clipboard listener, not a registered hotkey.
+    let HotkeySettings {
+        lookup,
+        double_ctrl_c: _,
+    } = settings;
     vec![Binding {
         action: HotkeyAction::Lookup,
         accelerator: lookup.clone(),
@@ -182,6 +186,7 @@ mod tests {
     fn bindings_follow_settings() {
         let settings = HotkeySettings {
             lookup: "Ctrl+Shift+F1".into(),
+            ..HotkeySettings::default()
         };
         assert_eq!(
             bindings_from(&settings),
