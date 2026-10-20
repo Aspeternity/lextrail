@@ -61,7 +61,8 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
 - **连按两次 Ctrl+C**（分支 `feat/double-copy`，spec `docs/specs/m1-double-copy.md`，D012 补充）：
   - 第一阶段完成：spec；`lextrail-capture::double_copy`（`DoubleCopyDetector`：50 ms 内算同一次复制、50–500 ms 算连按、两次必须是相同文字、VS Code 整行复制算"没有选中"、自己取词期间到写回后 300 ms 的更新忽略），11 个单元测试。
   - 终端实测（spec 第四节）：Windows Terminal、VS Code 终端里第一次 Ctrl+C 复制并清除选区，第二次中断 `ping -t`，剪贴板没有第二次更新——终端里永远不会触发，还会中断程序。
-  - spec 里两条"待确认"：带 `ExcludeClipboardContentFromMonitorProcessing` 标记（密码管理器）的更新忽略；LexTrail 自己的窗口在前台时忽略。开关位置 `[hotkeys] double_ctrl_c`。
+  - 项目负责人 2026-10-21 审阅第一阶段（D012 补充二）：两条待确认都同意，另加 `CanIncludeInClipboardHistory` = 0 也忽略；开关 `[hotkeys] double_ctrl_c`（已加进 `lextrail-config`，还没接入）；自己取词的忽略期改为按查词编号记（`own_copy_started(id, at)` / `own_copy_finished(id, at)`，最后一个结束后再等 300 ms），14 个单元测试；读剪贴板要短开短关、打不开短暂重试（spec 第五节），第二阶段用 Excel 测大片复制。
+  - **项目负责人要求先查左 Ctrl 卡住（见"遇到的问题"），查完再做第二阶段。**
   - 下一步：第二阶段（Windows 剪贴板监听、`capture_context`、桌面端接入）。
 
 ## 下一步
@@ -83,7 +84,7 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
 
 ## 遇到的问题 / 需要项目负责人决定
 
-- **（新发现，2026-10-20）屏蔽键压力测试又出现左 Ctrl 卡住**：`stuck-keys.ps1` 在间隔 0 ms（松开与补发同时）时约 1/4 的按键之后左 Ctrl 仍是按下状态（40 次中 6 次、20 次中 5 次；1–20 ms 的间隔都正常）。日志里这些按键钩子看到的顺序是 `A2v* A2^`（补发在前、真实松开在后，按设计不该卡住），但 700 ms 后 `GetAsyncKeyState` 仍报告按下。屏蔽键代码 10-17 以来没有改过，当时 120 次没有卡住；原因未查。`popup-e2e.ps1`（WScript `SendKeys "^%x"`）也出现过：钩子看到 `A4^ A2v*`，没有看到真实的 Ctrl 松开，结束时左 Ctrl 仍按着（之后 `-Pdf` 那次失败就是因为它）。真实键盘松开没有这么快，影响可能小，但卡住的 Ctrl 会作用到用户接下来的按键。**需要项目负责人决定：先查这个，还是先做连按两次 Ctrl+C。** 两个 e2e 脚本现在退出前会松开仍按着的修饰键（只发松开）并算作失败。
+- **（新发现，2026-10-20）屏蔽键压力测试又出现左 Ctrl 卡住**：`stuck-keys.ps1` 在间隔 0 ms（松开与补发同时）时约 1/4 的按键之后左 Ctrl 仍是按下状态（40 次中 6 次、20 次中 5 次；1–20 ms 的间隔都正常）。日志里这些按键钩子看到的顺序是 `A2v* A2^`（补发在前、真实松开在后，按设计不该卡住），但 700 ms 后 `GetAsyncKeyState` 仍报告按下。屏蔽键代码 10-17 以来没有改过，当时 120 次没有卡住；原因未查。`popup-e2e.ps1`（WScript `SendKeys "^%x"`）也出现过：钩子看到 `A4^ A2v*`，没有看到真实的 Ctrl 松开，结束时左 Ctrl 仍按着（之后 `-Pdf` 那次失败就是因为它）。真实键盘松开没有这么快，影响可能小，但卡住的 Ctrl 会作用到用户接下来的按键。**项目负责人决定先查这个（2026-10-21），先出数据、不改代码**：间隔 0 ms，分正常 / `LEXTRAIL_DEBUG_NO_ALT_MASK=1` / `LEXTRAIL_DEBUG_ALT_MASK_E8=1` 三种各跑一次；再用 e5ac2db 的 `stuck-keys.ps1` 对现在的程序跑一次对比；每次卡住记下事件顺序、injected 标记、时间戳和 `GetAsyncKeyState` / `GetKeyState`。工具：`tools/e2e/key-observer.ps1`（独立进程的低级钩子，记录每个按键事件），`stuck-keys.ps1 -Observe`（卡住时打印这次的事件和按键状态；每次还记下用哪种方式把测试窗口调到前台）。结果先汇报再决定修不修。 两个 e2e 脚本现在退出前会松开仍按着的修饰键（只发松开）并算作失败。
 - 其他无需要现在决定的事项。服务端许可证写法和 `apps/server` 是否加入 Cargo workspace 推迟到 M4（见 `DECISIONS.md` 待确认事项）。
 - 需要关注：冷启动两次重测分别为 351 ms 和 281 ms（预算 400 ms），波动较大；冷启动几乎全部是窗口创建和页面加载（约 257–274 ms）；取词原来排在创建窗口之后（R3-P3），现已改为先启动取词线程，两者并行。2026-10-20 接入词典后三次为 301–376 ms，同时测的 `main` 为 390 ms（m0-benchmark 7.3），继续观察。
 
