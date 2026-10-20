@@ -101,3 +101,42 @@ SQLite 文件 `data/build/lextrail-dict-core.db`，只读，查询时按需从�
 - 约 1,700 个没有词性的义项以"字母 + 点"开头，多为词缀词条的 `comb.form` 等写法，原样保留。
 - 词缀词条（`-an`、`-ant` 等）的义项较长，带 `[构成形容词]` 之类的标记（记为 `domain`）。
 - 33.4 MiB 比统计时估计的略大（义项拆开后每行都有主键和词性）；安装包压缩后的大小到 M6 打包时再看。
+
+## 8. 查询与词形还原（`lextrail-dict`）
+
+`Dictionary::open` 只读打开词典文件，检查 `meta.format_version`，不认识的版本（或不是词典文件）拒绝打开。`Dictionary::lookup(text)`：
+
+1. **规范化**：去掉首尾空白和标点（引号、括号、句号等），弯引号 `’` 改为 `'`，去掉所有格 `'s`，中间的连续空白合并为一个空格。
+2. **直接查**（不区分大小写）：大小写完全相同的词条优先，其次小写词条，再其次按来源顺序第一条。**首字母大写的词**（`March`、`The`）同时有小写和大写词条时两个都给，小写在前（句首大写很常见）。
+3. **`exchange` 词形**（`forms` 表）：查到原形时一并给出原形词条；有多个原形（`found` → find / found）时取词频更高的。
+4. **后缀规则兜底**（只在 3 查不到、且直接查不到或查到的只是"xx 的过去式"之类说明时）：`-ies/-ied/-ier/-iest → -y`、`-ying → -ie`、`-es`、`-s`、`-ed`、`-ing`、`-er`、`-est`（含双写辅音 `stopped → stop`、补 `e` 的 `making → make`）。候选原形必须在词典里，按顺序取第一个；`-er/-est` 只在原形有形容词义项时才算比较级 / 最高级（`optimizer` 不还原为 `optimize`）。
+5. **短语**：直接查不到时，把每个词换成 `exchange` 原形再查（`gave up` → `give up`）。
+
+结果：
+- `entries`：查到的词条自己的词条（如果它不只是"xx 的过去式"之类说明），然后是原形的词条。例如 `launched` 只给 `launch`；`better` 给 `better`（更好的、改善）和 `good` 两个。
+- `inflection`：原形、词形种类（过去式、复数等）和来源（`exchange` / 后缀规则 / 短语）。
+- `lemma()`：写入查询历史 `lookups.lemma` 的原形。
+
+带连字符的复合词（`self-attention`）目前整体查不到就返回 `None`，不拆开查。
+
+## 9. 覆盖率检查：Attention Is All You Need（1706.03762v7）
+
+方法：`pdftotext` 提取 arXiv PDF 全文，用 `cargo run -p lextrail-dict --release --example coverage -- <词典> <文本>` 统计（字母串，保留词内 `'` 和 `-`；去掉单个字母；行末连字符在合并后的词能查到时合并）。
+
+| 项 | 不同的词 | 出现次数 |
+|---|---|---|
+| 全部 | 1,548 | 5,302 |
+| 直接查到 | 881 | 3,738 |
+| 经 `exchange` 词形查到 | 384 | 1,001 |
+| 经后缀规则查到（embeddings → embedding、subspaces → subspace） | 3 | 9 |
+| 带连字符、整体查不到的复合词 | 61（其中 55 个各部分都能查到） | — |
+| 查不到 | 219 | 409 |
+
+查不到的 219 个词分类：
+- **人名、机构、会议、产品名**（约 150 个）：Vaswani、Shazeer、Bengio、Google、NVIDIA、WMT、ACL、arXiv、ByteNet、Xception 等。
+- **缩写**：GPU(s)、LSTM、RNN(s)、ReLU、FFN、PCFG、TFLOPS 等。
+- **公式变量和 PDF 提取残片**：dmodel、dv、dff、logk、headi、Pdrop、QK、ϵls，以及邮箱 / 网址片段。
+- **PDF 提取时丢了连字符的复合词**：attentionbased、sequencealigned、positionwise、sourcetarget。
+- **真正的普通词汇缺口**（ECDICT 没有的学术 / 技术词）：convolutional（9 次）、softmax（7）、codebase（3）、warmup（3）、hyperparameters（2）、parallelization（2）、optimizer（2）、treebank（2）、overfitting、parallelizable、subword、depthwise、params（各 1）。
+
+`exchange` 还原结果抽查都正确：best / better → good、worse → bad、is / was / were → be、has → have、could → can、found → find、left → leave、took → take、further → far。
