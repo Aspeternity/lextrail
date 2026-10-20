@@ -49,6 +49,13 @@ a click outside closed the last popup; every activation must then be "Attached" 
 "AlreadyInFront": after Esc, showing the popup already brings it to the front) and the
 popup must keep the focus (no focus ping-pong).
 
+The popup's height follows its content (D046 supplement): every lookup's window height
+is printed, and all lookups of a run must have the same height (the first popup used to
+be taller). -Word run looks up "run" (run-word.html) instead of "launch": many senses.
+-Expand then unfolds every section through UI Automation (no mouse): the window must
+reach its highest (min(520 logical px, 60% of the monitor's work area)) and its body
+must scroll.
+
 With -Chrome the page opens in Google Chrome instead of Edge (incognito unless
 -NoInPrivate; not with -Pdf). -ExpectIgnored checks the opposite of a lookup: no popup
 may show, no lookup may be started or recorded. Use it with -DoubleCopy where double
@@ -89,6 +96,8 @@ param(
   [switch]$Chrome,
   [switch]$ExpectIgnored,
   [switch]$ForceAttach,
+  [ValidateSet("launch", "run")][string]$Word = "launch",
+  [switch]$Expand,
   [ValidateSet("Esc", "Click", "ClickThenEsc")][string]$CloseBy = "Esc"
 )
 $ErrorActionPreference = "Stop"
@@ -97,7 +106,9 @@ $App = (Resolve-Path $App).Path
 # Only debug builds honour the directory overrides below.
 if ($App -like "*\release\*") { throw "use a debug build: release builds would use the real settings and history" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
-$expected = if ($Pdf) { @("launch") } else { @("launch", "launch missiles at ships.") }
+$expected = if ($Word -eq "run") { @("run", "run the tests again.") }
+  elseif ($Pdf) { @("launch") } else { @("launch", "launch missiles at ships.") }
+if ($Word -eq "run" -and $Pdf) { throw "-Word run is for the web page only" }
 # The clipboard fallback gives up after 3 s of held keys (D043).
 # Built from code points: Windows PowerShell reads a script without BOM in the ANSI code page.
 function Text([int[]]$CodePoints) { -join ($CodePoints | ForEach-Object { [char]$_ }) }
@@ -112,7 +123,7 @@ $expected += (Text 0x6765, 0x81EA) + " $browserProc.exe"
 if ($Chrome -and $Pdf) { throw "-Chrome is for the web page only" }
 if ($HoldMs -gt 3000) { $expected = @($keysHeldTitle) }
 
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing, System.Windows.Forms
 Add-Type @"
 using System; using System.Runtime.InteropServices;
 public static class LtE2e {
@@ -215,7 +226,47 @@ function Get-PopupText([IntPtr]$Hwnd, [string]$Want = $expected[0]) {
   return $names
 }
 
+# The popup's highest (D046 supplement), in physical pixels, for the monitor it is on.
+function Get-MaxHeight([IntPtr]$Hwnd) {
+  $scale = [LtE2e]::GetDpiForWindow($Hwnd) / 96.0
+  $area = [System.Windows.Forms.Screen]::FromHandle($Hwnd).WorkingArea.Height
+  [Math]::Min([Math]::Round(520 * $scale), [Math]::Floor($area * 0.6))
+}
+
+# Unfolds every folded section ("more", "specialist senses") through UI Automation.
+function Expand-All([IntPtr]$Hwnd) {
+  $root = [System.Windows.Automation.AutomationElement]::FromHandle($Hwnd)
+  $folded = [string][char]0x25B8
+  $count = 0
+  for ($n = 0; $n -lt 8; $n++) {
+    $button = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+      [System.Windows.Automation.Condition]::TrueCondition) |
+      Where-Object { $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and $_.Current.Name.StartsWith($folded) } |
+      Select-Object -First 1
+    if (-not $button) { break }
+    $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    $count++
+    Start-Sleep -Milliseconds 300
+  }
+  $count
+}
+
+# Whether some element of the popup scrolls vertically.
+function Test-Scrollable([IntPtr]$Hwnd) {
+  $root = [System.Windows.Automation.AutomationElement]::FromHandle($Hwnd)
+  foreach ($e in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+      [System.Windows.Automation.Condition]::TrueCondition)) {
+    $pattern = $null
+    if ($e.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$pattern) -and
+        $pattern.Current.VerticallyScrollable) { return $true }
+  }
+  $false
+}
+
+function Get-Height([IntPtr]$Hwnd) { $r = [LtE2e]::Visible($Hwnd); $r.B - $r.T }
+
 $failures = 0
+$heights = @()
 Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
 $log = Join-Path $OutDir "app.log"
 if ($ResumeDelayMs -gt 0) { $env:LEXTRAIL_DEBUG_RESUME_DELAY_MS = "$ResumeDelayMs" }
@@ -235,7 +286,8 @@ Start-Sleep 4
 $edge = if ($Chrome) { "$env:ProgramFiles\Google\Chrome\Application\chrome.exe" }
   else { "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe" }
 $profileDir = Join-Path $env:TEMP ("lextrail-e2e-edge-" + [guid]::NewGuid())
-$url = "file:///" + (Join-Path $here "list-item.html").Replace([char]92, [char]47)
+$pageFile = if ($Word -eq "run") { "run-word.html" } else { "list-item.html" }
+$url = "file:///" + (Join-Path $here $pageFile).Replace([char]92, [char]47)
 $private = if ($NoInPrivate) { @("--disable-sync", "--no-default-browser-check") }
   elseif ($Chrome) { @("--incognito", "--no-default-browser-check") } else { @("--inprivate") }
 if ($Pdf) {
@@ -254,7 +306,7 @@ Start-Sleep 6
 $ws = New-Object -ComObject WScript.Shell
 $page = Get-Process $browserProc | Where-Object { $_.MainWindowTitle -like "lextrail-e2e*" } | Select-Object -First 1
 # Where "launch" is, in logical pixels from the window's top left corner.
-$word = if ($Pdf) { @(283, 230) } else { @(160, 110) }
+$word = if ($Pdf) { @(283, 230) } elseif ($Word -eq "run") { @(90, 110) } else { @(160, 110) }
 if ($Pdf -and $page) { [LtE2e]::Resize($page.MainWindowHandle, 1050, 1000); Start-Sleep 1 }
 
 try {
@@ -306,18 +358,29 @@ try {
     $visible = $popup -ne [IntPtr]::Zero -and [LtE2e]::IsWindowVisible($popup)
     $focused = $visible -and ([LtE2e]::GetForegroundWindow() -eq $popup)
     $text = @(); $shot = ""
+    $height = 0; $expandOk = $true
     if ($visible) {
       $shot = Join-Path $OutDir "popup-$i.png"; Save-Screenshot $popup $shot
       $text = Get-PopupText $popup
+      $height = Get-Height $popup; $heights += $height
+      if ($Expand) {
+        $unfolded = Expand-All $popup
+        Start-Sleep -Milliseconds 300
+        $tall = Get-Height $popup; $max = Get-MaxHeight $popup
+        $scrolls = Test-Scrollable $popup
+        $expandOk = $unfolded -gt 0 -and [Math]::Abs($tall - $max) -le 2 -and $scrolls
+        Save-Screenshot $popup (Join-Path $OutDir "popup-$i-expanded.png")
+        "  expanded $unfolded section(s): height $height -> $tall (highest $max), scrolls=$scrolls" + $(if ($expandOk) { "" } else { "  (FAIL)" })
+      }
     }
     $missing = @($expected | Where-Object { $text -notcontains $_ })
     # Held for over a second (and read before the 3 s limit): the hint must be up.
     $hintOk = -not ($HoldMs -gt 1400 -and $HoldMs -le 3000) -or ($heldText -contains $holdHint)
-    $ok = $responds -and $visible -and $focused -and $missing.Count -eq 0 -and $hintOk
+    $ok = $responds -and $visible -and $focused -and $missing.Count -eq 0 -and $hintOk -and $expandOk
     # Nothing may show; the app must still answer if its window exists.
     if ($ExpectIgnored) { $missing = @(); $ok = -not $visible -and ($popup -eq [IntPtr]::Zero -or $responds) }
     if (-not $ok) { $failures++ }
-    "lookup ${i}: " + $(if ($ok) { "PASS" } else { "FAIL" }) + " (responds=$responds visible=$visible focused=$focused)"
+    "lookup ${i}: " + $(if ($ok) { "PASS" } else { "FAIL" }) + " (responds=$responds visible=$visible focused=$focused height=$height)"
     "  popup text: " + ($text -join " | ")
     if ($missing.Count) { "  missing: " + ($missing -join " | ") }
     if ($ExpectIgnored -and $visible) { "  a popup showed although none was expected" }
@@ -357,6 +420,13 @@ try {
 }
 "app log: $log"
 Get-Content $log | Select-String "capture #|bring to front|WindowReady|resume delayed|Captured|activated|double copy" | ForEach-Object { "  " + $_.Line }
+# The same content must give the same height every time (the first popup was taller).
+if ($heights.Count -gt 1) {
+  $spread = ($heights | Measure-Object -Maximum -Minimum)
+  $sameOk = $spread.Maximum - $spread.Minimum -le 1
+  "popup heights: " + ($heights -join ", ") + $(if ($sameOk) { "" } else { "  (FAIL: not the same)" })
+  if (-not $sameOk) { $failures++ }
+}
 # -ForceAttach: every activation took the fallback, and the focus did not bounce.
 $fronts = @(Get-Content $log | Select-String "popup: bring to front: (\w+)" | ForEach-Object { $_.Matches[0].Groups[1].Value })
 $refocus = @(Get-Content $log | Select-String "focusing the page").Count
