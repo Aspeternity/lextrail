@@ -179,12 +179,12 @@
 | R4-2 | R2-1 | **[release]** VS Code Markdown 预览中拖选一个词 → 快捷键 → 看到结果后按 Esc → 按 ↓，重复 3 次；再在编辑器和集成终端中各做 1 次 | 没有"文件(F)"被框住，按 ↓ 不弹出菜单 | |
 | R4-3 | R2-2 | Word、记事本、Edge 中各查一次词后按 Esc | Word 不出现 KeyTips，记事本、Edge 不出现菜单栏激活 | |
 | R4-4 | R3-P3、P1 | 退出 LexTrail 后重新启动，**启动后的第一次查词在 VS Code 编辑器里做**（选中一个单词）→ 看到结果后按 Esc → 按 ↓ | 取到单词；菜单栏没有被激活。日志 `start +` 在 20 ms 以内；`keys=` 与之后几次相近（约 100–250 ms，取决于松手快慢），不再是 10 ms 左右 | |
-| R4-5 | R3-P3 | 再退出、重新启动，第一次查词在 Edge PDF 里做 | 同 R4-4：取到单词；`keys=` 与之后几次相近 | |
+| R4-5 | R3-P3 | 再退出、重新启动，第一次查词在 Edge PDF 里做 | 同 R4-4：取到单词；`keys=` 与之后几次相近 | ✅（AI 模拟按键，2026-10-20，debug 版）`popup-e2e.ps1 -Pdf -HoldMs 200 -Lookups 3`，启动后第 1 次：`start +19.3ms; uia=unsupported 53.1ms x2 [chromium_pdf]; clipboard=captured 170.6ms keys=158.0ms`；第 2、3 次 `keys=196.7ms`、`198.2ms`。三次都取到 launch，悬浮窗获得焦点，截图核对 |
 | R4-6 | R3-P2、P4 | Edge PDF 中选中单词，按快捷键后**按住 Ctrl+Alt 约 2 秒**再松开；再做一次按住超过 3 秒 | 约 2 秒：按住约 1 秒后显示"松开快捷键后取词…"，松手后显示单词；超过 3 秒：显示"请松开快捷键后再试"（不再是"取词超时"），剪贴板保持 | |
 | R4-7 | R3-P4 | **[release]** Edge PDF、VS Code 编辑器中正常快速按一下快捷键，各 3 次 | 直接显示结果，不再先闪"正在取词…" | |
 | R4-8 | D014 补充 | 在记事本里**快速连按快捷键 20 次**（每次看到悬浮窗就按 Esc），然后在记事本里打几个字母 | 打出来的是字母（Ctrl 没有卡住，没有触发 Ctrl+字母的快捷键）；日志中如有 `released first`，记下次数 | |
-| R4-9 | R3-7 | VS Code 集成终端中运行 `ping -t 127.0.0.1`，什么都不选，按快捷键 | 显示"没有选中文字"；ping 继续运行，没有被中断 | |
-| R4-10 | 回归 | Edge 网页（1.1）、Word（3.1）、conhost 选词（R3-8）各查一次 | 与之前相同 | |
+| R4-9 | R3-7 | VS Code 集成终端中运行 `ping -t 127.0.0.1`，什么都不选，按快捷键 | 显示"没有选中文字"；ping 继续运行，没有被中断 | ✅（AI 模拟按键，2026-10-20，debug 版，单独的 VS Code 测试配置）悬浮窗显示"没有选中文字"（截图 + UIA 读回）；`uia=no_selection 54.9ms x2; clipboard=no_selection 511.2ms keys=101.2ms [clipboard_unchanged]`；前后截图对比 ping 持续输出，没有统计行或 `^C`，ping 进程仍在；剪贴板保持 |
+| R4-10 | 回归 | Edge 网页（1.1）、Word（3.1）、conhost 选词（R3-8）各查一次 | 与之前相同 | ✅（AI 模拟按键，2026-10-20，debug 版，真实鼠标双击选词）Edge 网页：launch + 句子，`uia=captured 56.3ms x2`；Word：arrived + 句子，`uia=captured 21.2ms`，查词后选区保留、没有 KeyTips；conhost：address，`clipboard=captured 155.7ms keys=138.0ms [ctrl_insert]`，命令行没有多余字符，剪贴板保持。三项都截图核对，日志里没有 `released first` |
 
 AI 已用模拟按键做过的自动检查（2026-10-17，debug 版）：`popup-e2e.ps1` 网页、`-Pdf`、`-Pdf -HoldMs 200`（3 次，均未出现"正在取词…"）、`-Pdf -HoldMs 2000`（按住期间显示"松开快捷键后取词…"，截图核对）、`-Pdf -HoldMs 3600`（显示"请松开快捷键后再试"，截图核对）全部通过；`stuck-keys.ps1` 120 次按键没有修饰键卡住，其中 1 次触发了"先松开后补发"的竞争并已补发松开。模拟按键不能代替 R4-1 至 R4-4、R4-8 的真实键盘测试。
 
