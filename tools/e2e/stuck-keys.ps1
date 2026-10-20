@@ -64,7 +64,8 @@ public static class LtKeys {
   public static string KeyStates(IntPtr testWindow) {
     string s = "own: " + States();
     var fg = GetForegroundWindow();
-    foreach (var w in new[] { testWindow, fg }) {
+    if (fg == testWindow) s += "; foreground is the test window";
+    foreach (var w in fg == testWindow ? new[] { testWindow } : new[] { testWindow, fg }) {
       uint tid = GetWindowThreadProcessId(w, IntPtr.Zero);
       string name = w == testWindow ? "test window" : "foreground " + w;
       if (tid == 0 || tid == GetCurrentThreadId()) continue;
@@ -124,11 +125,6 @@ $log = Join-Path $OutDir "stuck-keys-app.log"
 # Scratch settings and history, never the user's own (debug builds only).
 $env:LEXTRAIL_DEBUG_CONFIG_DIR = Join-Path $OutDir ("config-" + [guid]::NewGuid())
 $env:LEXTRAIL_DEBUG_DATA_DIR = Join-Path $OutDir ("data-" + [guid]::NewGuid())
-if ($Observe) {
-  $keysLog = Join-Path $OutDir "stuck-keys-events.log"
-  Remove-Item $keysLog -ErrorAction SilentlyContinue
-  $observer = Start-Process powershell -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "key-observer.ps1"), "-Log", $keysLog -WindowStyle Hidden -PassThru
-}
 Start-Process $App -RedirectStandardError $log -WindowStyle Hidden
 Remove-Item Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR -ErrorAction SilentlyContinue
 Start-Sleep 4
@@ -148,6 +144,12 @@ $ws = New-Object -ComObject WScript.Shell
 
 $stuck = 0; $n = 0
 try {
+  # Inside the try, so that the finally stops it whatever happens.
+  if ($Observe) {
+    $keysLog = Join-Path $OutDir "stuck-keys-events.log"
+    Remove-Item $keysLog -ErrorAction SilentlyContinue
+    $observer = Start-Process powershell -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "key-observer.ps1"), "-Log", $keysLog, "-ParentPid", $PID -WindowStyle Hidden -PassThru
+  }
   if ($target.MainWindowHandle -eq 0) { throw "test window not found" }
   for ($round = 1; $round -le $Rounds; $round++) {
     foreach ($gap in $GapsMs) {

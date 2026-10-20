@@ -8,15 +8,23 @@ Installs a low-level keyboard hook in its own process and writes one line per ev
 time (ms since the observer started), the virtual key, down/up, the injected and
 lower-integrity-injected flags, the scan code and dwExtraInfo (LexTrail's own injected
 keys carry 0x4C584D4B). It only reads events and passes them on unchanged; it sends no
-keys. Runs until its process is stopped. stuck-keys.ps1 -Observe starts and stops it.
+keys. stuck-keys.ps1 -Observe starts and stops it.
+
+It records every key typed on the machine, so it never outlives its test: it exits as
+soon as process -ParentPid is gone, and after -MaxMinutes in any case. Delete the log
+once the needed lines are taken out of it; never commit it.
 
 An extra low-level hook adds a little latency to every key event while it runs; compare
 runs made with it on, not with older runs made without it.
 
 .EXAMPLE
-powershell -NoProfile -File tools/e2e/key-observer.ps1 -Log $env:TEMP\keys.log
+powershell -NoProfile -File tools/e2e/key-observer.ps1 -Log $env:TEMP\keys.log -ParentPid $PID
 #>
-param([Parameter(Mandatory)][string]$Log)
+param(
+  [Parameter(Mandatory)][string]$Log,
+  [Parameter(Mandatory)][int]$ParentPid,
+  [int]$MaxMinutes = 15
+)
 $ErrorActionPreference = "Stop"
 
 Add-Type @"
@@ -43,7 +51,17 @@ public static class LtObserver {
     }
     return CallNextHookEx(hook, code, w, l);
   }
-  public static void Run(string path) {
+  // Ends the process when the parent is gone or the time is up, whatever else happens.
+  static void Watchdog(int parentPid, int maxMinutes) {
+    Process parent = null;
+    try { parent = Process.GetProcessById(parentPid); } catch (ArgumentException) { }
+    var deadline = DateTime.UtcNow.AddMinutes(maxMinutes);
+    while (parent != null && !parent.HasExited && DateTime.UtcNow < deadline) Thread.Sleep(500);
+    Environment.Exit(0);
+  }
+  public static void Run(string path, int parentPid, int maxMinutes) {
+    var watchdog = new Thread(() => Watchdog(parentPid, maxMinutes));
+    watchdog.IsBackground = true; watchdog.Start();
     var writer = new StreamWriter(path, true); writer.AutoFlush = true;
     writer.WriteLine("observer started tick=" + Environment.TickCount);
     var flusher = new Thread(() => { while (true) { string s; while (queue.TryDequeue(out s)) writer.WriteLine(s); Thread.Sleep(100); } });
@@ -55,4 +73,4 @@ public static class LtObserver {
   }
 }
 "@
-[LtObserver]::Run($Log)
+[LtObserver]::Run($Log, $ParentPid, $MaxMinutes)
