@@ -26,11 +26,22 @@ body,
   border: 1px solid #d0d7de;
 }
 
-/* The dictionary result; scrolls inside the fixed-size window. */
+/* The dictionary result; scrolls once the window reached its highest (D046 supplement). */
 .popup__body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* Set for an instant to read the content's natural height (measure.ts): nothing is
+   painted in between. */
+.popup--measuring {
+  height: auto;
+}
+
+.popup--measuring .popup__body {
+  flex: none;
+  overflow: visible;
 }
 
 /* A thin scrollbar whose track starts below the close button. (No standard

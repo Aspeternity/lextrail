@@ -42,6 +42,35 @@ pub fn place(cursor: Point, size: Size, work_area: Rect, gap: i32) -> Point {
     }
 }
 
+/// The popup's height limits, in logical pixels (D046 supplement).
+pub const MIN_HEIGHT: f64 = 72.0;
+pub const MAX_HEIGHT: f64 = 520.0;
+/// The most of its monitor's work area height the popup may take.
+pub const MAX_AREA_SHARE: f64 = 0.6;
+
+/// The popup's height in physical pixels for content `natural` logical pixels tall, on a
+/// monitor with `scale` and a work area `area_height` physical pixels tall: the content's
+/// height, at most [`MAX_HEIGHT`] or [`MAX_AREA_SHARE`] of the work area, whichever is
+/// smaller (beyond it, the body scrolls), and at least [`MIN_HEIGHT`] (which wins over
+/// the 60% on a tiny work area). Never more than the work area itself.
+pub fn popup_height(natural: f64, scale: f64, area_height: i32) -> i32 {
+    let min = (MIN_HEIGHT * scale).round() as i32;
+    let max = ((MAX_HEIGHT * scale).round() as i32)
+        .min((f64::from(area_height) * MAX_AREA_SHARE).floor() as i32);
+    let wanted = (natural.max(0.0) * scale).ceil() as i32;
+    wanted.min(max).max(min).min(area_height.max(1))
+}
+
+/// Where a shown popup at `at` goes when its height changes to `size.height` (an entry
+/// unfolded or folded): its top edge stays and it grows downwards; when the bottom would
+/// leave the work area, it moves up as far as needed, but never above the work area.
+pub fn resize_in_place(at: Point, size: Size, work_area: Rect) -> Point {
+    Point {
+        x: at.x,
+        y: at.y.min(work_area.bottom() - size.height).max(work_area.y),
+    }
+}
+
 fn axis(cursor: i32, len: i32, start: i32, end: i32, gap: i32) -> i32 {
     let after = cursor + gap;
     let before = cursor - gap - len;
@@ -156,6 +185,95 @@ mod tests {
             GAP,
         );
         assert_eq!(near_top.y, 40);
+    }
+
+    #[test]
+    fn height_follows_short_content_with_a_floor() {
+        // 1.0x, 1040 px work area: a one-line hint is raised to the minimum.
+        assert_eq!(popup_height(40.0, 1.0, 1040), 72);
+        assert_eq!(popup_height(150.4, 1.0, 1040), 151);
+        // 1.5x: the same content in physical pixels.
+        assert_eq!(popup_height(150.4, 1.5, 1560), 226);
+        assert_eq!(popup_height(10.0, 1.5, 1560), 108);
+    }
+
+    #[test]
+    fn height_is_capped_at_520_or_60_percent_of_the_work_area() {
+        // Tall content on a large work area: 520 logical.
+        assert_eq!(popup_height(2000.0, 1.0, 1040), 520);
+        assert_eq!(popup_height(2000.0, 1.5, 1560), 780);
+        assert_eq!(popup_height(2000.0, 2.0, 2080), 1040);
+        // A short work area (1366x768 laptop, 728 px): 60% of it, 436.
+        assert_eq!(popup_height(2000.0, 1.0, 728), 436);
+        // 1.25x on 1080p (work area 1032 physical): 60% = 619 < 650.
+        assert_eq!(popup_height(2000.0, 1.25, 1032), 619);
+        // Exactly at the cap is not scrolled.
+        assert_eq!(popup_height(520.0, 1.0, 1040), 520);
+    }
+
+    #[test]
+    fn height_never_exceeds_a_tiny_work_area() {
+        // 60% (60) is below the minimum: the minimum wins, still inside the work area.
+        assert_eq!(popup_height(2000.0, 1.0, 100), 72);
+        assert_eq!(popup_height(10.0, 2.0, 100), 100);
+    }
+
+    #[test]
+    fn taller_popup_near_the_bottom_grows_upwards() {
+        // The same cursor near the bottom: the taller the popup, the higher its top.
+        let cursor = at(500, 900);
+        let short = place(
+            cursor,
+            Size {
+                width: 380,
+                height: 120,
+            },
+            AREA,
+            GAP,
+        );
+        let tall = place(
+            cursor,
+            Size {
+                width: 380,
+                height: 520,
+            },
+            AREA,
+            GAP,
+        );
+        assert_eq!(short, at(512, 912));
+        assert_eq!(tall, at(512, 900 - 12 - 520));
+        assert!(tall.y + 520 <= AREA.height);
+    }
+
+    #[test]
+    fn unfolding_keeps_the_top_and_grows_down() {
+        let size = Size {
+            width: 380,
+            height: 400,
+        };
+        assert_eq!(resize_in_place(at(512, 300), size, AREA), at(512, 300));
+    }
+
+    #[test]
+    fn unfolding_without_room_below_moves_up_but_stays_inside() {
+        let size = Size {
+            width: 380,
+            height: 400,
+        };
+        // Bottom would be 1100 > 1040: moved up by 60.
+        assert_eq!(resize_in_place(at(512, 700), size, AREA), at(512, 640));
+        // Taller than the space above too: flush with the work area's top.
+        let huge = Size {
+            width: 380,
+            height: 1200,
+        };
+        assert_eq!(resize_in_place(at(512, 700), huge, AREA), at(512, 0));
+        // Folding (shorter) never moves it.
+        let short = Size {
+            width: 380,
+            height: 100,
+        };
+        assert_eq!(resize_in_place(at(512, 700), short, AREA), at(512, 700));
     }
 
     #[test]

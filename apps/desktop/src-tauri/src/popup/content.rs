@@ -45,6 +45,14 @@ pub enum Content {
     },
 }
 
+/// The `popup:content` event: a content and its number, which the page reports back
+/// with the content's height (`popup_measured`).
+#[derive(Clone, Serialize)]
+pub struct ContentEvent<'a> {
+    pub seq: u64,
+    pub content: &'a Content,
+}
+
 impl fmt::Debug for Content {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

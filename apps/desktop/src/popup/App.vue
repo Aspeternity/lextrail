@@ -1,27 +1,40 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
 import { UNAVAILABLE_MESSAGES, type Content } from './content';
 import DictResult from './DictResult.vue';
 import { call, subscribe } from './ipc';
+import { naturalHeight } from './measure';
 
 const content = ref<Content>({ kind: 'empty' });
 // Changes with every content event, so the result's unfolded sections start closed.
 const lookupId = ref(0);
 
+const root = ref<HTMLElement | null>(null);
+
 const unavailable = computed(() =>
   content.value.kind === 'unavailable' ? UNAVAILABLE_MESSAGES[content.value.reason] : null,
 );
 
+// Once the new content is laid out (before it is painted), its height goes to Rust, which
+// sizes and places the window before showing it (D046 supplement).
+async function reportHeight(command: 'popup_measured' | 'popup_resize', seq?: number) {
+  await nextTick();
+  if (root.value) {
+    call(command, { seq, height: naturalHeight(root.value) });
+  }
+}
+
 onMounted(() => {
-  void subscribe((next) => {
+  void subscribe((next, seq) => {
     content.value = next;
     lookupId.value += 1;
+    void reportHeight('popup_measured', seq);
   });
 });
 </script>
 
 <template>
-  <main class="popup">
+  <main ref="root" class="popup">
     <!-- Always available: when Windows refuses the popup focus, Esc cannot reach it. -->
     <button
       class="popup__close"
@@ -41,7 +54,12 @@ onMounted(() => {
     <template v-else-if="content.kind === 'selection'">
       <!-- Scrolls when the result is long; the sentence (and, in debug builds, the source) stay in view. -->
       <div class="popup__body">
-        <DictResult :key="lookupId" :text="content.text" :view="content.lookup" />
+        <DictResult
+          :key="lookupId"
+          :text="content.text"
+          :view="content.lookup"
+          @toggled="reportHeight('popup_resize')"
+        />
       </div>
       <footer class="popup__footer">
         <p v-if="content.sentence" class="popup__sentence">{{ content.sentence }}</p>

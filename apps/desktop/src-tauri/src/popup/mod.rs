@@ -4,6 +4,8 @@
 //! - [`lifecycle`]: whether the window exists and is awake (D009).
 //! - [`request`]: one lookup, from hotkey to focused result; when the window appears and
 //!   when it takes focus (ARCHITECTURE.md 9.3).
+//! - [`sizing`]: showing waits for the page to measure the content, so the window is
+//!   sized and placed before it appears (D046 supplement).
 //!
 //! This module turns both state machines' actions into window, WebView2 and capture calls.
 
@@ -14,6 +16,7 @@ mod foreground;
 mod lifecycle;
 mod placement;
 mod request;
+mod sizing;
 mod timing;
 mod webview;
 
@@ -62,6 +65,8 @@ struct PopupState {
     mode: PopupMode,
     /// Cursor position of the latest show request; used when the popup is revealed.
     cursor: Mutex<Option<Point>>,
+    /// Holds showing back until the page measured the content.
+    sizing: Mutex<sizing::Sizing>,
     capture: Arc<dyn TextCapture>,
     next_request: AtomicU64,
     /// Native handle of the window being read; its own foreground events are ignored.
@@ -101,6 +106,7 @@ pub fn init<R: Runtime>(
         request: Mutex::new(Request::new()),
         mode,
         cursor: Mutex::new(None),
+        sizing: Mutex::new(sizing::Sizing::new()),
         capture: platform_capture(),
         next_request: AtomicU64::new(0),
         target_window: AtomicIsize::new(0),
@@ -481,6 +487,75 @@ fn return_foreground(_window: isize) -> bool {
     false
 }
 
+/// Called by the popup page with the natural height (logical pixels) of content `seq`,
+/// laid out but not yet painted.
+#[tauri::command]
+pub fn popup_measured<R: Runtime>(app: AppHandle<R>, seq: u64, height: f64) {
+    let release = lock(&app.state::<PopupState>().sizing).measured(seq, height);
+    if let Some(release) = release
+        && let Err(e) = apply_release(&app, release)
+    {
+        eprintln!("popup: sizing failed: {e}");
+    }
+}
+
+/// Called by the popup page when an entry was unfolded or folded: the shown window takes
+/// the new height, its top edge staying where it is (D046 supplement).
+#[tauri::command]
+pub fn popup_resize<R: Runtime>(app: AppHandle<R>, height: f64) {
+    let Some(window) = app.get_webview_window(LABEL) else {
+        return;
+    };
+    if !window.is_visible().unwrap_or(false) {
+        return;
+    }
+    if let Err(e) = resize_shown(&window, height) {
+        eprintln!("popup: resizing failed: {e}");
+    }
+}
+
+/// Starts the wait for content `seq`'s height; after [`sizing::MEASURE_WAIT`] the held
+/// actions run with the default height.
+fn start_measure_timer<R: Runtime>(app: &AppHandle<R>, seq: u64) {
+    let app = app.clone();
+    spawn("popup-measure-timer", move || {
+        thread::sleep(sizing::MEASURE_WAIT);
+        let release = lock(&app.state::<PopupState>().sizing).timed_out(seq);
+        if let Some(release) = release {
+            #[cfg(debug_assertions)]
+            eprintln!("popup: no height from the page in time (content {seq}); default height");
+            if let Err(e) = apply_release(&app, release) {
+                eprintln!("popup: sizing failed: {e}");
+            }
+        }
+    });
+}
+
+/// Sizes and places the window for the released height (when it will show, or is on
+/// screen already), then runs the held actions.
+fn apply_release<R: Runtime>(app: &AppHandle<R>, release: sizing::Release) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(LABEL)
+        && (!release.actions.is_empty() || window.is_visible().unwrap_or(false))
+        && let Some(cursor) = *lock(&app.state::<PopupState>().cursor)
+    {
+        let size = move_near(&window, cursor, release.height)?;
+        #[cfg(debug_assertions)]
+        eprintln!(
+            "popup: size {}x{} for content height {:?} @{}",
+            size.width,
+            size.height,
+            release.height,
+            debug_clock()
+        );
+        #[cfg(not(debug_assertions))]
+        let _ = size;
+    }
+    for action in &release.actions {
+        perform_request_now(app, action)?;
+    }
+    Ok(())
+}
+
 /// Debug builds: milliseconds since the first call, to line up popup, request and
 /// clipboard events in the log.
 #[cfg(debug_assertions)]
@@ -524,8 +599,10 @@ fn perform<R: Runtime>(app: &AppHandle<R>, action: Action) -> tauri::Result<()> 
     match (action, window) {
         (Action::Create, _) => create(app),
         (Action::Reveal { resume }, Some(window)) => {
+            // On the cursor's monitor at its scale, so the page lays out at the right
+            // width; the height follows once the page measured the content.
             if let Some(cursor) = *lock(&app.state::<PopupState>().cursor) {
-                move_near(&window, cursor)?;
+                move_near(&window, cursor, None)?;
             }
             // The request decides when the window actually appears.
             let app = app.clone();
@@ -538,6 +615,7 @@ fn perform<R: Runtime>(app: &AppHandle<R>, action: Action) -> tauri::Result<()> 
             }
         }
         (Action::Hide, Some(window)) => {
+            lock(&app.state::<PopupState>().sizing).reset();
             hide_window(&window)?;
             dispatch_request(app, request::Event::Hidden);
             Ok(())
@@ -590,8 +668,45 @@ fn dispatch_request<R: Runtime>(app: &AppHandle<R>, event: request::Event) {
 
 fn perform_request<R: Runtime>(app: &AppHandle<R>, action: &request::Action) -> tauri::Result<()> {
     use request::Action as A;
+    let state = app.state::<PopupState>();
     match action {
-        A::SetContent(content) => app.emit_to(LABEL, content::EVENT, content),
+        A::SetContent(content) => {
+            let (seq, start_timer) = lock(&state.sizing).content_sent();
+            if start_timer {
+                start_measure_timer(app, seq);
+            }
+            app.emit_to(
+                LABEL,
+                content::EVENT,
+                content::ContentEvent { seq, content },
+            )
+        }
+        // Shown and activated only once the window has its size (see `sizing`).
+        A::ShowInactive | A::Activate => {
+            let held = lock(&state.sizing).hold(action.clone());
+            match held {
+                Ok(release) => apply_release(app, release),
+                Err(start_timer) => {
+                    if start_timer {
+                        let seq = lock(&state.sizing).current();
+                        start_measure_timer(app, seq);
+                    }
+                    Ok(())
+                }
+            }
+        }
+        other => perform_request_now(app, other),
+    }
+}
+
+/// Runs a request action on the window as it is.
+fn perform_request_now<R: Runtime>(
+    app: &AppHandle<R>,
+    action: &request::Action,
+) -> tauri::Result<()> {
+    use request::Action as A;
+    match action {
+        A::SetContent(_) => perform_request(app, action),
         A::ShowInactive => match app.get_webview_window(LABEL) {
             Some(window) => {
                 if let Some(t) = &app.state::<PopupState>().timings {
@@ -821,18 +936,27 @@ fn is_foreground<R: Runtime>(window: &WebviewWindow<R>) -> bool {
     window.is_focused().unwrap_or(false)
 }
 
-fn move_near<R: Runtime>(window: &WebviewWindow<R>, cursor: Point) -> tauri::Result<()> {
+/// Sizes the window for content `height` logical pixels tall (`None`: the default
+/// height) on the cursor's monitor and places it near the cursor. Returns the size.
+fn move_near<R: Runtime>(
+    window: &WebviewWindow<R>,
+    cursor: Point,
+    height: Option<f64>,
+) -> tauri::Result<Size> {
     let Some(monitor) = window
         .monitor_from_point(cursor.x.into(), cursor.y.into())?
         .or(window.primary_monitor()?)
     else {
-        return Ok(());
+        return Ok(Size {
+            width: 0,
+            height: 0,
+        });
     };
     let scale = monitor.scale_factor();
     let area = monitor.work_area();
     let size = Size {
         width: (WIDTH * scale).round() as i32,
-        height: (HEIGHT * scale).round() as i32,
+        height: placement::popup_height(height.unwrap_or(HEIGHT), scale, area.size.height as i32),
     };
     let work_area = Rect {
         x: area.position.x,
@@ -846,6 +970,41 @@ fn move_near<R: Runtime>(window: &WebviewWindow<R>, cursor: Point) -> tauri::Res
     // Also the size, for this monitor's current scale: moving between monitors, or a
     // scale changed while LexTrail runs, can leave the window sized for another scale
     // (R1-8). Set after the position, so it wins over any resize the move caused.
+    window.set_size(PhysicalSize::new(size.width as u32, size.height as u32))?;
+    Ok(size)
+}
+
+/// The shown window takes content `height` (logical pixels): its top edge stays, it
+/// grows downwards and moves up only when the bottom would leave the work area.
+fn resize_shown<R: Runtime>(window: &WebviewWindow<R>, height: f64) -> tauri::Result<()> {
+    let at = window.outer_position()?;
+    let Some(monitor) = window
+        .monitor_from_point(f64::from(at.x), f64::from(at.y))?
+        .or(window.current_monitor()?)
+    else {
+        return Ok(());
+    };
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let size = Size {
+        width: (WIDTH * scale).round() as i32,
+        height: placement::popup_height(height, scale, area.size.height as i32),
+    };
+    let work_area = Rect {
+        x: area.position.x,
+        y: area.position.y,
+        width: area.size.width as i32,
+        height: area.size.height as i32,
+    };
+    let to = placement::resize_in_place(Point { x: at.x, y: at.y }, size, work_area);
+    #[cfg(debug_assertions)]
+    eprintln!(
+        "popup: resize to {}x{} for content height {height} @{}",
+        size.width,
+        size.height,
+        debug_clock()
+    );
+    window.set_position(PhysicalPosition::new(to.x, to.y))?;
     window.set_size(PhysicalSize::new(size.width as u32, size.height as u32))
 }
 
