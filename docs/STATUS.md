@@ -69,7 +69,9 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
   - 项目负责人 2026-10-21 审阅第二阶段（D012 两条补充）：InPrivate / 无痕窗口里不触发，保持；连按加长度限制（去掉首尾空白后不超过 500 个字符、不含制表符，超出安静忽略）。500 的依据：Attention Is All You Need 全文按我们的切句，500 以内 99.1%，超过 400 的全是表格、标题块。Edge PDF 20 ms 内连按两次快捷键的问题记入 ROADMAP（低优先级）。cbbc285 的 CI 通过。
   - **不再显示和保存"单词来自哪里"**（D022、D039 修改，D046 补充，提交 8bac6b4）：release 版悬浮窗不显示来源、发给悬浮窗的内容里没有（debug 版保留）；`lookups` 删除 `source_app`、`url`（迁移 2，`DROP COLUMN`，内置 SQLite 3.53；在 e2e 留下的真实旧数据库副本上试过：版本 1 → 2，记录完整，`integrity_check` ok）；`Selection.url` 删除。
   - **第三阶段进行中**：长度限制（`double_copy::check_text`，3 个新单元测试）；`popup-e2e.ps1` 加 `-Chrome`、`-ExpectIgnored`，并检查 debug 版悬浮窗显示"来自 msedge.exe"；管理员窗口提示加回连按用法（R1-9）；手动测试清单 R6 已写。模拟按键实测（项目负责人同意后运行）：Edge + 快捷键 2/2 通过，debug 版仍显示"来自 msedge.exe"；Chrome 无痕窗口连按 2/2 不触发（复制带 `CanIncludeInClipboardHistory` = 0）；Chrome 普通窗口连按 2/2 触发（对照）。设置说明已按实测写（spec 第四节）。
-  - 下一步：项目负责人用真实键盘测 R6（`m1-capture-manual-tests.md`，含 R4-8 复测和 release 版不显示来源）；通过后合并到 `main`（合并前确认 CI 通过）。
+  - **R6（真实键盘，2026-10-21）**：14 项通过；R6-4 改预期；R6-10 发现密码管理器里可见的密码会被查词（R6-P1）；另发现悬浮窗闪退（R6-P2）。修复（都已提交）：连按只查词典里的单个词或带空格的文字（D012 补充，`content::double_copy_wanted`）；按前台窗口判断"点了外面"、焦点不在悬浮窗里时交给 WebView2 页面、Esc 后把前台交回原窗口（D042 补充，R6-P2 至 R6-P4）；钩子装好后就记录真实按键，修好快捷键后左 Ctrl 偶尔卡住（D014 补充，R6-P5）；开关打开时管理员窗口提示去掉"（需先在设置中打开）"；debug 日志不再打印取到的文字（`Content` 的 `Debug` 只打印长度和结果类型），`popup:` / `request:` 日志带时间戳和焦点变化时的前台窗口。
+  - 自动检查（模拟按键）：`popup-e2e.ps1 -ForceAttach -CloseBy Esc|Click|ClickThenEsc` 全部通过；`stuck-keys.ps1` 120 次 0 卡住。R6 的测试数据目录（含项目负责人的真实密码）已删除、未读取；`%TEMP%\lextrail-r6-on.log` 里可能有取到的文字（旧版 debug 日志），已建议项目负责人删除。
+  - 下一步：项目负责人用真实键盘测 R7（`m1-capture-manual-tests.md`，由 AI 启动程序、读日志）；通过且 CI 通过后合并到 `main`。以后需要日志的真实键盘测试，由 AI 启动程序、读日志，项目负责人只按键、报现象。
 
 ## 下一步
 
@@ -78,7 +80,7 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
 
 待跟进（已在 ROADMAP 中，或在此记录）：
 - **B3 没有结论**：VS Code 编辑器里 UIA 报告"没有选中"的原因未确认。把 `editor.accessibilitySupport` 设为 `on` 后，我用模拟按键没能做出选区（屏幕阅读器模式下 Ctrl+Shift+→ 的行为不同），这次测试不成立。剪贴板兜底已覆盖 VS Code，且不改用户设置，所以暂不继续；如需要，可在 `on` 模式下手动选词，用 `capture_probe` 看 UIA 是否取到。
-- **获取焦点的后备路径未在真实环境中触发过**（R2-5）：`AttachThreadInput` 重试只经代码审查；"被拒后不带焦点显示"只用模拟开关验证过。以后如在日志里看到 `Attached` 或 `Refused`，记下当时的场景。
+- 获取焦点的后备路径（R2-5）2026-10-21 在真实环境中触发（R6-P2），已修复；"被拒后不带焦点显示"仍只用模拟开关验证过。
 - 前端测试框架（Vitest）还没引入（M1 任务）。
 - 低优先级：Windows Terminal 跨行选中时句子带上提示符（R1-10）；句首省略号、过长上下文截取（R1-11）。
 - 依赖漏洞提示 RUSTSEC-2024-0429（`glib` 的 `VariantStrIter`）：只影响 Linux；`glib` 0.18.5 是 Tauri 在 Linux 上的依赖，修复要 0.20，我们自己升级不了。GitHub 上的 Dependabot 提醒目前仍是打开状态（2026-10-20 用 `gh api` 查过）。**等 Tauri 升级到 glib 0.20 以上时再看。**
