@@ -75,6 +75,7 @@ SQLite 文件 `data/build/lextrail-dict-core.db`，只读，查询时按需从�
 - `entries(id, word, phonetic, collins, oxford, bnc, frq, tags)`：`word` 保留原始大小写；按 `word COLLATE NOCASE` 建索引。
 - `senses(entry_id, ord, pos, domain, text)`：拆分后的义项，按原文顺序；`pos` 为词性（如 `n.`、`vt. & vi.`，可为空），`domain` 为领域标记（如 `医`、`网络`，可为空）。
 - `forms(form, lemma, kind)`：由 `exchange` 生成的"变形 → 原形"表，用于词形还原；`kind` 为 ECDICT 代码（`p d i 3 s r t`）；来自所有行（包括没收录的变形词条自己的 `0:` 原形），只保留原形已收录的；按 `form COLLATE NOCASE` 建索引。
+- `extra_words(word)`（格式版本 2 起）：完整版 ECDICT 中纯 ASCII 字母、至少 2 个字母、不是本词典词条（不分大小写）的单词，小写；只用于判断行末断词是否合并（D044 补充，10.2），不提供释义。约 16.6 万个，文件多约 2.3 MiB。
 - 所有表 `STRICT`；数值字段为 0 / 空时存 `NULL`；音标见 4.1；考试标签去掉多余空格。
 
 同一份输入、同一版 dict-builder 生成的文件内容应完全相同（固定插入顺序、不写生成时间），便于 CI 缓存和比对。
@@ -104,10 +105,10 @@ SQLite 文件 `data/build/lextrail-dict-core.db`，只读，查询时按需从�
 
 ## 8. 查询与词形还原（`lextrail-dict`）
 
-`Dictionary::open` 只读打开词典文件，检查 `meta.format_version`，不认识的版本（或不是词典文件）拒绝打开。`Dictionary::lookup(text)`：
+`Dictionary::open` 只读打开词典文件，检查 `meta.format_version`，不认识的版本（或不是词典文件）拒绝打开；设置 `cache_size` 为 1 MiB、不用 mmap（D046，连接常驻）。`Dictionary::lookup(text)`（即 `lookup_with(text, LookupOptions::default())`）：
 
 1. **规范化**：去掉首尾空白和标点（引号、括号、句号等），弯引号 `’` 改为 `'`，去掉所有格 `'s`，中间的连续空白合并为一个空格。
-2. **直接查**（不区分大小写）：大小写完全相同的词条优先，其次小写词条，再其次按来源顺序第一条。**首字母大写的词**（`March`、`The`）同时有小写和大写词条时两个都给，小写在前（句首大写很常见）。
+2. **直接查**（不区分大小写）：大小写完全相同的词条优先，其次小写词条，再其次按来源顺序第一条。**首字母大写的词**（`March`、`The`）同时有小写和大写词条时两个都给：和选中文字大小写完全一致的在前；`LookupOptions::sentence_start`（选中的词在句首）时小写的在前（D046）。
 3. **`exchange` 词形**（`forms` 表）：查到原形时一并给出原形词条；有多个原形（`found` → find / found）时取词频更高的。
 4. **后缀规则兜底**（只在 3 查不到、且直接查不到或查到的只是"xx 的过去式"之类说明时）：`-ies/-ied/-ier/-iest → -y`、`-ying → -ie`、`-es`、`-s`、`-ed`、`-ing`、`-er`、`-est`（含双写辅音 `stopped → stop`、补 `e` 的 `making → make`）。候选原形必须在词典里，按顺序取第一个；`-er/-est` 只在原形有形容词义项时才算比较级 / 最高级（`optimizer` 不还原为 `optimize`）。
 5. **短语**：直接查不到时，把每个词换成 `exchange` 原形再查（`gave up` → `give up`）。
@@ -129,8 +130,8 @@ SQLite 文件 `data/build/lextrail-dict-core.db`，只读，查询时按需从�
 - 跳过虚词（a、an、the、and、or、but、nor、of、to、in、on、at、by、for、from、with、as、into、onto、via、vs、per），不显示它们的词条；重复的部分只查一次；每个部分照常做词形还原；查不到的部分列在 `not_found`；
 - 所有部分都查不到时返回 `None`。
 
-**判断"是不是一个词"只能用 `lookup`（整词）**，不能用 `lookup_with_parts`。`lextrail_core::text::resolve_line_end_hyphens` 合并行末连字符时只能根据整词查到的结果判断：`compu-tation` 合并为 computation，`English-to-German`、`self-attention` 保持原样（测试 `line_end_hyphens_join_only_whole_words`）。
-- 已知限制：词典里没有的词，行末断词不会被合并（覆盖率检查中 `convolu-` / `tional`，因为 convolutional 不在精简版中）。
+**判断"是不是一个词"用 `Dictionary::is_word`**（整词 `lookup`，或 `extra_words` 词头表，直接或经后缀规则），不能用 `lookup_with_parts`。`lextrail_core::text::resolve_line_end_hyphens` 合并行末连字符时只能根据它判断：`compu-tation` 合并为 computation，`English-to-German`、`self-attention` 保持原样（测试 `line_end_hyphens_join_only_whole_words`）。
+- 精简版没有、完整版有的词（convolu-tional）经 `extra_words` 合并（10.2 方案 A）；完整版也没有的词（人名、softmax 等）保留连字符。
 
 ## 9. 覆盖率检查：Attention Is All You Need（1706.03762v7）
 

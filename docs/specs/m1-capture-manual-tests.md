@@ -192,6 +192,35 @@ AI 用模拟按键做的 R4-P1 回归检查（2026-10-20，debug 版，修复后
 
 AI 已用模拟按键做过的自动检查（2026-10-17，debug 版）：`popup-e2e.ps1` 网页、`-Pdf`、`-Pdf -HoldMs 200`（3 次，均未出现"正在取词…"）、`-Pdf -HoldMs 2000`（按住期间显示"松开快捷键后取词…"，截图核对）、`-Pdf -HoldMs 3600`（显示"请松开快捷键后再试"，截图核对）全部通过；`stuck-keys.ps1` 120 次按键没有修饰键卡住，其中 1 次触发了"先松开后补发"的竞争并已补发松开。模拟按键不能代替 R4-1 至 R4-4、R4-8 的真实键盘测试。
 
+## 悬浮窗显示词典结果（R5）
+
+对应 `m1-popup-dict.md`、D044 补充、D046。准备：
+
+- 先生成词典：`cargo run -p lextrail-dict-builder --release`（格式版本 2；旧的词典文件会被拒绝打开，悬浮窗显示"词典文件缺失"）。
+- 构建 debug 版运行。每次取词的日志行末尾多了 `lookup N ms`（行末断词合并 + 分类 + 查词，第一次含打开词典），例如 `capture #3: captured | ...; total 12.4ms; lookup 0.9ms`。
+- PDF 用 `arxiv.org/pdf/1706.03762`（v7）：transduc-tion 在第 2 页第 1 节第 3 段（"…sequence modeling and transduc- / tion models…"）；convolu-tional 在第 6 页第 4 节第 1 段（"…the recurrent and convolu- / tional layers…"）；English-to-German 在第 1 页摘要（"…WMT 2014 English- / to-German translation task…"）。**跨行的词要用鼠标从前半段拖到后半段选中**（双击只选中一半）。
+
+| # | 对应 | 步骤 | 预期 | 结果 |
+|---|---|---|---|---|
+| R5-1 | D044 补充 | **Chrome** 打开 PDF，拖选 transduc-tion → 快捷键 | 标题 transduction（有音标、n. 转导）；原句里也是 "transduction models"，没有连字符、没有方块；日志 `uia=captured` | |
+| R5-2 | D044 补充 | Chrome PDF，拖选 convolu-tional | 显示 convolutional + "词典中没有收录。"（精简版没有这个词，词头表判断合并）；原句里是 "convolutional layers" | |
+| R5-3 | D044 补充 | Chrome PDF，拖选 English-to-German；再只双击同一句中的 improving | 前者显示 English-to-German（保留连字符），"词典没有整词，以下是各部分的释义"，English、German 两部分（没有 to）；后者原句里是 "English-to-German" | |
+| R5-4 | D044 补充 | **Edge** 打开同一 PDF，拖选 transduc-tion | 显示 transduction（日志 `[chromium_pdf]; clipboard=captured`）；没有原句（剪贴板取词没有上下文） | |
+| R5-5 | D044 补充 | Edge PDF，拖选 convolu-tional | 显示 convolutional | |
+| R5-6 | D044 补充 | Edge PDF，拖选 English-to-German | 显示 "English to-German"（Edge 复制时行末连字符原文就丢了，见 `m1-popup-dict.md` 第 6 节）；不合并成 Englishto-German | |
+| R5-7 | D046 | 查 run 或 set（释义很多） | 正文在窗口内滚动；滚动时标题 "run /rʌn/ …" 固定在顶部；底部原句、"AI 语境解析"、来源不动；滚动条不压住 × | |
+| R5-8 | D046 | 查一个有专业释义的词（如 transduction）→ 点"▸ 专业释义"→ 按 **Esc** | 展开后显示 "[化] 转导"；按 Esc 悬浮窗关闭，焦点回到原窗口（可直接继续在原窗口操作） | |
+| R5-9 | D046 | 查 left → 点"▸ 更多" → 按 **Esc** | 展开后显示 left 的全部词性行；Esc 关闭，焦点回到原窗口 | |
+| R5-10 | D044 补充 | 查 better | "better（good 的比较级）" 和 "good" 两个词条，各自先显示最多 3 行 | |
+| R5-11 | D044 补充 | 查 left | "left（leave 的过去式、过去分词）" 和 "leave"；left 超过 3 行时有"▸ 更多" | |
+| R5-12 | D044 补充 | 查 launched | "launched（launch 的过去式、过去分词）" 和 "launch"（这个词在 ECDICT 中有自己的释义；只有原形时上方是一行灰字"xx 是 xx 的过去式…"） | |
+| R5-13 | D044 补充 | 查 self-attention（拖选整个词） | "词典没有整词，以下是各部分的释义"，self、attention 各一行 | |
+| R5-14 | — | 查一个查不到的词（如 qwzxv 或人名 Vaswani） | 原文 + "词典中没有收录。" | |
+| R5-15 | D045 | 选中一整句英文（超过 5 个词，带句号） | 原文 + "句子翻译需要 AI（M2 接入）。" | |
+| R5-16 | D045 | 选中纯中文 | "目前只支持英文" + 原文 | |
+| R5-17 | D046 | 网页中查句首的大写词（如 "March came early." 中的 March，或 "The model …" 中的 The），再查句中的同一个词 | 有大小写两个词条时：句首小写词条在前；句中与选中文字大小写一致的在前（精简版很多大写词条不存在，只有一个词条时不用判断） | |
+| R5-18 | D046 | **[release]** 从资源管理器启动 `target\release\lextrail-desktop.exe`，查 R5-1、R5-10 | 与 debug 版相同（词典文件 `lextrail-dict-core.db` 在 exe 旁边，由构建复制） | |
+
 ## 记录
 
 | 日期 | 测试人 | Windows 版本 | 备注 |
