@@ -33,6 +33,7 @@ function update(view: SettingsView): void {
     <nav class="settings__nav" aria-label="设置分类">
       <button
         v-for="category in categories"
+        :id="`nav-${category.id}`"
         :key="category.id"
         type="button"
         class="settings__category"
@@ -46,7 +47,9 @@ function update(view: SettingsView): void {
     <main class="settings__content">
       <p v-if="loadError" class="message message--error">无法读取设置：{{ loadError }}</p>
       <template v-else-if="settings">
-        <p v-if="settings.readOnly" class="message message--warning">{{ settings.readOnly }}</p>
+        <p v-if="settings.readOnly" id="read-only" role="alert" class="message message--warning">
+          {{ settings.readOnly }}
+        </p>
         <HotkeyPanel v-if="current === 'hotkeys'" :settings="settings" @update="update" />
         <PrivacyPanel v-else :settings="settings" @update="update" />
       </template>

@@ -30,6 +30,7 @@ async function toggle(event: Event): Promise<void> {
     <div class="field">
       <label class="switch">
         <input
+          id="no-history"
           type="checkbox"
           class="switch__input"
           :checked="!settings.recordHistory"
@@ -41,7 +42,7 @@ async function toggle(event: Event): Promise<void> {
       <p class="field__help">
         打开后，从下一次查词起不再把查过的词和原句写进本机的查询历史。已经记录的历史不会删除。
       </p>
-      <p v-if="error" class="message message--error">{{ error }}</p>
+      <p v-if="error" id="history-error" role="alert" class="message message--error">{{ error }}</p>
     </div>
   </section>
 </template>

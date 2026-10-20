@@ -216,6 +216,7 @@ async function restoreDefault(): Promise<void> {
   <div class="hotkey">
     <div class="hotkey__row">
       <button
+        id="hotkey-recorder"
         ref="recorder"
         type="button"
         class="hotkey__recorder"
@@ -227,6 +228,7 @@ async function restoreDefault(): Promise<void> {
       </button>
       <template v-if="state.kind === 'idle'">
         <button
+          id="hotkey-change"
           type="button"
           class="button"
           :disabled="!!settings.readOnly || busy"
@@ -235,6 +237,7 @@ async function restoreDefault(): Promise<void> {
           更改
         </button>
         <button
+          id="hotkey-default"
           type="button"
           class="button"
           :disabled="!!settings.readOnly || busy || isDefault"
@@ -243,30 +246,59 @@ async function restoreDefault(): Promise<void> {
           恢复默认（{{ settings.defaultLookup.display }}）
         </button>
       </template>
-      <button v-else-if="state.kind === 'recording'" type="button" class="button" @click="cancel">
+      <button
+        v-else-if="state.kind === 'recording'"
+        id="hotkey-cancel-recording"
+        type="button"
+        class="button"
+        @click="cancel"
+      >
         取消
       </button>
     </div>
     <p
+      id="hotkey-status"
+      role="status"
       class="hotkey__status"
       :class="{ 'hotkey__status--failed': state.kind === 'idle' && !settings.lookupActive }"
     >
       {{ status }}
     </p>
-    <div v-if="state.kind === 'confirm'" class="confirm" role="alertdialog" aria-label="确认快捷键">
+    <div
+      v-if="state.kind === 'confirm'"
+      id="hotkey-confirm"
+      class="confirm"
+      role="alertdialog"
+      aria-label="确认快捷键"
+    >
       <p class="confirm__title">{{ state.hotkey.display }} 会影响：</p>
       <ul class="confirm__list">
         <li v-for="warning in state.warnings" :key="warning">{{ warning }}</li>
       </ul>
       <div class="confirm__actions">
-        <button type="button" class="button button--primary" @click="apply(state.hotkey, true)">
+        <button
+          id="hotkey-confirm-use"
+          type="button"
+          class="button button--primary"
+          @click="apply(state.hotkey, true)"
+        >
           仍要使用
         </button>
-        <button type="button" class="button" @click="rerecord">重新录制</button>
-        <button type="button" class="button" @click="cancel">取消</button>
+        <button id="hotkey-rerecord" type="button" class="button" @click="rerecord">
+          重新录制
+        </button>
+        <button id="hotkey-confirm-cancel" type="button" class="button" @click="cancel">
+          取消
+        </button>
       </div>
     </div>
-    <p v-if="notice" class="message" :class="notice.error ? 'message--error' : 'message--ok'">
+    <p
+      v-if="notice"
+      id="hotkey-notice"
+      role="status"
+      class="message"
+      :class="notice.error ? 'message--error' : 'message--ok'"
+    >
       {{ notice.text }}
     </p>
   </div>

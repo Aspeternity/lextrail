@@ -47,6 +47,7 @@ async function toggleDoubleCopy(event: Event): Promise<void> {
     <div class="field">
       <label class="switch">
         <input
+          id="double-ctrl-c"
           type="checkbox"
           class="switch__input"
           :checked="settings.doubleCtrlC"
@@ -56,7 +57,9 @@ async function toggleDoubleCopy(event: Event): Promise<void> {
         <span class="switch__label">连按两次 Ctrl+C 查词</span>
       </label>
       <p class="field__help">{{ DOUBLE_COPY_HELP }}</p>
-      <p v-if="error" class="message message--error">{{ error }}</p>
+      <p v-if="error" id="double-ctrl-c-error" role="alert" class="message message--error">
+        {{ error }}
+      </p>
     </div>
   </section>
 </template>
