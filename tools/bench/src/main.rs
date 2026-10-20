@@ -200,6 +200,23 @@ mod run {
         section("show after suspend (hidden 15 s)");
         print_summary(&resumed);
         print_split(&resumed_split);
+
+        // 3. The settings window (D047) shares the WebView2 environment with the popup;
+        // what stays after it is closed (docs/specs/m1-hotkey-settings.md 8.3).
+        let settings = app.open_settings(options)?;
+        sleep(Duration::from_secs(2));
+        section("settings window open (popup suspended)");
+        report_tree("memory", &app.sample()?);
+        ui::close(settings)?;
+        ui::wait_gone(settings, SHOW_TIMEOUT)?;
+        app.show()?;
+        sleep(Duration::from_millis(300));
+        app.hide()?;
+        app.timing()?;
+        sleep(SUSPEND_SETTLE);
+        section("suspended after the settings window was opened and closed (hidden 15 s)");
+        report_tree("memory", &app.sample()?);
+        report_cpu("idle CPU", &app, cpus)?;
         app.quit()
     }
 
@@ -302,6 +319,25 @@ mod run {
             ui::press_escape()?;
             ui::wait_popup(self.pid(), false, start, SHOW_TIMEOUT)?;
             Ok(())
+        }
+
+        /// Opens the settings window the way a shortcut would (`--settings` to the running
+        /// app) and waits until it is shown (the app shows it once the page has loaded).
+        fn open_settings(&self, options: &Options) -> Result<windows::Win32::Foundation::HWND> {
+            Command::new(&options.app)
+                .arg("--settings")
+                .status()
+                .context("cannot start the app with --settings")?;
+            let start = Instant::now();
+            loop {
+                if let Some(hwnd) = ui::find_settings(self.pid()).filter(|&h| ui::is_visible(h)) {
+                    return Ok(hwnd);
+                }
+                if start.elapsed() > SHOW_TIMEOUT {
+                    bail!("the settings window did not show within {SHOW_TIMEOUT:?}");
+                }
+                sleep(Duration::from_millis(20));
+            }
         }
 
         fn sample(&self) -> Result<TreeSample> {

@@ -73,6 +73,10 @@ sent while the window they are meant for (the test page, or the popup for Esc) i
 foreground; otherwise the script stops, so no key lands in another program. Screenshots
 cover only the test page and the popup. Exits with 1 if any check fails.
 
+-Hotkey sets another lookup hotkey in the scratch settings and presses that instead of
+Ctrl+Alt+X, e.g. "Shift+Alt+X", "Alt+X", "Ctrl+Shift+F1" or "F8" (not with -HoldMs or
+-PressTwiceMs; docs/specs/m1-hotkey-settings.md 8.2).
+
 .EXAMPLE
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Pdf
@@ -100,10 +104,14 @@ param(
   [ValidateSet("launch", "run")][string]$Word = "launch",
   [switch]$Expand,
   [int]$MaxHeight = 520,
-  [ValidateSet("Esc", "Click", "ClickThenEsc")][string]$CloseBy = "Esc"
+  [ValidateSet("Esc", "Click", "ClickThenEsc")][string]$CloseBy = "Esc",
+  [string]$Hotkey = "Ctrl+Alt+X"
 )
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
+. (Join-Path $here "hotkey-keys.ps1")
+$hotkeyVks = Get-HotkeyVks $Hotkey
+if ($Hotkey -ne "Ctrl+Alt+X" -and ($HoldMs -gt 0 -or $PressTwiceMs -gt 0)) { throw "-Hotkey is not for -HoldMs / -PressTwiceMs" }
 $App = (Resolve-Path $App).Path
 # Only debug builds honour the directory overrides below.
 if ($App -like "*\release\*") { throw "use a debug build: release builds would use the real settings and history" }
@@ -275,13 +283,13 @@ function Test-Scrollable([IntPtr]$Hwnd) {
 # The hotkey Ctrl+Alt+X at a person's speed: SendKeys releases every key within a
 # millisecond of the press, faster than any hand, and races the Alt mask's hook (D014;
 # tools/e2e/stuck-keys.ps1 tests those races on purpose).
+# (Or -Hotkey: its modifiers 15 ms apart, the main key, then all up in reverse order.)
 function Send-Hotkey {
-  [LtE2e]::Key(0xA2, $false); Start-Sleep -Milliseconds 15
-  [LtE2e]::Key(0xA4, $false); Start-Sleep -Milliseconds 15
-  [LtE2e]::Key(0x58, $false); Start-Sleep -Milliseconds 40
-  [LtE2e]::Key(0x58, $true); Start-Sleep -Milliseconds 30
-  [LtE2e]::Key(0xA4, $true); Start-Sleep -Milliseconds 20
-  [LtE2e]::Key(0xA2, $true)
+  $last = $hotkeyVks.Count - 1
+  for ($i = 0; $i -lt $last; $i++) { [LtE2e]::Key([byte]$hotkeyVks[$i], $false); Start-Sleep -Milliseconds 15 }
+  [LtE2e]::Key([byte]$hotkeyVks[$last], $false); Start-Sleep -Milliseconds 40
+  [LtE2e]::Key([byte]$hotkeyVks[$last], $true); Start-Sleep -Milliseconds 30
+  for ($i = $last - 1; $i -ge 0; $i--) { [LtE2e]::Key([byte]$hotkeyVks[$i], $true); Start-Sleep -Milliseconds 20 }
 }
 
 function Get-Height([IntPtr]$Hwnd) { $r = New-Object LtE2e+R; [void][LtE2e]::GetClientRect($Hwnd, [ref]$r); $r.B - $r.T }
@@ -295,10 +303,8 @@ if ($ForceAttach) { $env:LEXTRAIL_DEBUG_FORCE_ATTACH = "1" }
 if ($MaxHeight -ne 520) { $env:LEXTRAIL_DEBUG_MAX_HEIGHT = "$MaxHeight" }
 $configDir = Join-Path $OutDir ("config-" + [guid]::NewGuid())
 $dataDir = Join-Path $OutDir ("data-" + [guid]::NewGuid())
-if ($DoubleCopy -or $DoubleCopySetting) {
-  New-Item -ItemType Directory -Force $configDir | Out-Null
-  Set-Content -Path (Join-Path $configDir "settings.toml") -Value "[hotkeys]`ndouble_ctrl_c = true" -Encoding ASCII
-}
+$doubleCopyLine = if ($DoubleCopy -or $DoubleCopySetting) { "double_ctrl_c = true" } else { "" }
+Write-HotkeySettings $configDir $Hotkey $doubleCopyLine
 $env:LEXTRAIL_DEBUG_CONFIG_DIR = $configDir
 $env:LEXTRAIL_DEBUG_DATA_DIR = $dataDir
 Start-Process $App -RedirectStandardError $log -WindowStyle Hidden

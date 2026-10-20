@@ -25,18 +25,24 @@ whenever a key is stuck, prints that press's events and the modifiers' GetAsyncK
 and GetKeyState (as seen by this script's thread, and with its input attached to the test
 window's thread and to the foreground window's thread).
 
+-Hotkey sets another lookup hotkey (scratch settings) and presses that instead, e.g.
+"Shift+Alt+X", "Alt+X", "Ctrl+Shift+F1" or "F8" (docs/specs/m1-hotkey-settings.md 8.2).
 .EXAMPLE
 pwsh tools/e2e/stuck-keys.ps1 -App target\debug\lextrail-desktop.exe
+pwsh tools/e2e/stuck-keys.ps1 -App target\debug\lextrail-desktop.exe -Hotkey "Shift+Alt+X"
 #>
 param(
   [string]$App = "target\debug\lextrail-desktop.exe",
   [int[]]$GapsMs = @(0, 0, 1, 1, 2, 3, 5, 8, 13, 20, 40, 80),
   [int]$Rounds = 2,
   [switch]$Observe,
-  [string]$OutDir = (Join-Path $env:TEMP "lextrail-e2e")
+  [string]$OutDir = (Join-Path $env:TEMP "lextrail-e2e"),
+  [string]$Hotkey = "Ctrl+Alt+X"
 )
 $ErrorActionPreference = "Stop"
 $App = (Resolve-Path $App).Path
+. (Join-Path $PSScriptRoot "hotkey-keys.ps1")
+$hotkeyVks = Get-HotkeyVks $Hotkey
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 
 Add-Type @"
@@ -100,11 +106,12 @@ public static class LtKeys {
     i[0].ki.flags = up ? 2u : 0u;
     SendInput(1, i, Marshal.SizeOf(typeof(IN)));
   }
-  // Left Ctrl + left Alt + X down; after gapMs, X, Alt and Ctrl up.
-  public static void Hotkey(int gapMs) {
-    Key(0xA2, false); Thread.Sleep(15); Key(0xA4, false); Thread.Sleep(15); Key(0x58, false);
+  // The hotkey's keys down (modifiers 15 ms apart, main key last); after gapMs, all up
+  // in reverse order.
+  public static void Hotkey(int[] vks, int gapMs) {
+    for (int i = 0; i < vks.Length; i++) { Key((ushort)vks[i], false); if (i < vks.Length - 1) Thread.Sleep(15); }
     if (gapMs > 0) Thread.Sleep(gapMs);
-    Key(0x58, true); Key(0xA4, true); Key(0xA2, true);
+    for (int i = vks.Length - 1; i >= 0; i--) Key((ushort)vks[i], true);
   }
   public static void Esc() { Key(0x1B, false); Key(0x1B, true); }
   public static void Up(int vk) { Key((ushort)vk, true); }
@@ -124,6 +131,7 @@ Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
 $log = Join-Path $OutDir "stuck-keys-app.log"
 # Scratch settings and history, never the user's own (debug builds only).
 $env:LEXTRAIL_DEBUG_CONFIG_DIR = Join-Path $OutDir ("config-" + [guid]::NewGuid())
+Write-HotkeySettings $env:LEXTRAIL_DEBUG_CONFIG_DIR $Hotkey
 $env:LEXTRAIL_DEBUG_DATA_DIR = Join-Path $OutDir ("data-" + [guid]::NewGuid())
 Start-Process $App -RedirectStandardError $log -WindowStyle Hidden
 Remove-Item Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR -ErrorAction SilentlyContinue
@@ -169,7 +177,7 @@ try {
       if ($fg -ne $target.MainWindowHandle) { throw "test window is not in the foreground ($fg); not sending keys" }
       $lines = @(Get-Content $log).Count
       $sentAt = [int64][LtKeys]::GetTickCount()
-      [LtKeys]::Hotkey($gap); Start-Sleep -Milliseconds 700
+      [LtKeys]::Hotkey([int[]]$hotkeyVks, $gap); Start-Sleep -Milliseconds 700
       $held = [LtKeys]::Held()
       if ($held) { $stuck++ }
       "press ${n} (gap ${gap} ms, tick $sentAt, $activated): " + $(if ($held) { "STUCK: $held" } else { "ok" })
