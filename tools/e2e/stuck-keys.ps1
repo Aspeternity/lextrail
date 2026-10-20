@@ -181,7 +181,7 @@ try {
           ForEach-Object { "    event: $_" }
       }
       # This press's mask decision (debug builds).
-      Get-Content $log | Select-Object -Skip $lines | Select-String "alt mask|released before|not come through" |
+      Get-Content $log | Select-Object -Skip $lines | Select-String "alt mask|released before|not come through|still down after" |
         ForEach-Object { "    " + $_.Line }
       # Esc only to the popup (or the test window, when the popup did not take focus).
       $fg = [LtKeys]::GetForegroundWindow()

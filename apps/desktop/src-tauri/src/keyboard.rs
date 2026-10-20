@@ -17,8 +17,15 @@
 //! The repeat has one race: the user may release the modifier between the check and the
 //! injected key-down, which then arrives after the real key-up and leaves the modifier
 //! logically down. A low-level keyboard hook, installed only for these few milliseconds,
-//! sees both events in the order the system processes them; when the real key-up came
-//! first, a key-up is sent after the repeat.
+//! sees both events; when the real key-up came first, a key-up is sent after the repeat.
+//!
+//! The hook's order is not always the order the key state is updated in: when two
+//! processes inject keys at nearly the same moment (the repeat and a test script's
+//! release, less than 0.2 ms apart), the hook can see the repeat first while the key
+//! state ends up down (D014 supplement, seen in tools/e2e/stuck-keys.ps1). So once the
+//! repeat came through, the hook keeps watching for a moment and the key state is read:
+//! if the last real event of the key was its release and the key still reads down, a
+//! key-up is sent too. An extra key-up of a key that is already up does no harm.
 
 /// Keys held when the hotkey fired.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -101,6 +108,8 @@ pub struct RepeatWatch {
     generic_vk: u32,
     delivered: bool,
     released_first: bool,
+    /// The latest real event of the key, before or after the repeat: `Some(true)` up.
+    last_real_up: Option<bool>,
     /// The events seen, for the debug log (the first few only).
     seen: Vec<(u32, bool, bool)>,
 }
@@ -115,6 +124,7 @@ impl RepeatWatch {
             generic_vk: u32::from(modifier.generic_vk()),
             delivered: false,
             released_first: false,
+            last_real_up: None,
             seen: Vec::new(),
         }
     }
@@ -125,7 +135,13 @@ impl RepeatWatch {
         if self.seen.len() < Self::SEEN_LIMIT {
             self.seen.push((vk, up, ours));
         }
-        if self.delivered || (vk != self.vk && vk != self.generic_vk) {
+        if vk != self.vk && vk != self.generic_vk {
+            return;
+        }
+        if !ours {
+            self.last_real_up = Some(up);
+        }
+        if self.delivered {
             return;
         }
         if ours {
@@ -149,6 +165,22 @@ impl RepeatWatch {
         self.delivered && self.released_first
     }
 
+    /// What to do once the repeat came through and the hook watched a little longer;
+    /// `key_down` reads the modifier's key state (`GetAsyncKeyState`).
+    pub fn decide(&self, key_down: impl FnOnce(Modifier) -> bool) -> Release {
+        if !self.delivered {
+            Release::NotDelivered
+        } else if self.needs_release() {
+            Release::ReleasedFirst
+        } else if self.last_real_up == Some(true) && key_down(self.modifier) {
+            // The hook saw the release after the repeat, yet the key reads down: the
+            // key state took the two in the other order.
+            Release::StillDown
+        } else {
+            Release::None
+        }
+    }
+
     /// The events seen, e.g. `A2v* 11^ A4^` (virtual key in hex, `v` down, `^` up,
     /// `*` ours).
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
@@ -164,6 +196,26 @@ impl RepeatWatch {
             })
             .collect::<Vec<_>>()
             .join(" ")
+    }
+}
+
+/// The outcome of a watched repeat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Release {
+    /// The repeat never came through the hook; nothing is sent.
+    NotDelivered,
+    /// Still held, or released normally afterwards: nothing to do.
+    None,
+    /// The hook saw the real key-up before the repeat: send a key-up.
+    ReleasedFirst,
+    /// The hook saw the real key-up after the repeat, but the key state still reads
+    /// down: send a key-up.
+    StillDown,
+}
+
+impl Release {
+    pub fn send_key_up(self) -> bool {
+        matches!(self, Self::ReleasedFirst | Self::StillDown)
     }
 }
 
@@ -200,7 +252,7 @@ mod win {
         SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_NULL,
     };
 
-    use super::{HeldKeys, Mask, Modifier, RepeatWatch, choose_mask};
+    use super::{HeldKeys, Mask, Modifier, Release, RepeatWatch, choose_mask};
 
     /// Virtual key 0xE8: unassigned, so applications have no meaning for it.
     const UNASSIGNED_KEY: u16 = 0xE8;
@@ -214,6 +266,10 @@ mod win {
     /// the hook chain just before the hook was installed may not have reached the key
     /// state yet, and would be missed by both.
     const SETTLE: Duration = Duration::from_millis(2);
+    /// After the repeat came through, how long the hook keeps watching before the key
+    /// state is read: a release injected at the same moment reaches the hook and the key
+    /// state within it.
+    const CHECK_DELAY: Duration = Duration::from_millis(2);
 
     /// The repeat being watched by the hook; one at a time.
     static WATCH: Mutex<Option<RepeatWatch>> = Mutex::new(None);
@@ -360,12 +416,12 @@ mod win {
                 && (!flags.armed.load(Ordering::SeqCst)
                     || watch().as_ref().is_none_or(RepeatWatch::delivered))
         });
+        let armed = flags.armed.load(Ordering::SeqCst);
+        if armed && watch().as_ref().is_some_and(RepeatWatch::delivered) {
+            pump_until(Instant::now() + CHECK_DELAY, Wait::Spin, || false);
+        }
         // Only this watcher's own repeat (another hotkey's may be in `WATCH`).
-        let finished = if flags.armed.load(Ordering::SeqCst) {
-            watch().take()
-        } else {
-            None
-        };
+        let finished = if armed { watch().take() } else { None };
         // SAFETY: the hook was installed on this thread.
         if let Err(e) = unsafe { UnhookWindowsHookEx(hook) } {
             eprintln!("hotkey: could not remove the Alt mask hook: {e}");
@@ -383,19 +439,36 @@ mod win {
         }
     }
 
-    /// Releases the key if the user had released it before the repeat.
+    /// Releases the key if the user had released it before the repeat, or if it reads
+    /// down although the hook saw its release.
     fn finish_repeat(w: &RepeatWatch) -> String {
         let modifier = w.modifier();
-        if w.needs_release() {
+        let release = w.decide(|m| {
+            // SAFETY: plain Win32 call. The high bit is set while the key is down.
+            let state = unsafe { GetAsyncKeyState(i32::from(m.vk())) };
+            state < 0
+        });
+        if release.send_key_up() {
+            // Tagged like the repeat, so our hook ignores it.
             send(&[key(modifier.vk(), modifier.extended(), true)]);
-            // Worth knowing in release builds too: it means the race happened.
-            eprintln!("hotkey: {modifier:?} was released before its mask repeat; released it");
-            format!("repeat {modifier:?}, released first, key-up sent")
-        } else if w.delivered() {
-            format!("repeat {modifier:?}")
-        } else {
-            eprintln!("hotkey: the {modifier:?} mask repeat did not come through the hook");
-            format!("repeat {modifier:?}, not seen by the hook")
+        }
+        // Worth knowing in release builds too: it means the race happened.
+        match release {
+            Release::ReleasedFirst => {
+                eprintln!("hotkey: {modifier:?} was released before its mask repeat; released it");
+                format!("repeat {modifier:?}, released first, key-up sent")
+            }
+            Release::StillDown => {
+                eprintln!(
+                    "hotkey: {modifier:?} still down after its release was seen; released it"
+                );
+                format!("repeat {modifier:?}, still down after release, key-up sent")
+            }
+            Release::None => format!("repeat {modifier:?}"),
+            Release::NotDelivered => {
+                eprintln!("hotkey: the {modifier:?} mask repeat did not come through the hook");
+                format!("repeat {modifier:?}, not seen by the hook")
+            }
         }
     }
 
@@ -618,5 +691,84 @@ mod tests {
         w.on_key(LCTRL, true, false);
         assert!(!w.delivered());
         assert!(!w.needs_release());
+    }
+
+    const LSHIFT: u32 = 0xA0;
+    const REPEATED: [(Modifier, u32); 2] =
+        [(Modifier::LeftCtrl, LCTRL), (Modifier::LeftShift, LSHIFT)];
+
+    /// `decide` with a key state that reads `down`; checks that the repeated key is read.
+    fn decide_with(w: &RepeatWatch, down: bool) -> Release {
+        let expected = w.modifier();
+        w.decide(|m| {
+            assert_eq!(m, expected);
+            down
+        })
+    }
+
+    #[test]
+    fn release_seen_after_the_repeat_but_key_still_down_is_released() {
+        // Hook order: the repeat, then the real key-up; the key state took them the
+        // other way round (stuck-keys.ps1, D014 supplement).
+        for (modifier, vk) in REPEATED {
+            let mut w = RepeatWatch::new(modifier);
+            w.on_key(vk, false, true);
+            w.on_key(vk, true, false);
+            assert!(!w.needs_release());
+            let release = decide_with(&w, true);
+            assert_eq!(release, Release::StillDown, "{modifier:?}");
+            assert!(release.send_key_up());
+        }
+    }
+
+    #[test]
+    fn release_seen_after_the_repeat_with_the_key_up_sends_nothing() {
+        for (modifier, vk) in REPEATED {
+            let mut w = RepeatWatch::new(modifier);
+            w.on_key(vk, false, true);
+            w.on_key(vk, true, false);
+            let release = decide_with(&w, false);
+            assert_eq!(release, Release::None, "{modifier:?}");
+            assert!(!release.send_key_up());
+        }
+    }
+
+    #[test]
+    fn pressed_again_before_the_check_sends_nothing() {
+        for (modifier, vk) in REPEATED {
+            let mut w = RepeatWatch::new(modifier);
+            w.on_key(vk, false, true);
+            w.on_key(vk, true, false);
+            w.on_key(vk, false, false);
+            assert_eq!(decide_with(&w, true), Release::None, "{modifier:?}");
+        }
+    }
+
+    #[test]
+    fn still_held_sends_nothing() {
+        for (modifier, vk) in REPEATED {
+            let mut w = RepeatWatch::new(modifier);
+            w.on_key(vk, false, true);
+            assert_eq!(decide_with(&w, true), Release::None, "{modifier:?}");
+        }
+    }
+
+    #[test]
+    fn released_first_sends_a_key_up_whatever_the_key_state() {
+        let mut w = RepeatWatch::new(Modifier::LeftCtrl);
+        w.on_key(0x11, true, false);
+        w.on_key(LCTRL, false, true);
+        let release = w.decide(|_| false);
+        assert_eq!(release, Release::ReleasedFirst);
+        assert!(release.send_key_up());
+    }
+
+    #[test]
+    fn undelivered_repeat_sends_nothing() {
+        let mut w = RepeatWatch::new(Modifier::LeftShift);
+        w.on_key(LSHIFT, true, false);
+        let release = w.decide(|_| true);
+        assert_eq!(release, Release::NotDelivered);
+        assert!(!release.send_key_up());
     }
 }
