@@ -22,7 +22,7 @@
 | 字段 | 非空词条数 | 用途 |
 |---|---|---|
 | `word` | 770,611（其中含空格的短语 366,599） | 词头 |
-| `phonetic` | 218,065 | 音标（只有一个，不分英美；约 10 万条用的是西里尔字母 `ә` 而不是 IPA 的 `ə`） |
+| `phonetic` | 218,065 | 音标（只有一个音标，以英音为主；约 10 万条用的是西里尔字母 `ә` 而不是 IPA 的 `ə`） |
 | `translation` | 768,739 | 中文释义，按词性分行（`\n`），如 `n. 实数, 现实\nadv. 真正地`；带领域标记的行如 `[医] …`、`[网络] …` |
 | `definition` | 160,884 | 英文释义（第一版不用） |
 | `tag` | 14,942 | 考试标签：`zk gk cet4 cet6 ky toefl ielts gre` |
@@ -65,7 +65,7 @@
 
 ## 4.1 音标
 
-只做一处规范化：西里尔字母 `ә`（U+04D9）替换为 IPA 的 `ə`（U+0259），其余保持原样。ECDICT 只有一个音标，不分英美。
+只做一处规范化：西里尔字母 `ә`（U+04D9）替换为 IPA 的 `ə`（U+0259），其余保持原样。ECDICT 只有一个音标，以英音为主。
 
 ## 5. 输出格式
 
@@ -108,25 +108,25 @@ SQLite 文件 `data/build/lextrail-dict-core.db`，只读，查询时按需从�
 `Dictionary::open` 只读打开词典文件，检查 `meta.format_version`，不认识的版本（或不是词典文件）拒绝打开；设置 `cache_size` 为 1 MiB、不用 mmap（D046，连接常驻）。`Dictionary::lookup(text)`（即 `lookup_with(text, LookupOptions::default())`）：
 
 1. **规范化**：去掉首尾空白和标点（引号、括号、句号等），弯引号 `’` 改为 `'`，去掉所有格 `'s`，中间的连续空白合并为一个空格。
-2. **直接查**（不区分大小写）：大小写完全相同的词条优先，其次小写词条，再其次按来源顺序第一条。**首字母大写的词**（`March`、`The`）同时有小写和大写词条时两个都给：和选中文字大小写完全一致的在前；`LookupOptions::sentence_start`（选中的词在句首）时小写的在前（D046）。
+2. **直接查**（不区分大小写）：大小写完全相同的词条优先，其次小写词条，再其次按来源顺序第一条。**首字母大写的词**（`March`、`The`）同时有小写和大写词条时两个都给：和选中文字大小写完全一致的在前；`LookupOptions::sentence_start`（选中的词在句首）时小写的在前（D046）。ECDICT 的词头不分大小写唯一（完整版、精简版都没有这样的词对），所以目前不会触发。
 3. **`exchange` 词形**（`forms` 表）：查到原形时一并给出原形词条；有多个原形（`found` → find / found）时取词频更高的。
 4. **后缀规则兜底**（只在 3 查不到、且直接查不到或查到的只是"xx 的过去式"之类说明时）：`-ies/-ied/-ier/-iest → -y`、`-ying → -ie`、`-es`、`-s`、`-ed`、`-ing`、`-er`、`-est`（含双写辅音 `stopped → stop`、补 `e` 的 `making → make`）。候选原形必须在词典里，按顺序取第一个；`-er/-est` 只在原形有形容词义项时才算比较级 / 最高级（`optimizer` 不还原为 `optimize`）。
 5. **短语**：直接查不到时，把每个词换成 `exchange` 原形再查（`gave up` → `give up`）。
 
 结果：
-- `entries`：查到的词条自己的词条（如果它不只是"xx 的过去式"之类说明），然后是原形的词条，每个都带角色：
+- `entries`：查到的词条自己的词条（如果它不只是"xx 的过去式"之类说明），然后是原形的词条；**查到的词条没有考试标签、柯林斯星级（0 星算没有）、牛津标记中的任何一项时，原形在前**（`improving` 给 improve、improving；D044 补充的修改）。每个都带角色：
   - `Query`：查的词本身；
   - `FormOf`：查的词本身、同时是另一个词的变形——**显示时必须标出和原形的关系**，如"left（leave 的过去式、过去分词）""better（good 的比较级）"（`Inflection::describe_zh()`）。否则像 `found`（自身释义"建立"，但多数时候是 find 的过去式）这种情况，变形在前会误导；
   - `Lemma`：原形的词条。
 
-  例如 `launched` 只给 `launch`；`better` 给 `better`（good 的比较级）和 `good`。两个词条按语境排序留到 M2（D019）。
+  例如 `better` 给 `better`（good 的比较级）和 `good`；`launched`、`improving` 的词条没有任何标记，给 `launch` 和 `launched`（launch 的过去式、过去分词）、`improve` 和 `improving`（improve 的现在分词）；变形词条只是说明时（测试数据里的 `launched`）只给原形。两个词条按语境排序留到 M2（D019）。
 - `inflection`：原形、词形种类（过去式、复数等）和来源（`exchange` / 后缀规则 / 短语）。
 - `lemma()`：写入查询历史 `lookups.lemma` 的原形。
 
 ### 8.1 带连字符的复合词（D044 补充）
 
 `Dictionary::lookup_with_parts(text)` 返回 `Found::Whole`（整词查到，同 `lookup`）或 `Found::Parts`（拆开查到）：
-- **只在整体查不到时拆**（按 `-` 拆），结果里标明"词典没有整词，以下是各部分的释义"；
+- **只在整体查不到、且文字里有连字符时拆**（按 `-` 拆，空格也当分隔：Edge PDF 把行末的复合词连字符丢掉，得到 "English to-German"；没有连字符的短语不拆），结果里标明"词典没有整词，以下是各部分的释义"；
 - 跳过虚词（a、an、the、and、or、but、nor、of、to、in、on、at、by、for、from、with、as、into、onto、via、vs、per），不显示它们的词条；重复的部分只查一次；每个部分照常做词形还原；查不到的部分列在 `not_found`；
 - 所有部分都查不到时返回 `None`。
 

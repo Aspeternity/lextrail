@@ -15,12 +15,12 @@ vi. 起飞；下水；投入；开始
 AI 语境解析：未配置（M2 接入）            来自 msedge.exe
 ```
 
-- **标题行**：词头、音标（ECDICT 只有一个音标，不标英 / 美）；考试标签显示为中文（中考、高考、四级、六级、考研、托福、雅思、GRE，按这个顺序）；牛津 3000 核心词显示"牛津"；柯林斯星级显示为 ★。
+- **标题行**：词头、音标（ECDICT 只有一个音标，以英音为主，不标英 / 美）；考试标签显示为中文（中考、高考、四级、六级、考研、托福、雅思、GRE，按这个顺序）；牛津 3000 核心词显示"牛津"；柯林斯星级显示为 ★。
 - **义项**：按原文顺序，相邻的同一词性义项合成一行，用"；"连起来。数据里每个义项仍是独立的一条，M2 的 AI 排序（D019）不受影响。
 - **专业释义**：带领域标记的释义（[计]、[医] 等）默认折叠为"▸ 专业释义（N）"，点击展开 / 收起。**词条没有普通释义、只有专业释义时默认展开**（D046），正文不会为空。
 - **滚动**：窗口大小不变（380×260 逻辑像素）；内容超出时正文区域滚动，词条标题滚动时固定在顶部，底部的原句和来源固定。滚动条的轨道从关闭按钮下方开始。
-- **多个词条**（变形词与原形、大小写两个词条）：每个词条先显示前 3 个词性行，多出的点"▸ 更多（N）"展开。变形词条的标题写成"better（good 的比较级）"。只给原形时（变形词条只是"xx 的过去式"说明），原形词条上方加一行灰字"launched 是 launch 的过去式、过去分词"。
-- **大小写两个词条**（March / march、The / the）：和选中文字大小写完全一致的在前；选中的词在句首时（有原句时才能判断，`lextrail_core::text::starts_sentence`）小写的在前（D046）。
+- **多个词条**（变形词与原形、大小写两个词条）：每个词条先显示前 3 个词性行，多出的点"▸ 更多（N）"展开。变形词条的标题写成"better（good 的比较级）"。**顺序**：变形词条在前、原形在后；变形词条没有考试标签、柯林斯星级、牛津标记中的任何一项时原形在前（"improve"，然后"improving（improve 的现在分词）"；D044 补充的修改）。只给原形时（变形词条只是"xx 的过去式"说明），原形词条上方加一行灰字"launched 是 launch 的过去式、过去分词"。
+- **大小写两个词条**（March / march、The / the）：和选中文字大小写完全一致的在前；选中的词在句首时（有原句时才能判断，`lextrail_core::text::starts_sentence`）小写的在前（D046）。ECDICT 中没有这样的词对，目前不会出现。
 - **原句**：最多 2 行，超出省略；只在 UIA 取词时有。
 - **没有复制按钮**（不在 M1，D046）。
 
@@ -34,7 +34,7 @@ attention  /ə'tenʃən/  n. 注意；注意力
 未收录：xxx
 ```
 
-每个部分只显示第一行（没有普通释义时用第一行专业释义），最多 2 行，超出省略；部分本身是变形时带关系说明（"models（model 的复数）"）。
+按 `-` 拆开；走拆分时空格也当分隔（Edge PDF 的 "English to-German" → English、German），虚词（to、of 等）不显示。每个部分只显示第一行（没有普通释义时用第一行专业释义），最多 2 行，超出省略；部分本身是变形时带关系说明（"models（model 的复数）"）。
 
 ## 三、其他情况
 
@@ -82,4 +82,5 @@ attention  /ə'tenʃən/  n. 注意；注意力
 
 - 自动测试：`lextrail-core`（`join_unmarked_line_breaks`、`starts_sentence`）、`lextrail-dict`（`is_word`、大小写顺序、`view`、查询计划）、`dict-builder`（`extra_words`）、桌面端 `content.rs`（选中文字与句子的合并、Edge PDF 剪贴板、大小写顺序、没有词典时）。
 - 截图核对（AI 模拟按键，debug 版，2026-10-20）：Chrome PDF transduc-tion（合并，句子也合并，点开专业释义后按 Esc 关闭、焦点回到 Chrome）；Edge PDF transduc-tion（合并）；网页中的 better、left（更多）、launched、self-attention（拆开）、qwzxv（没有收录）、纯中文、句子、run（滚动）、March。
-- 手动测试清单：`m1-capture-manual-tests.md` 第五轮（R5）。
+- R5 后（2026-10-20）截图核对：Edge PDF 的 "English to-German" 拆成 English、German（R5-P1）；Chrome PDF 中 "...while also improving model performance..." 的 improving 显示 improve 在前、"improving（improve 的现在分词）"在后（R5-P2）。
+- 手动测试清单：`m1-capture-manual-tests.md` 第五轮（R5），全部通过。

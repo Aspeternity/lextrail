@@ -3,7 +3,7 @@
 > 每次开发结束前更新本文件（见 `AGENTS.md` 的"结束流程"）。
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
-**最后更新**：2026-10-20（悬浮窗显示词典结果完成，分支 `feat/popup-dict`，CI 通过，**等项目负责人做 R5 手动测试后合并到 main**）
+**最后更新**：2026-10-20（R5 手动测试通过；修复 R5-P1、R5-P2 后截图复核，`feat/popup-dict` 合并到 `main`；下一步接入查询历史）
 **当前阶段**：M1 · 取词与词典（进行中）。取词部分（UIA + 剪贴板兜底 + 悬浮窗焦点）已完成；R3 发现的问题 R3-P1 至 R3-P4 已修复（分支 `fix/r3-hotkey-and-clipboard`）。R4 中发现的悬浮窗挂起后卡死（R4-P1）已修复，重做的 R4 全部通过；又发现 VS Code 中按住快捷键超过 3 秒提示不对（R4-P2），已修复；R4-1 至 R4-12 全部通过，**取词部分验收**，分支合并到 `main`。词典：`tools/dict-builder` 已在分支 `feat/dict-builder` 完成（D044），等本分支合并后把 `main` 合进去，再做 `lextrail-dict`。
 
 ---
@@ -56,19 +56,17 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
 
 ## 正在进行
 
-- **悬浮窗显示词典结果**（分支 `feat/popup-dict`，已推送，CI 通过；**还没合并到 main**）：规格 `docs/specs/m1-popup-dict.md`，决定 D046 和 D044 补充（Edge PDF）。已完成：
-  - 行末断词：先实测了两种取词方式拿到的原文（规格第 6 节）。Chrome PDF（UIA）在行末连字符处给出 PDFium 的标记（U+0002），只有它参与合并；Edge PDF（剪贴板）连字符被丢掉、只剩换行，按项目负责人的选择用猜测规则（左半段不是词、合起来是词才合并）。选中的文字和句子都合并。判断用精简词典 + 完整版词头表 `extra_words`（词典格式版本 2，文件 35.7 MiB）。
-  - 显示：词性行、考试标签、星级、专业释义折叠（没有普通释义时默认展开）、多词条每个 3 行 +"更多"、大小写两个词条的顺序（与选中文字一致的在前，句首时小写在前）、复合词拆开、查不到 / 句子 / 非英文、词典缺失；正文超长时滚动，标题固定，原句和来源固定。没有复制按钮。
-  - 词典常驻，`cache_size` 1 MiB、不用 mmap。查词 0.2–1.5 ms（debug）。顺带修了原形查询扫描全表（约 30 ms）的问题。
-  - 截图核对（AI 模拟按键）：Chrome PDF、Edge PDF 的 transduc-tion，点开专业释义后按 Esc 关闭、焦点回到 Chrome，以及 better、left、launched、self-attention、查不到、纯中文、句子、run（滚动）、March。
-  - 性能（m0-benchmark 7.3）：**查过词、词典已打开后挂起内存 82.6 MiB**（不查词 81.4 MiB）；冷启动 301–376 ms（同时测的 `main` 为 390 ms，是环境波动）。
-- 词典、查询、词形还原、输入分类（`feat/dict-builder`、`feat/input-classification`）已在 `main`。
+- **悬浮窗显示词典结果**已完成并合并到 `main`（规格 `docs/specs/m1-popup-dict.md`，决定 D046 和 D044 补充）。R5 手动测试（`m1-capture-manual-tests.md`）R5-1 至 R5-18 通过，发现的问题已处理：
+  - R5-P1：Edge PDF 的 "English to-German" 拆成了 "English to"。走拆分（文字里有连字符）时空格也当分隔；没有连字符的短语不拆。
+  - R5-P2：没有考试标签、柯林斯星级、牛津标记的变形词条（improving "有启发的"）改为排在原形后面（D044 补充的修改，项目负责人同意）。精简版中两个词条都给的 23,131 个变形里 21,630 个换了顺序；launched 变为 launch 在前，found、better、left 不变。
+  - R5-P3：ECDICT 的词头不分大小写唯一，没有"同一个词大小写两个词条"的情况，D046 的大小写顺序规则目前不会触发（只有单元测试）。
+  - 文档：ECDICT 音标"只有一个音标，以英音为主"（原写"不分英美"）。
+  - 截图核对（AI 模拟按键，debug 版）：Edge PDF "English to-German" → English、German；Chrome PDF 中 improving → improve 在前。
 
 ## 下一步
 
-1. **项目负责人做 R5 手动测试**（`docs/specs/m1-capture-manual-tests.md`"悬浮窗显示词典结果（R5）"，R5-1 至 R5-18：Chrome / Edge PDF 的 transduc-tion、convolu-tional、English-to-German，滚动，点开"专业释义""更多"后按 Esc，变形词、复合词、查不到、句子、纯中文、大小写），通过后把 `feat/popup-dict` 合并到 `main`（合并前再确认 CI）。
-2. 之后按 `ROADMAP.md` 继续 M1：查询历史接入桌面端 → 连按两次 Ctrl+C（实现 `capture_context`，完成后把这个用法加回提示文字，R1-9）→ 快捷键设置界面。
-3. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。查询历史的 `kind` 用 `Dictionary::classify` 的结果，`lemma` 用 `LookupResult::lemma()`。
+1. 按 `ROADMAP.md` 继续 M1：**查询历史接入桌面端**（新分支）→ 连按两次 Ctrl+C（实现 `capture_context`，完成后把这个用法加回提示文字，R1-9）→ 快捷键设置界面。
+2. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。查询历史的 `kind` 用 `Dictionary::classify` 的结果，`lemma` 用 `LookupResult::lemma()`。
 
 待跟进（已在 ROADMAP 中，或在此记录）：
 - **B3 没有结论**：VS Code 编辑器里 UIA 报告"没有选中"的原因未确认。把 `editor.accessibilitySupport` 设为 `on` 后，我用模拟按键没能做出选区（屏幕阅读器模式下 Ctrl+Shift+→ 的行为不同），这次测试不成立。剪贴板兜底已覆盖 VS Code，且不改用户设置，所以暂不继续；如需要，可在 `on` 模式下手动选词，用 `capture_probe` 看 UIA 是否取到。

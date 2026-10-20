@@ -202,29 +202,38 @@ AI 已用模拟按键做过的自动检查（2026-10-17，debug 版）：`popup-
 
 | # | 对应 | 步骤 | 预期 | 结果 |
 |---|---|---|---|---|
-| R5-1 | D044 补充 | **Chrome** 打开 PDF，拖选 transduc-tion → 快捷键 | 标题 transduction（有音标、n. 转导）；原句里也是 "transduction models"，没有连字符、没有方块；日志 `uia=captured` | |
-| R5-2 | D044 补充 | Chrome PDF，拖选 convolu-tional | 显示 convolutional + "词典中没有收录。"（精简版没有这个词，词头表判断合并）；原句里是 "convolutional layers" | |
-| R5-3 | D044 补充 | Chrome PDF，拖选 English-to-German；再只双击同一句中的 improving | 前者显示 English-to-German（保留连字符），"词典没有整词，以下是各部分的释义"，English、German 两部分（没有 to）；后者原句里是 "English-to-German" | |
-| R5-4 | D044 补充 | **Edge** 打开同一 PDF，拖选 transduc-tion | 显示 transduction（日志 `[chromium_pdf]; clipboard=captured`）；没有原句（剪贴板取词没有上下文） | |
-| R5-5 | D044 补充 | Edge PDF，拖选 convolu-tional | 显示 convolutional | |
-| R5-6 | D044 补充 | Edge PDF，拖选 English-to-German | 显示 "English to-German"（Edge 复制时行末连字符原文就丢了，见 `m1-popup-dict.md` 第 6 节）；不合并成 Englishto-German | |
-| R5-7 | D046 | 查 run 或 set（释义很多） | 正文在窗口内滚动；滚动时标题 "run /rʌn/ …" 固定在顶部；底部原句、"AI 语境解析"、来源不动；滚动条不压住 × | |
-| R5-8 | D046 | 查一个有专业释义的词（如 transduction）→ 点"▸ 专业释义"→ 按 **Esc** | 展开后显示 "[化] 转导"；按 Esc 悬浮窗关闭，焦点回到原窗口（可直接继续在原窗口操作） | |
-| R5-9 | D046 | 查 left → 点"▸ 更多" → 按 **Esc** | 展开后显示 left 的全部词性行；Esc 关闭，焦点回到原窗口 | |
-| R5-10 | D044 补充 | 查 better | "better（good 的比较级）" 和 "good" 两个词条，各自先显示最多 3 行 | |
-| R5-11 | D044 补充 | 查 left | "left（leave 的过去式、过去分词）" 和 "leave"；left 超过 3 行时有"▸ 更多" | |
-| R5-12 | D044 补充 | 查 launched | "launched（launch 的过去式、过去分词）" 和 "launch"（这个词在 ECDICT 中有自己的释义；只有原形时上方是一行灰字"xx 是 xx 的过去式…"） | |
-| R5-13 | D044 补充 | 查 self-attention（拖选整个词） | "词典没有整词，以下是各部分的释义"，self、attention 各一行 | |
-| R5-14 | — | 查一个查不到的词（如 qwzxv 或人名 Vaswani） | 原文 + "词典中没有收录。" | |
-| R5-15 | D045 | 选中一整句英文（超过 5 个词，带句号） | 原文 + "句子翻译需要 AI（M2 接入）。" | |
-| R5-16 | D045 | 选中纯中文 | "目前只支持英文" + 原文 | |
-| R5-17 | D046 | 网页中查句首的大写词（如 "March came early." 中的 March，或 "The model …" 中的 The），再查句中的同一个词 | 有大小写两个词条时：句首小写词条在前；句中与选中文字大小写一致的在前（精简版很多大写词条不存在，只有一个词条时不用判断） | |
-| R5-18 | D046 | **[release]** 从资源管理器启动 `target\release\lextrail-desktop.exe`，查 R5-1、R5-10 | 与 debug 版相同（词典文件 `lextrail-dict-core.db` 在 exe 旁边，由构建复制） | |
+| R5-1 | D044 补充 | **Chrome** 打开 PDF，拖选 transduc-tion → 快捷键 | 标题 transduction（有音标、n. 转导）；原句里也是 "transduction models"，没有连字符、没有方块；日志 `uia=captured` | ✅ 有音标和释义；原句 "transduction models"，没有连字符、没有方块；`uia=captured`，lookup 1.4ms（第一次，含打开词典） |
+| R5-2 | D044 补充 | Chrome PDF，拖选 convolu-tional | 显示 convolutional + "词典中没有收录。"（精简版没有这个词，词头表判断合并）；原句里是 "convolutional layers" | ✅ convolutional + "词典中没有收录。"；原句 "convolutional layers" |
+| R5-3 | D044 补充 | Chrome PDF，拖选 English-to-German；再只双击同一句中的 improving | 前者显示 English-to-German（保留连字符），"词典没有整词，以下是各部分的释义"，English、German 两部分（没有 to）；后者原句里是 "English-to-German" | ✅ 保留连字符，拆成 English、German，没有 to；improving 的原句里是 "English-to-German"。查 improving 时"improving（improve 的现在分词）a. 有启发的…"排在 improve 前面，会误导 → R5-P2 |
+| R5-4 | D044 补充 | **Edge** 打开同一 PDF，拖选 transduc-tion | 显示 transduction（日志 `[chromium_pdf]; clipboard=captured`）；没有原句（剪贴板取词没有上下文） | ✅ |
+| R5-5 | D044 补充 | Edge PDF，拖选 convolu-tional | 显示 convolutional | ✅ |
+| R5-6 | D044 补充 | Edge PDF，拖选 English-to-German | 显示 "English to-German"（Edge 复制时行末连字符原文就丢了，见 `m1-popup-dict.md` 第 6 节）；不合并成 Englishto-German | ⚠️ 标题 "English to-German" 符合预期，但拆开后显示"未收录：English to" → R5-P1，已修复，截图复核通过 |
+| R5-7 | D046 | 查 run 或 set（释义很多） | 正文在窗口内滚动；滚动时标题 "run /rʌn/ …" 固定在顶部；底部原句、"AI 语境解析"、来源不动；滚动条不压住 × | ✅ 正文能滚动，标题、底部原句和来源固定，滚动条没有压住 × |
+| R5-8 | D046 | 查一个有专业释义的词（如 transduction）→ 点"▸ 专业释义"→ 按 **Esc** | 展开后显示 "[化] 转导"；按 Esc 悬浮窗关闭，焦点回到原窗口（可直接继续在原窗口操作） | ✅ 能看到 [化] 转导；Esc 后焦点回到记事本 |
+| R5-9 | D046 | 查 left → 点"▸ 更多" → 按 **Esc** | 展开后显示 left 的全部词性行；Esc 关闭，焦点回到原窗口 | ✅ "更多"能展开；Esc 后焦点回来 |
+| R5-10 | D044 补充 | 查 better | "better（good 的比较级）" 和 "good" 两个词条，各自先显示最多 3 行 | ✅ "better（good 的比较级）"在前，good 在后 |
+| R5-11 | D044 补充 | 查 left | "left（leave 的过去式、过去分词）" 和 "leave"；left 超过 3 行时有"▸ 更多" | ✅ "left（leave 的过去式、过去分词）"在前，leave 在后 |
+| R5-12 | D044 补充 | 查 launched | "launch" 和 "launched（launch 的过去式、过去分词）"（launched 在 ECDICT 中有自己的释义，但没有考试标签、柯林斯星级、牛津标记，所以原形在前，R5-P2；只有原形时上方是一行灰字"xx 是 xx 的过去式…"） | ✅ launched（launch 的过去式、过去分词）和 launch 两个词条（按 R5-P2 修改后顺序变为 launch 在前，见预期） |
+| R5-13 | D044 补充 | 查 self-attention（拖选整个词） | "词典没有整词，以下是各部分的释义"，self、attention 各一行 | ✅ 拆成 self、attention |
+| R5-14 | — | 查一个查不到的词（如 qwzxv 或人名 Vaswani） | 原文 + "词典中没有收录。" | ✅ qwzxv、Vaswani 都显示"词典中没有收录。" |
+| R5-15 | D045 | 选中一整句英文（超过 5 个词，带句号） | 原文 + "句子翻译需要 AI（M2 接入）。" | ✅ |
+| R5-16 | D045 | 选中纯中文 | "目前只支持英文" + 原文 | ✅ |
+| R5-17 | D046 | 网页中查句首的大写词（如 "March came early." 中的 March，或 "The model …" 中的 The），再查句中的同一个词 | 有大小写两个词条时：句首小写词条在前；句中与选中文字大小写一致的在前（精简版很多大写词条不存在，只有一个词条时不用判断） | ✅ 记事本里句首、句中的 March 都只显示一个 march 词条；句子切分正确（"March came early." / "We met in March."）。两个词条时的顺序无法实测：ECDICT 中没有大小写两个词条的词 → R5-P3 |
+| R5-18 | D046 | **[release]** 从资源管理器启动 `target\release\lextrail-desktop.exe`，查 R5-1、R5-10 | 与 debug 版相同（词典文件 `lextrail-dict-core.db` 在 exe 旁边，由构建复制） | ✅ 启动后第一次在 Chrome PDF 查 transduction 正常，原句正确；记事本查 better 顺序正确。第一次的悬浮窗比之后的高（ROADMAP 已记的问题），release 版同样存在 |
+
+R5 发现的问题（2026-10-20，项目负责人测 R5-1 至 R5-17 debug 版、R5-18 release 版）：
+
+| 编号 | 问题 | 处理 |
+|---|---|---|
+| R5-P1 | Edge PDF 的 "English to-German"：`lookup_with_parts` 只按连字符拆，"English to" 成了一个部分，显示"未收录：English to" | 走拆分（文字里有连字符）时空格也当分隔，再跳过虚词；没有连字符的短语不拆（D044 补充）。单元测试 + 截图复核 |
+| R5-P2 | Chrome PDF 查 improving（"...while also improving model performance..."）："improving（improve 的现在分词）a. 有启发的…"排在 improve 前面，会误导 | 变形词条没有考试标签、柯林斯星级、牛津标记时原形在前（D044 补充的修改）；better、left、found 不变，launched 改为 launch 在前。单元测试 + 截图复核 |
+| R5-P3 | R5-17 的"两个词条时的顺序"在真实环境里没有验证到 | 核对后发现 ECDICT 的词头不分大小写唯一（完整版 770,611 条、精简版都没有大小写两个词条的词），所以这条规则目前不会触发，只有单元测试覆盖；文档已注明 |
 
 ## 记录
 
 | 日期 | 测试人 | Windows 版本 | 备注 |
 |---|---|---|---|
+| 2026-10-20 | 项目负责人 + AI（模拟按键） | Windows 11 | 第五轮（R5）：悬浮窗词典结果。项目负责人测 R5-1 至 R5-17（debug 版）、R5-18（release 版），全部通过；R5-6 发现 R5-P1，R5-3 中发现 R5-P2，修复后由 AI 用模拟按键截图复核；R5-17 的两个词条顺序无法实测（R5-P3） |
 | 2026-10-20 | 项目负责人 + AI（模拟按键） | Windows 11 | 第四轮（R4）：R3 修复后的复测。R4-5、R4-9、R4-10 由 AI 用模拟按键 + 截图核对，其余由项目负责人用真实键盘测（含 release 版）。发现 R4-P1（挂起后查词卡死）、R4-P2（VS Code 按住超过 3 秒提示不对），修复后 R4-1 至 R4-12 全部通过，取词部分验收 |
 | 2026-10-16 | 项目负责人 | Windows 11 | 第三轮（R3）：剪贴板兜底后的复测，debug 版全项 + release 版 R3-1。13 项通过，R3-9（Windows Terminal）失败；另发现问题 R3-P1 至 R3-P4（见下） |
 | 2026-10-16 | 项目负责人 | Windows 11 | 第二轮（R2）：第一阶段修复后的复测，12 项全部通过，第一阶段验收 |
