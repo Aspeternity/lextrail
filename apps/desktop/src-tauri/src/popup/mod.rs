@@ -22,7 +22,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use lextrail_capture::{CaptureProgress, CaptureTrace, TextCapture, result_label};
+#[cfg(debug_assertions)]
+use lextrail_capture::result_label;
+use lextrail_capture::{CaptureProgress, CaptureTrace, TextCapture};
 use lextrail_config::PopupMode;
 use tauri::window::Color;
 use tauri::{
@@ -104,6 +106,9 @@ fn platform_capture() -> Arc<dyn TextCapture> {
 /// creates the window, which blocks this (main) thread for a while, and the capture runs
 /// alongside it instead of after it (R3-P3).
 pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result<()> {
+    // Only the debug log uses it (`start +N ms`).
+    #[cfg(not(debug_assertions))]
+    let _ = pressed;
     let state = app.state::<PopupState>();
     let id = state.next_request.fetch_add(1, Ordering::SeqCst) + 1;
     if let Some(t) = &state.timings {

@@ -6,7 +6,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "lint": "eslint . && cargo clippy --workspace --all-targets -- -D warnings",
+    "lint": "eslint . && cargo clippy --workspace --all-targets -- -D warnings && cargo clippy --workspace --all-targets --release -- -D warnings",
     "format": "prettier --write . && cargo fmt --all",
     "format:check": "prettier --check . && cargo fmt --all --check",
     "test": "cargo test --workspace",
