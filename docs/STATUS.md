@@ -3,7 +3,7 @@
 > 每次开发结束前更新本文件（见 `AGENTS.md` 的"结束流程"）。
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
-**最后更新**：2026-10-21（左 Ctrl 卡住修复已合并到 `main`；连按两次 Ctrl+C 第二阶段代码完成，实机测试待跑，分支 `feat/double-copy`）
+**最后更新**：2026-10-21（连按两次 Ctrl+C 第三阶段进行中；不再显示和保存来源；分支 `feat/double-copy`）
 **当前阶段**：M1 · 取词与词典（进行中）。取词（UIA + 剪贴板兜底 + 悬浮窗焦点）经 R1–R4 手动测试验收；词典（`tools/dict-builder`、`lextrail-dict`、悬浮窗词典结果）完成，R5 通过；查询历史已接入桌面端。都已合并到 `main`。M1 剩下：连按两次 Ctrl+C、快捷键设置界面、前端测试等（见 `ROADMAP.md`）。
 
 ---
@@ -66,7 +66,9 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
   - 左 Ctrl 卡住的修复和第一阶段已合并到 `main`（2026-10-21，项目负责人要求）。
   - **第二阶段代码完成**（spec 第三、五、六节）：`DoubleCopyListener`（单独线程上的只收消息窗口 + `AddClipboardFormatListener`；忽略期内、LexTrail 自己的窗口在前台、带 `ExcludeClipboardContentFromMonitorProcessing` 时不打开剪贴板；`CanIncludeInClipboardHistory` = 0 忽略；剪贴板主人挂起时不读；打开最多重试约 100 ms，读完马上关闭）；`capture_context` 以剪贴板文字为准，UIA 选区的词和它不同就不给上下文（`context_mismatch`），跑在 UIA 专用线程上、超时相同；桌面端 `popup::Trigger::DoubleCopy`，开关 `[hotkeys] double_ctrl_c` 启动时读一次，快捷键取词前后按编号通知监听器，查询历史记 `clipboard_double_copy`。debug 版每次剪贴板更新打印类型和读取用时（不含文字）。
   - **第二阶段实机测试已跑**（2026-10-21，结果见 spec 第六节）：Edge 网页、Edge PDF 连按查词通过（截图核对）；快捷键走剪贴板兜底、快速连按两次快捷键都没有误触发；Excel 20 万个单元格读一次 87–136 ms，Excel 不卡。**待项目负责人决定**：Edge InPrivate 复制时带 `CanIncludeInClipboardHistory` = 0，按规则被忽略，InPrivate 里连按不会触发；Excel 等大片复制也会触发查词（是否要限制长度）。另发现原有情况：Edge PDF 里 20 ms 内连按两次快捷键，第二次取词是"没有选中"（开关关闭时一样）。
-  - 下一步：第三阶段（e2e 收尾、手动测试清单、R1-9 提示文字、文档）。
+  - 项目负责人 2026-10-21 审阅第二阶段（D012 两条补充）：InPrivate / 无痕窗口里不触发，保持；连按加长度限制（去掉首尾空白后不超过 500 个字符、不含制表符，超出安静忽略）。500 的依据：Attention Is All You Need 全文按我们的切句，500 以内 99.1%，超过 400 的全是表格、标题块。Edge PDF 20 ms 内连按两次快捷键的问题记入 ROADMAP（低优先级）。cbbc285 的 CI 通过。
+  - **不再显示和保存"单词来自哪里"**（D022、D039 修改，D046 补充，提交 8bac6b4）：release 版悬浮窗不显示来源、发给悬浮窗的内容里没有（debug 版保留）；`lookups` 删除 `source_app`、`url`（迁移 2，`DROP COLUMN`，内置 SQLite 3.53；在 e2e 留下的真实旧数据库副本上试过：版本 1 → 2，记录完整，`integrity_check` ok）；`Selection.url` 删除。
+  - **第三阶段进行中**：长度限制（`double_copy::check_text`，3 个新单元测试）；`popup-e2e.ps1` 加 `-Chrome`、`-ExpectIgnored`，并检查 debug 版悬浮窗显示"来自 msedge.exe"；管理员窗口提示加回连按用法（R1-9）；手动测试清单 R6 已写。待做：模拟按键跑 popup-e2e（debug 版）和 Chrome 无痕窗口实测（需项目负责人同意），按结果写设置说明；项目负责人用真实键盘测 R6。
 
 ## 下一步
 
