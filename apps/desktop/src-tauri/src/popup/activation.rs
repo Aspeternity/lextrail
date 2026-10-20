@@ -10,6 +10,9 @@
 /// How the popup got (or did not get) the foreground.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Activation {
+    /// The popup was the foreground window already (showing it activated it: the process
+    /// still had the right to, e.g. after Esc closed the last popup).
+    AlreadyInFront,
     /// `SetForegroundWindow` succeeded on its own.
     Direct,
     /// It succeeded after attaching to the foreground thread's input queue.
@@ -27,9 +30,19 @@ pub fn bring_to_front(hwnd: windows::Win32::Foundation::HWND) -> Activation {
         GetForegroundWindow, GetWindowThreadProcessId, IsHungAppWindow, SetForegroundWindow,
     };
 
+    // Debug builds only: LEXTRAIL_DEBUG_FORCE_ATTACH=1 skips the plain call, so tests can
+    // check the fallback (it is what runs after a click outside closed the last popup).
+    #[cfg(debug_assertions)]
+    let force_attach = std::env::var_os("LEXTRAIL_DEBUG_FORCE_ATTACH").is_some();
+    #[cfg(not(debug_assertions))]
+    let force_attach = false;
+
     // SAFETY: plain Win32 calls; the attachment is always undone below.
     unsafe {
-        if SetForegroundWindow(hwnd).as_bool() {
+        if GetForegroundWindow() == hwnd {
+            return Activation::AlreadyInFront;
+        }
+        if !force_attach && SetForegroundWindow(hwnd).as_bool() {
             return Activation::Direct;
         }
         let foreground = GetForegroundWindow();

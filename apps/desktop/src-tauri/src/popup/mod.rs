@@ -25,8 +25,8 @@ use std::time::{Duration, Instant};
 #[cfg(debug_assertions)]
 use lextrail_capture::result_label;
 use lextrail_capture::{
-    CaptureError, CaptureMethod, CaptureOutcome, CaptureProgress, CaptureTrace, Selection,
-    TextCapture,
+    CaptureError, CaptureMethod, CaptureOutcome, CaptureProgress, CaptureTarget, CaptureTrace,
+    DoubleCopy, Selection, TextCapture, Unavailable,
 };
 use lextrail_config::PopupMode;
 use tauri::window::Color;
@@ -72,11 +72,28 @@ struct PopupState {
     dictionary: DictionaryService,
     /// Opened by the first lookup to record.
     history: HistoryService,
+    /// The double Ctrl+C listener, when `hotkeys.double_ctrl_c` is on (D012).
+    #[cfg(windows)]
+    double_copy: std::sync::OnceLock<lextrail_capture::DoubleCopyListener>,
+}
+
+/// What started a lookup.
+#[derive(Debug, Clone)]
+pub enum Trigger {
+    Hotkey,
+    /// A double Ctrl+C: the copied text is known, only its context is read (D012).
+    DoubleCopy(DoubleCopy),
 }
 
 /// Registers the popup state. Call once during setup. `record_history`: the
-/// `history.record` setting.
-pub fn init<R: Runtime>(app: &AppHandle<R>, mode: PopupMode, record_history: bool) {
+/// `history.record` setting; `double_ctrl_c`: `hotkeys.double_ctrl_c` (read once, like
+/// every setting: a change takes effect at the next start).
+pub fn init<R: Runtime>(
+    app: &AppHandle<R>,
+    mode: PopupMode,
+    record_history: bool,
+    double_ctrl_c: bool,
+) {
     let timings = Timings::from_env();
     let data_dir = crate::paths::data_dir(app, timings.is_some());
     app.manage(PopupState {
@@ -95,7 +112,12 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, mode: PopupMode, record_history: boo
                 .ok()
                 .map(|dir| dir.join(lextrail_dict::CORE_DICT_FILE_NAME)),
         ),
+        #[cfg(windows)]
+        double_copy: std::sync::OnceLock::new(),
     });
+    if double_ctrl_c {
+        start_double_copy(app);
+    }
     foreground::init({
         let app = app.clone();
         move |window| {
@@ -105,6 +127,115 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, mode: PopupMode, record_history: boo
             }
         }
     });
+}
+
+/// Starts the double Ctrl+C listener; each double copy starts a lookup on the main
+/// thread, like a hotkey press.
+#[cfg(windows)]
+fn start_double_copy<R: Runtime>(app: &AppHandle<R>) {
+    let handle = app.clone();
+    let started = lextrail_capture::DoubleCopyListener::start(move |double| {
+        let pressed = Instant::now();
+        let app = handle.clone();
+        // Checking the word against the dictionary may open it: off the listener thread.
+        spawn("double-copy-check", move || {
+            if let DoubleCopy::Text(text) = &double {
+                let state = app.state::<PopupState>();
+                let wanted = content::double_copy_wanted(text, state.dictionary.get().as_ref());
+                if let Err(_why) = wanted {
+                    // Quietly ignored: no popup, no history; the reason only, never the text.
+                    #[cfg(debug_assertions)]
+                    eprintln!("double copy: ignored: {_why} @{}", debug_clock());
+                    return;
+                }
+            }
+            // Without the text; tools/e2e/popup-e2e.ps1 counts these.
+            #[cfg(debug_assertions)]
+            eprintln!("double copy: lookup triggered @{}", debug_clock());
+            let main = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Err(e) = lookup(&main, pressed, Trigger::DoubleCopy(double)) {
+                    eprintln!("cannot start lookup: {e}");
+                }
+            });
+        });
+    });
+    match started {
+        Ok(listener) => {
+            let _ = app.state::<PopupState>().double_copy.set(listener);
+        }
+        Err(e) => eprintln!("double Ctrl+C is off: the clipboard listener failed ({e})"),
+    }
+}
+
+#[cfg(not(windows))]
+fn start_double_copy<R: Runtime>(_app: &AppHandle<R>) {}
+
+/// Tells the double Ctrl+C listener that hotkey capture `id` starts or ends, so that
+/// its clipboard fallback's updates are not taken for a double copy.
+fn own_copy<R: Runtime>(app: &AppHandle<R>, id: u64, started: bool) {
+    #[cfg(windows)]
+    if let Some(listener) = app.state::<PopupState>().double_copy.get() {
+        if started {
+            listener.own_copy_started(id);
+        } else {
+            listener.own_copy_finished(id);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = (app, id, started);
+}
+
+/// Runs the capture a trigger calls for: the whole pipeline for the hotkey; for a double
+/// Ctrl+C the copied text, with the context UI Automation finds around it (D012). The
+/// bool: the text came through the clipboard from a Chromium PDF viewer.
+fn run_capture<R: Runtime>(
+    app: &AppHandle<R>,
+    id: u64,
+    capture: &dyn TextCapture,
+    target: Result<CaptureTarget, CaptureError>,
+    trigger: Trigger,
+) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace, bool) {
+    let target = match target {
+        Ok(t) => t,
+        Err(e) => return (Err(e), CaptureTrace::default(), false),
+    };
+    match trigger {
+        Trigger::Hotkey => {
+            let progress = |p: CaptureProgress| {
+                let event = match p {
+                    CaptureProgress::WaitingForKeys => request::Event::WaitingForKeys { id },
+                    CaptureProgress::KeysReleased => request::Event::KeysReleased { id },
+                };
+                dispatch_request(app, event);
+            };
+            own_copy(app, id, true);
+            let (result, trace) = capture.capture_traced(&target, &progress);
+            own_copy(app, id, false);
+            let pdf = trace.from_chromium_pdf();
+            (result, trace, pdf)
+        }
+        Trigger::DoubleCopy(DoubleCopy::NoSelection) => (
+            Ok(CaptureOutcome::Unavailable(Unavailable::NoSelection)),
+            CaptureTrace::default(),
+            false,
+        ),
+        Trigger::DoubleCopy(DoubleCopy::Text(text)) => {
+            let (context, trace) = capture.capture_context_traced(&target, &text);
+            // The context is a bonus: without it the copied text is still looked up.
+            let context = context.unwrap_or_else(|e| {
+                eprintln!("capture: reading the context failed: {e}");
+                None
+            });
+            let pdf = trace.from_chromium_pdf();
+            let selection = Selection {
+                text,
+                context,
+                method: CaptureMethod::ClipboardDoubleCopy,
+            };
+            (Ok(CaptureOutcome::Captured(selection)), trace, pdf)
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -119,12 +250,16 @@ fn platform_capture() -> Arc<dyn TextCapture> {
 
 /// Starts a lookup: records the foreground window and focus *before* the popup can
 /// change anything, then captures in the background while the popup gets ready.
-/// `pressed` is when the hotkey fired.
+/// `pressed` is when the hotkey fired (or the double Ctrl+C was recognised).
 ///
 /// The capture thread starts before the popup is asked to show: on the first lookup that
 /// creates the window, which blocks this (main) thread for a while, and the capture runs
 /// alongside it instead of after it (R3-P3).
-pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result<()> {
+pub fn lookup<R: Runtime>(
+    app: &AppHandle<R>,
+    pressed: Instant,
+    trigger: Trigger,
+) -> tauri::Result<()> {
     // Only the debug log uses it (`start +N ms`).
     #[cfg(not(debug_assertions))]
     let _ = pressed;
@@ -164,23 +299,16 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result
     spawn("popup-capture", move || {
         #[cfg(debug_assertions)]
         let start = pressed.elapsed();
+        // Debug builds show the program captured from; release builds never send it.
+        #[cfg(debug_assertions)]
         let source_app = target
             .as_ref()
             .ok()
             .and_then(|t| t.window.as_ref())
             .and_then(|w| w.process_name.clone());
         debug_capture_delay();
-        let progress = |p: CaptureProgress| {
-            let event = match p {
-                CaptureProgress::WaitingForKeys => request::Event::WaitingForKeys { id },
-                CaptureProgress::KeysReleased => request::Event::KeysReleased { id },
-            };
-            dispatch_request(&capture_app, event);
-        };
-        let (result, trace) = match target {
-            Ok(t) => capture.capture_traced(&t, &progress),
-            Err(e) => (Err(e), CaptureTrace::default()),
-        };
+        let (result, trace, pdf_clipboard) =
+            run_capture(&capture_app, id, capture.as_ref(), target, trigger);
         if let Err(e) = &result {
             eprintln!("capture failed: {e}");
         }
@@ -194,15 +322,13 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result
         let lookup_start = Instant::now();
         let (content, record) = if matches!(result, Ok(CaptureOutcome::Captured(_))) {
             let dictionary = state.dictionary.get();
-            Content::from_capture(
-                result,
-                trace.from_chromium_pdf(),
-                source_app,
-                dictionary.as_ref(),
-            )
+            Content::from_capture(result, pdf_clipboard, dictionary.as_ref())
         } else {
-            Content::from_capture(result, false, source_app, None)
+            Content::from_capture(result, false, None)
         };
+        let content = content.with_double_copy_on(state.double_copy.get().is_some());
+        #[cfg(debug_assertions)]
+        let content = content.with_source_app(source_app);
         // One line per capture, without the captured text: method, result, time and
         // where the element came from; then the dictionary lookup's time.
         #[cfg(debug_assertions)]
@@ -290,7 +416,6 @@ fn bench_lookup_text(
         Ok(text) if !text.is_empty() => Ok(CaptureOutcome::Captured(Selection {
             text,
             context: None,
-            url: None,
             method: CaptureMethod::Uia,
         })),
         _ => result,
@@ -320,7 +445,65 @@ pub fn popup_ready<R: Runtime>(app: AppHandle<R>, error: Option<String>) {
 /// Called by the popup page when the user presses Esc.
 #[tauri::command]
 pub fn hide_popup<R: Runtime>(app: AppHandle<R>) {
+    #[cfg(debug_assertions)]
+    eprintln!("popup: Esc @{}", debug_clock());
+    // Back to the window the text came from: on its own, Windows activates whichever
+    // window is next in z-order, often another program. The popup is in front, so it
+    // may hand the foreground on. (A click outside needs nothing: the window clicked is
+    // in front already.)
+    let target = app
+        .state::<PopupState>()
+        .target_window
+        .load(Ordering::SeqCst);
+    let back = return_foreground(target);
+    #[cfg(debug_assertions)]
+    eprintln!("popup: foreground back to the source window: {back}");
+    #[cfg(not(debug_assertions))]
+    let _ = back;
     hide(&app);
+}
+
+/// Makes `window` (a native handle; 0 for none) the foreground window again, if it
+/// still exists and is visible.
+#[cfg(windows)]
+fn return_foreground(window: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindow, IsWindowVisible, SetForegroundWindow};
+    let hwnd = HWND(window as *mut _);
+    // SAFETY: plain Win32 calls; a stale handle only makes them fail.
+    window != 0
+        && unsafe { IsWindow(Some(hwnd)).as_bool() && IsWindowVisible(hwnd).as_bool() }
+        && unsafe { SetForegroundWindow(hwnd).as_bool() }
+}
+
+#[cfg(not(windows))]
+fn return_foreground(_window: isize) -> bool {
+    false
+}
+
+/// Debug builds: milliseconds since the first call, to line up popup, request and
+/// clipboard events in the log.
+#[cfg(debug_assertions)]
+fn debug_clock() -> String {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let start = *START.get_or_init(Instant::now);
+    format!("{:.1}ms", start.elapsed().as_secs_f64() * 1000.0)
+}
+
+/// Debug builds: the foreground window's process and class, for focus changes in the log.
+#[cfg(all(debug_assertions, windows))]
+fn debug_foreground<R: Runtime>(app: &AppHandle<R>) -> String {
+    match app.state::<PopupState>().capture.snapshot() {
+        Ok(target) => match target.window {
+            Some(w) => format!(
+                "{} {}",
+                w.process_name.as_deref().unwrap_or("?"),
+                w.class_name.as_deref().unwrap_or("?")
+            ),
+            None => "none".into(),
+        },
+        Err(e) => format!("unknown ({e})"),
+    }
 }
 
 fn dispatch<R: Runtime>(app: &AppHandle<R>, event: Event) {
@@ -328,7 +511,7 @@ fn dispatch<R: Runtime>(app: &AppHandle<R>, event: Event) {
     // Decide under the lock, act outside it: actions may call back into `dispatch`.
     let actions = lock(&state.lifecycle).handle(event, state.mode);
     #[cfg(debug_assertions)]
-    eprintln!("popup: {event:?} -> {actions:?}");
+    eprintln!("popup: {event:?} -> {actions:?} @{}", debug_clock());
     for action in actions {
         if let Err(e) = perform(app, action) {
             eprintln!("popup action {action:?} failed: {e}");
@@ -397,7 +580,7 @@ fn dispatch_request<R: Runtime>(app: &AppHandle<R>, event: request::Event) {
     let label = format!("{event:?}");
     let actions = lock(&state.request).handle(event);
     #[cfg(debug_assertions)]
-    eprintln!("request: {label} -> {actions:?}");
+    eprintln!("request: {label} -> {actions:?} @{}", debug_clock());
     for action in actions {
         if let Err(e) = perform_request(app, &action) {
             eprintln!("request action {action:?} failed: {e}");
@@ -457,17 +640,85 @@ fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
     window.on_window_event({
         let window = window.clone();
+        // When the webview was last given the focus (see below): at most once in a while,
+        // so two windows can never hand the focus back and forth.
+        let refocused = Mutex::new(None::<Instant>);
         move |event| {
-            // Clicking anywhere outside the focused popup moves focus away. WebView2 also
+            #[cfg(all(debug_assertions, windows))]
+            if let WindowEvent::Focused(focused) = event {
+                eprintln!(
+                    "popup: focused = {focused}, visible = {}; foreground: {}; focus inside: {} @{}",
+                    window.is_visible().unwrap_or(false),
+                    debug_foreground(window.app_handle()),
+                    focus_inside(&window),
+                    debug_clock()
+                );
+            }
+            // A click outside makes another window the foreground: hide. The window losing
+            // the focus alone is not enough: wry hands it on to the WebView2 page (so the
+            // page gets Esc), and undoing AttachThreadInput (activation's fallback) can
+            // leave it outside the popup although the popup stays in front. WebView2 also
             // moves focus around while a hidden window initialises; ignore that.
             if let WindowEvent::Focused(false) = event
                 && window.is_visible().unwrap_or(false)
             {
-                hide(window.app_handle());
+                if !still_in_front(&window) {
+                    hide(window.app_handle());
+                } else if !focus_inside(&window) {
+                    let mut last = lock(&refocused);
+                    if last.is_none_or(|at| at.elapsed() > REFOCUS_INTERVAL) {
+                        *last = Some(Instant::now());
+                        #[cfg(debug_assertions)]
+                        eprintln!("popup: in front without the focus; focusing the page");
+                        let _ = AsRef::<tauri::Webview<R>>::as_ref(&window).set_focus();
+                    }
+                }
             }
         }
     });
     Ok(())
+}
+
+/// See the popup's focus handling in [`create`].
+const REFOCUS_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Whether the popup is still the foreground window.
+#[cfg(windows)]
+fn still_in_front<R: Runtime>(window: &WebviewWindow<R>) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    // SAFETY: plain Win32 call.
+    window
+        .hwnd()
+        .is_ok_and(|hwnd| unsafe { GetForegroundWindow() } == hwnd)
+}
+
+#[cfg(not(windows))]
+fn still_in_front<R: Runtime>(_window: &WebviewWindow<R>) -> bool {
+    false
+}
+
+/// Whether the foreground thread's keyboard focus is the popup or one of its child
+/// windows (the WebView2 page lives in child windows of another process).
+#[cfg(windows)]
+fn focus_inside<R: Runtime>(window: &WebviewWindow<R>) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GUITHREADINFO, GetGUIThreadInfo, IsChild};
+    let Ok(popup) = window.hwnd() else {
+        return false;
+    };
+    let mut info = GUITHREADINFO {
+        cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: plain Win32 calls; thread 0 is the foreground thread.
+    unsafe {
+        GetGUIThreadInfo(0, &mut info).is_ok()
+            && (info.hwndFocus == popup || IsChild(popup, info.hwndFocus).as_bool())
+    }
+}
+
+#[cfg(not(windows))]
+fn focus_inside<R: Runtime>(_window: &WebviewWindow<R>) -> bool {
+    true
 }
 
 /// Shows the popup without taking focus from the window being read.

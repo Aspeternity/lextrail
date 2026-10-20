@@ -13,9 +13,6 @@ pub struct NewLookup<'a> {
     pub kind: LookupKind,
     pub lemma: Option<&'a str>,
     pub context: Option<&'a str>,
-    /// Process name, e.g. `chrome.exe`. Never the window title.
-    pub source_app: Option<&'a str>,
-    pub url: Option<&'a str>,
     pub method: CaptureMethod,
 }
 
@@ -40,13 +37,11 @@ pub struct Lookup {
     pub kind: LookupKind,
     pub lemma: Option<String>,
     pub context: Option<String>,
-    pub source_app: Option<String>,
-    pub url: Option<String>,
     pub method: CaptureMethod,
 }
 
-const COLUMNS: &str = "id, created_at, updated_at, device_id, deleted, query, kind, lemma, \
-                       context, source_app, url, method";
+const COLUMNS: &str =
+    "id, created_at, updated_at, device_id, deleted, query, kind, lemma, context, method";
 
 fn non_empty(s: Option<&str>) -> Option<&str> {
     s.map(str::trim).filter(|s| !s.is_empty())
@@ -63,7 +58,7 @@ fn from_row(row: &Row<'_>) -> Result<Lookup, StoreError> {
     let updated_at = text(2)?;
     let device_id = text(3)?;
     let kind = text(6)?;
-    let method = text(11)?;
+    let method = text(9)?;
     Ok(Lookup {
         id: parse_canonical_uuid(&id).ok_or_else(|| corrupt("id", &id))?,
         created_at: u64::try_from(created_at).map_err(|_| corrupt("created_at", created_at))?,
@@ -77,8 +72,6 @@ fn from_row(row: &Row<'_>) -> Result<Lookup, StoreError> {
         kind: kind.parse().map_err(|_| corrupt("kind", &kind))?,
         lemma: row.get(7)?,
         context: row.get(8)?,
-        source_app: row.get(9)?,
-        url: row.get(10)?,
         method: method.parse().map_err(|_| corrupt("method", &method))?,
     })
 }
@@ -116,7 +109,7 @@ impl<C: Clock> Store<C> {
             w.tx().execute(
                 &format!(
                     "INSERT INTO lookups ({COLUMNS})
-                     VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+                     VALUES (?1, ?2, ?3, ?4, 0, ?5, ?6, ?7, ?8, ?9)"
                 ),
                 params![
                     id.to_string(),
@@ -127,8 +120,6 @@ impl<C: Clock> Store<C> {
                     new.kind.as_str(),
                     non_empty(new.lemma),
                     context,
-                    non_empty(new.source_app),
-                    non_empty(new.url),
                     new.method.as_str(),
                 ],
             )?;
@@ -201,8 +192,6 @@ mod tests {
             kind: LookupKind::Word,
             lemma: Some("address"),
             context: Some("We must address the root cause."),
-            source_app: Some("chrome.exe"),
-            url: None,
             method: CaptureMethod::Uia,
         }
     }
@@ -222,8 +211,6 @@ mod tests {
             kind: LookupKind::Word,
             lemma: Some("address"),
             context: Some("We  addressed\tit."),
-            source_app: Some(" chrome.exe "),
-            url: Some(""),
             method: CaptureMethod::ClipboardDoubleCopy,
         };
         let id = recorded(store.record_lookup(&new).unwrap());
@@ -240,8 +227,6 @@ mod tests {
                 kind: LookupKind::Word,
                 lemma: Some("address".into()),
                 context: Some("We addressed it.".into()),
-                source_app: Some("chrome.exe".into()),
-                url: None,
                 method: CaptureMethod::ClipboardDoubleCopy,
             }
         );

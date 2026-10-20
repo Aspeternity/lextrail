@@ -39,7 +39,7 @@ onMounted(() => {
       <p class="popup__hint">松开快捷键后取词…</p>
     </template>
     <template v-else-if="content.kind === 'selection'">
-      <!-- Scrolls when the result is long; the sentence and source stay in view. -->
+      <!-- Scrolls when the result is long; the sentence (and, in debug builds, the source) stay in view. -->
       <div class="popup__body">
         <DictResult :key="lookupId" :text="content.text" :view="content.lookup" />
       </div>

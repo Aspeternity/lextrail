@@ -28,6 +28,7 @@ use windows::Win32::UI::Accessibility::{
 };
 
 use super::window::hwnd;
+use crate::double_copy::selection_holds;
 use crate::{
     CaptureError, CaptureMethod, CaptureOutcome, CaptureStep, CaptureTarget, ElementSource,
     Progress, RawContext, Selection, StepContext, StepOutput, Unavailable, utf16_range_to_utf8,
@@ -73,7 +74,17 @@ struct Job {
     /// When the caller handed the job over; retries stay within the budget from here.
     queued_at: Instant,
     target: CaptureTarget,
+    kind: JobKind,
     reply: SyncSender<StepOutput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum JobKind {
+    /// Read the selection and its context (hotkey).
+    Selection,
+    /// The selected text is known (double Ctrl+C): read only the context, and only if
+    /// the selection holds this text. The result is captured with this text.
+    Context(String),
 }
 
 impl UiaStep {
@@ -121,17 +132,16 @@ impl UiaStep {
     }
 }
 
-impl CaptureStep for UiaStep {
-    fn name(&self) -> &'static str {
-        "uia"
+impl UiaStep {
+    /// The context around `text`, known to be selected (double Ctrl+C), on the same
+    /// worker and with the same budget as a hotkey capture: `Captured` with `text` and
+    /// the context found, or `Unavailable` (with [`crate::NOTE_CONTEXT_MISMATCH`] when the
+    /// selection held other text).
+    pub fn context(&self, target: &CaptureTarget, text: &str) -> StepOutput {
+        self.run(target, JobKind::Context(text.to_owned()))
     }
 
-    fn try_capture(
-        &self,
-        target: &CaptureTarget,
-        _context: &StepContext,
-        _progress: Progress<'_>,
-    ) -> StepOutput {
+    fn run(&self, target: &CaptureTarget, kind: JobKind) -> StepOutput {
         let unavailable = |u| StepOutput::from(Ok(CaptureOutcome::Unavailable(u)));
         if target.platform.hwnd == 0 {
             return unavailable(Unavailable::Unsupported);
@@ -160,6 +170,7 @@ impl CaptureStep for UiaStep {
         let job = Job {
             queued_at: Instant::now(),
             target: target.clone(),
+            kind,
             reply,
         };
         if jobs.send(job).is_err() {
@@ -178,6 +189,21 @@ impl CaptureStep for UiaStep {
             Err(RecvTimeoutError::Timeout) => unavailable(Unavailable::TimedOut),
             Err(RecvTimeoutError::Disconnected) => Err(worker_stopped()).into(),
         }
+    }
+}
+
+impl CaptureStep for UiaStep {
+    fn name(&self) -> &'static str {
+        "uia"
+    }
+
+    fn try_capture(
+        &self,
+        target: &CaptureTarget,
+        _context: &StepContext,
+        _progress: Progress<'_>,
+    ) -> StepOutput {
+        self.run(target, JobKind::Selection)
     }
 }
 
@@ -284,7 +310,7 @@ fn classify(e: &windows::core::Error) -> Result<CaptureOutcome, CaptureError> {
 /// while the budget allows.
 fn read_with_retry(automation: &IUIAutomation2, job: &Job, budget: Duration) -> StepOutput {
     let deadline = job.queued_at + budget.saturating_sub(RETRY_MARGIN);
-    let mut output = read(automation, &job.target);
+    let mut output = read(automation, &job.target, &job.kind);
     while is_chromium(&job.target)
         && output.result == Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported))
         // A note means "unsupported" was decided on purpose (e.g. a PDF), not a tree
@@ -294,7 +320,7 @@ fn read_with_retry(automation: &IUIAutomation2, job: &Job, budget: Duration) -> 
     {
         thread::sleep(CHROMIUM_RETRY_INTERVAL);
         let attempts = output.attempts + 1;
-        output = read(automation, &job.target);
+        output = read(automation, &job.target, &job.kind);
         output.attempts = attempts;
     }
     output
@@ -308,7 +334,7 @@ fn is_chromium(target: &CaptureTarget) -> bool {
         .is_some_and(crate::clipboard_rules::is_chromium_class)
 }
 
-fn read(automation: &IUIAutomation2, target: &CaptureTarget) -> StepOutput {
+fn read(automation: &IUIAutomation2, target: &CaptureTarget, kind: &JobKind) -> StepOutput {
     let process_id = target.window.as_ref().map_or(0, |w| w.process_id);
     let mut element = None;
     let mut note = None;
@@ -316,6 +342,7 @@ fn read(automation: &IUIAutomation2, target: &CaptureTarget) -> StepOutput {
     let result = read_selection(
         automation,
         target,
+        kind,
         process_id,
         &mut element,
         &mut note,
@@ -339,6 +366,7 @@ fn read(automation: &IUIAutomation2, target: &CaptureTarget) -> StepOutput {
 fn read_selection(
     automation: &IUIAutomation2,
     target: &CaptureTarget,
+    kind: &JobKind,
     process_id: u32,
     used: &mut Option<ElementSource>,
     note: &mut Option<&'static str>,
@@ -393,8 +421,23 @@ fn read_selection(
             found_pattern = true;
         }
         if let Some(selection) = selection_of(&pattern)? {
-            *used = Some(source);
-            return Ok(CaptureOutcome::Captured(selection));
+            match kind {
+                JobKind::Selection => {
+                    *used = Some(source);
+                    return Ok(CaptureOutcome::Captured(selection));
+                }
+                JobKind::Context(copied) if selection_holds(copied, &selection.text) => {
+                    *used = Some(source);
+                    *note = None;
+                    return Ok(CaptureOutcome::Captured(Selection {
+                        text: copied.clone(),
+                        method: CaptureMethod::ClipboardDoubleCopy,
+                        ..selection
+                    }));
+                }
+                // Another element may still hold it; otherwise no context.
+                JobKind::Context(_) => *note = Some(crate::NOTE_CONTEXT_MISMATCH),
+            }
         }
     }
     Ok(CaptureOutcome::Unavailable(if found_pattern {
@@ -480,7 +523,6 @@ fn selection_of(pattern: &IUIAutomationTextPattern) -> windows::core::Result<Opt
             return Ok(Some(Selection {
                 text,
                 context,
-                url: None,
                 method: CaptureMethod::Uia,
             }));
         }

@@ -273,6 +273,17 @@ mod win {
 
     /// The repeat being watched by the hook; one at a time.
     static WATCH: Mutex<Option<RepeatWatch>> = Mutex::new(None);
+    /// Real key events the hook saw before a repeat was armed (the keys are read in
+    /// between): a release right after the read must count too, or the repeat would
+    /// leave the key stuck down (seen in tools/e2e/popup-e2e.ps1: hook saw `A4^ A2v*`).
+    static EARLY: Mutex<Vec<(u32, bool)>> = Mutex::new(Vec::new());
+    const EARLY_LIMIT: usize = 64;
+
+    fn early() -> std::sync::MutexGuard<'static, Vec<(u32, bool)>> {
+        EARLY
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 
     fn watch() -> std::sync::MutexGuard<'static, Option<RepeatWatch>> {
         WATCH
@@ -369,7 +380,13 @@ mod win {
             if w.is_some() {
                 return false;
             }
-            *w = Some(RepeatWatch::new(modifier));
+            let mut repeat = RepeatWatch::new(modifier);
+            // Everything real since the hook went in, in order: only the latest event of
+            // the key counts, so a release (and a press again) before the read is harmless.
+            for (vk, up) in early().drain(..) {
+                repeat.on_key(vk, up, false);
+            }
+            *w = Some(repeat);
             self.flags.armed.store(true, Ordering::SeqCst);
             true
         }
@@ -385,6 +402,7 @@ mod win {
     /// Installs the hook, reports the thread id (`None` on failure), then pumps messages
     /// until the hotkey thread is done and the repeat, if one was sent, came through.
     fn hook_thread(ready: &mpsc::Sender<Option<u32>>, flags: &Flags) {
+        early().clear();
         // SAFETY: plain Win32 calls; the hook procedure only touches `WATCH`, and is
         // removed below on this thread.
         let hook = unsafe {
@@ -517,6 +535,11 @@ mod win {
             let ours = injected && event.dwExtraInfo == TAG;
             if let Some(w) = watch().as_mut() {
                 w.on_key(event.vkCode, up, ours);
+            } else if !injected {
+                let mut early = early();
+                if early.len() < EARLY_LIMIT {
+                    early.push((event.vkCode, up));
+                }
             }
         }
         // SAFETY: passes the event on unchanged.

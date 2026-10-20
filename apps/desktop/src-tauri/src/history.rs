@@ -17,8 +17,6 @@ pub struct Record {
     pub lemma: Option<String>,
     /// The sentence around the selection.
     pub context: Option<String>,
-    /// Process name, e.g. `chrome.exe`; never the window title.
-    pub source_app: Option<String>,
     pub method: CaptureMethod,
 }
 
@@ -77,8 +75,6 @@ impl HistoryService {
             kind: record.kind,
             lemma: record.lemma.as_deref(),
             context: record.context.as_deref(),
-            source_app: record.source_app.as_deref(),
-            url: None,
             method: record.method,
         };
         match store.record_lookup(&new) {
@@ -107,7 +103,6 @@ mod tests {
             kind: LookupKind::Word,
             lemma: Some("launch".into()),
             context: Some("They launched it.".into()),
-            source_app: Some("chrome.exe".into()),
             method: CaptureMethod::Uia,
         }
     }
@@ -145,9 +140,7 @@ mod tests {
         let first = recent.iter().find(|l| l.query == "launched").unwrap();
         assert_eq!(first.lemma.as_deref(), Some("launch"));
         assert_eq!(first.context.as_deref(), Some("They launched it."));
-        assert_eq!(first.source_app.as_deref(), Some("chrome.exe"));
         assert_eq!(first.method, CaptureMethod::Uia);
-        assert_eq!(first.url, None);
     }
 
     #[test]

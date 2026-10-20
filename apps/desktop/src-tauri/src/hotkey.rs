@@ -94,7 +94,7 @@ fn on_triggered<R: Runtime>(app: &AppHandle<R>, action: HotkeyAction) {
     eprintln!("hotkey triggered: {action:?}");
     match action {
         HotkeyAction::Lookup => {
-            if let Err(e) = crate::popup::lookup(app, pressed) {
+            if let Err(e) = crate::popup::lookup(app, pressed, crate::popup::Trigger::Hotkey) {
                 eprintln!("cannot start lookup: {e}");
             }
         }

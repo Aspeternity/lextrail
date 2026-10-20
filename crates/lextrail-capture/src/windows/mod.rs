@@ -2,16 +2,18 @@
 //! separate entry point (M5).
 
 mod clipboard;
+mod double_copy;
 mod uia;
 mod window;
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::{
     CaptureError, CaptureOutcome, CaptureTarget, CaptureTrace, Pipeline, Progress, RawContext,
-    TextCapture, Unavailable,
+    StepTrace, TextCapture, Unavailable, result_label,
 };
+pub use double_copy::DoubleCopyListener;
 use uia::UiaStep;
 
 pub struct WindowsCapture {
@@ -83,13 +85,33 @@ impl TextCapture for WindowsCapture {
         self.pipeline.run_traced(target, progress)
     }
 
-    fn capture_context(
+    fn capture_context_traced(
         &self,
-        _target: &CaptureTarget,
-        _selected_text: &str,
-    ) -> Result<Option<RawContext>, CaptureError> {
-        // Implemented together with the double Ctrl+C trigger (D012).
-        Ok(None)
+        target: &CaptureTarget,
+        selected_text: &str,
+    ) -> (Result<Option<RawContext>, CaptureError>, CaptureTrace) {
+        let start = Instant::now();
+        let output = self.uia.context(target, selected_text);
+        let elapsed = start.elapsed();
+        let trace = CaptureTrace {
+            steps: vec![StepTrace {
+                step: "uia_context",
+                result: result_label(&output.result),
+                elapsed,
+                element: output.element,
+                attempts: output.attempts,
+                note: output.note,
+                key_wait: None,
+            }],
+            precheck: None,
+            total: elapsed,
+        };
+        let result = match output.result {
+            Ok(CaptureOutcome::Captured(selection)) => Ok(selection.context),
+            Ok(CaptureOutcome::Unavailable(_)) => Ok(None),
+            Err(e) => Err(e),
+        };
+        (result, trace)
     }
 }
 

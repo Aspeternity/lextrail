@@ -57,7 +57,7 @@ const OPEN_RETRIES: u32 = 20;
 const OPEN_RETRY_DELAY: Duration = Duration::from_millis(5);
 const POLL: Duration = Duration::from_millis(5);
 
-const CF_UNICODETEXT: u32 = 13;
+pub(super) const CF_UNICODETEXT: u32 = 13;
 
 pub struct ClipboardStep {
     exclude_from_monitors: u32,
@@ -84,7 +84,7 @@ impl ClipboardStep {
     }
 }
 
-fn register(name: &str) -> u32 {
+pub(super) fn register(name: &str) -> u32 {
     let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
     // SAFETY: `wide` is NUL-terminated and outlives the call.
     unsafe { RegisterClipboardFormatW(PCWSTR(wide.as_ptr())) }
@@ -132,7 +132,7 @@ fn platform(operation: &'static str, e: &windows::core::Error) -> CaptureError {
     }
 }
 
-enum Save {
+pub(super) enum Save {
     Saved(Vec<(u32, Vec<u8>)>),
     TooLarge,
     OwnerHung,
@@ -186,7 +186,6 @@ impl ClipboardStep {
                 StepOutput::from(Ok(CaptureOutcome::Captured(Selection {
                     text,
                     context: None,
-                    url: None,
                     method: CaptureMethod::Clipboard,
                 })))
             }
@@ -338,14 +337,8 @@ fn send_copy_keys(keys: CopyKeys) -> Result<(), CaptureError> {
 }
 
 /// Saves the clipboard's memory formats.
-fn save(owner: HWND) -> Result<Save, CaptureError> {
-    // Reading a format the owner renders on demand makes Windows ask the owner for it,
-    // and waits for the answer: never do that to a hung program.
-    // SAFETY: plain Win32 calls.
-    if let Ok(current) = unsafe { GetClipboardOwner() }
-        && !current.is_invalid()
-        && unsafe { IsHungAppWindow(current) }.as_bool()
-    {
+pub(super) fn save(owner: HWND) -> Result<Save, CaptureError> {
+    if owner_hung() {
         return Ok(Save::OwnerHung);
     }
     let _open = OpenGuard::open(owner)?;
@@ -375,11 +368,19 @@ fn save(owner: HWND) -> Result<Save, CaptureError> {
     Ok(Save::Saved(saved))
 }
 
+/// Reading a format the owner renders on demand makes Windows ask the owner for it, and
+/// waits for the answer: never do that to a hung program.
+pub(super) fn owner_hung() -> bool {
+    // SAFETY: plain Win32 calls.
+    unsafe { GetClipboardOwner() }
+        .is_ok_and(|owner| !owner.is_invalid() && unsafe { IsHungAppWindow(owner) }.as_bool())
+}
+
 /// The bytes of one clipboard format, if it is present and holds memory.
 ///
 /// # Safety
 /// The clipboard must be open.
-unsafe fn read_format(format: u32) -> Option<Vec<u8>> {
+pub(super) unsafe fn read_format(format: u32) -> Option<Vec<u8>> {
     unsafe {
         let handle = GetClipboardData(format).ok()?;
         let global = HGLOBAL(handle.0);
@@ -401,7 +402,7 @@ unsafe fn read_format(format: u32) -> Option<Vec<u8>> {
 ///
 /// # Safety
 /// The clipboard must be open and emptied by us.
-unsafe fn put(format: u32, bytes: &[u8]) -> Result<(), CaptureError> {
+pub(super) unsafe fn put(format: u32, bytes: &[u8]) -> Result<(), CaptureError> {
     unsafe {
         let global = GlobalAlloc(GMEM_MOVEABLE, bytes.len().max(1))
             .map_err(|e| platform("GlobalAlloc", &e))?;
@@ -425,7 +426,7 @@ unsafe fn put(format: u32, bytes: &[u8]) -> Result<(), CaptureError> {
     Ok(())
 }
 
-fn utf16_until_nul(bytes: &[u8]) -> String {
+pub(super) fn utf16_until_nul(bytes: &[u8]) -> String {
     let units: Vec<u16> = bytes
         .as_chunks::<2>()
         .0
@@ -438,7 +439,7 @@ fn utf16_until_nul(bytes: &[u8]) -> String {
 
 /// All UTF-16 units of `bytes`, NULs included: Chromium's custom MIME pickle mixes binary
 /// length fields with UTF-16 strings, and only the strings matter here.
-fn utf16_lossy(bytes: &[u8]) -> String {
+pub(super) fn utf16_lossy(bytes: &[u8]) -> String {
     let units: Vec<u16> = bytes
         .as_chunks::<2>()
         .0
@@ -449,10 +450,10 @@ fn utf16_lossy(bytes: &[u8]) -> String {
 }
 
 /// Holds the clipboard open; closes it on drop.
-struct OpenGuard;
+pub(super) struct OpenGuard;
 
 impl OpenGuard {
-    fn open(owner: HWND) -> Result<Self, CaptureError> {
+    pub(super) fn open(owner: HWND) -> Result<Self, CaptureError> {
         let mut last = None;
         for _ in 0..OPEN_RETRIES {
             // SAFETY: plain Win32 call; balanced by CloseClipboard in Drop.
@@ -478,10 +479,10 @@ impl Drop for OpenGuard {
 
 /// A message-only window to own the clipboard while it is restored: `SetClipboardData`
 /// fails when the clipboard was opened without a window.
-struct MessageWindow(HWND);
+pub(super) struct MessageWindow(pub(super) HWND);
 
 impl MessageWindow {
-    fn new() -> Result<Self, CaptureError> {
+    pub(super) fn new() -> Result<Self, CaptureError> {
         // SAFETY: creates a message-only window of a system class; destroyed on drop.
         unsafe {
             CreateWindowExW(

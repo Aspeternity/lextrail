@@ -208,7 +208,7 @@ AI 已用模拟按键做过的自动检查（2026-10-17，debug 版）：`popup-
 | R5-4 | D044 补充 | **Edge** 打开同一 PDF，拖选 transduc-tion | 显示 transduction（日志 `[chromium_pdf]; clipboard=captured`）；没有原句（剪贴板取词没有上下文） | ✅ |
 | R5-5 | D044 补充 | Edge PDF，拖选 convolu-tional | 显示 convolutional | ✅ |
 | R5-6 | D044 补充 | Edge PDF，拖选 English-to-German | 显示 "English to-German"（Edge 复制时行末连字符原文就丢了，见 `m1-popup-dict.md` 第 6 节）；不合并成 Englishto-German | ⚠️ 标题 "English to-German" 符合预期，但拆开后显示"未收录：English to" → R5-P1，已修复，截图复核通过 |
-| R5-7 | D046 | 查 run 或 set（释义很多） | 正文在窗口内滚动；滚动时标题 "run /rʌn/ …" 固定在顶部；底部原句、"AI 语境解析"、来源不动；滚动条不压住 × | ✅ 正文能滚动，标题、底部原句和来源固定，滚动条没有压住 × |
+| R5-7 | D046 | 查 run 或 set（释义很多） | 正文在窗口内滚动；滚动时标题 "run /rʌn/ …" 固定在顶部；底部原句、"AI 语境解析"、来源（只在 debug 版显示）不动；滚动条不压住 × | ✅ 正文能滚动，标题、底部原句和来源固定，滚动条没有压住 × |
 | R5-8 | D046 | 查一个有专业释义的词（如 transduction）→ 点"▸ 专业释义"→ 按 **Esc** | 展开后显示 "[化] 转导"；按 Esc 悬浮窗关闭，焦点回到原窗口（可直接继续在原窗口操作） | ✅ 能看到 [化] 转导；Esc 后焦点回到记事本 |
 | R5-9 | D046 | 查 left → 点"▸ 更多" → 按 **Esc** | 展开后显示 left 的全部词性行；Esc 关闭，焦点回到原窗口 | ✅ "更多"能展开；Esc 后焦点回来 |
 | R5-10 | D044 补充 | 查 better | "better（good 的比较级）" 和 "good" 两个词条，各自先显示最多 3 行 | ✅ "better（good 的比较级）"在前，good 在后 |
@@ -229,10 +229,77 @@ R5 发现的问题（2026-10-20，项目负责人测 R5-1 至 R5-17 debug 版、
 | R5-P2 | Chrome PDF 查 improving（"...while also improving model performance..."）："improving（improve 的现在分词）a. 有启发的…"排在 improve 前面，会误导 | 变形词条没有考试标签、柯林斯星级、牛津标记时原形在前（D044 补充的修改）；better、left、found 不变，launched 改为 launch 在前。单元测试 + 截图复核 |
 | R5-P3 | R5-17 的"两个词条时的顺序"在真实环境里没有验证到 | 核对后发现 ECDICT 的词头不分大小写唯一（完整版 770,611 条、精简版都没有大小写两个词条的词），所以这条规则目前不会触发，只有单元测试覆盖；文档已注明 |
 
+## 连按两次 Ctrl+C（R6）
+
+对应 D012 及其补充、`m1-double-copy.md`。准备：
+
+- 构建 debug 版。用临时设置目录打开开关，不改自己的设置文件：
+
+  ```powershell
+  $env:LEXTRAIL_DEBUG_CONFIG_DIR = "$env:TEMP\lextrail-r6-config"
+  New-Item -ItemType Directory -Force $env:LEXTRAIL_DEBUG_CONFIG_DIR | Out-Null
+  Set-Content "$env:LEXTRAIL_DEBUG_CONFIG_DIR\settings.toml" "[hotkeys]`ndouble_ctrl_c = true" -Encoding ASCII
+  $env:LEXTRAIL_DEBUG_DATA_DIR = "$env:TEMP\lextrail-r6-data"
+  .\target\debug\lextrail-desktop.exe
+  ```
+
+- 日志：每次剪贴板更新一行 `double copy: clipboard update: text 0.4ms`；连按查词 `double copy: lookup triggered`，然后照常 `capture #N: ...; uia_context=...`；长度限制忽略时 `double copy: ignored: TooLong { chars: N }` / `ignored: Tab`。
+- 用**真实键盘**；"连按"指 0.5 秒内按两次 Ctrl+C（中间松不松开 Ctrl 都可以）。
+
+| # | 对应 | 步骤 | 预期 | 结果 |
+|---|---|---|---|---|
+| R6-1 | D012 | **开关关闭**（不设 `LEXTRAIL_DEBUG_CONFIG_DIR`，或设为 `false`）：在网页里选中一个词，连按两次 Ctrl+C | 没有任何反应；日志里没有 `double copy` | ✅ 无反应。日志为空（开关关闭时不启动监听，不打印任何内容） |
+| R6-2 | D012 | 开关打开：Edge 普通窗口，网页里双击一个词，连按两次 Ctrl+C（中间松开 Ctrl） | 弹出悬浮窗，显示这个词和原句；日志 `uia_context=captured`；查询历史 `method` 为 `clipboard_double_copy` | ✅ |
+| R6-3 | D012 | 同上，按住 Ctrl 不放，按两次 C | 同 R6-2 | ✅ |
+| R6-4 | spec 二.4 | 选中一个词，快速按三次 Ctrl+C；再试按四次 | 三次只弹出一次；四次多数弹出两次，偶尔只弹出一次（项目负责人确认保持现状；第二次是同一个词，查询历史去重） | ⚠️ 三次只弹一次；四次多数弹两次，偶尔只弹一次。项目负责人决定保持现状，预期改为实测情况（D012 补充） |
+| R6-5 | spec 二.2 | 选中一个词，按一次 Ctrl+C，隔约 1 秒再按一次 | 不弹出 | ✅ |
+| R6-6 | spec 三 | Edge 打开 PDF（`arxiv.org/pdf/1706.03762`），拖选 transduc-tion，连按两次 Ctrl+C | 显示 transduction，没有原句（Edge PDF 不读上下文） | ✅ |
+| R6-7 | spec 三 | 记事本、Word 中选中一个词，连按两次 Ctrl+C | 显示这个词和原句 | ✅ 记事本（含 Ctrl+V 之后）、Word |
+| R6-8 | R1-9 | 以管理员身份运行记事本，选中一个词，先按快捷键，再连按两次 Ctrl+C | 快捷键：显示"无法读取以管理员身份运行的程序"，提示里提到"可以改用连按两次 Ctrl+C 查词（需先在设置中打开）"；连按：显示这个词，没有原句 | ✅ |
+| R6-9 | D012 补充 | Edge InPrivate 窗口、Chrome 无痕窗口里选中一个词，连按两次 Ctrl+C | 不弹出；日志 `ignored (marked): not for history` | ✅ 按模拟按键记录：Edge InPrivate（第二阶段）、Chrome 无痕窗口（第三阶段）都不触发，日志 `ignored (marked): not for history` |
+| R6-10 | D012 补充 | 用密码管理器（如果有，如 KeePass、Bitwarden 桌面版）复制一条测试密码两次 | 不弹出；日志 `ignored (marked)` | ❌ 用 Chrome 的 Bitwarden 扩展：密码可见时选中后连按两次 Ctrl+C，**可见密码被查词**；密码不可见时点复制按钮，没有反应 → R6-P1 |
+| R6-11 | D012 补充 | Excel：选中一个单元格（内容是一个英文单词），连按两次 Ctrl+C | 显示这个词（单元格末尾的换行不影响） | ✅ |
+| R6-12 | D012 补充 | Excel：选中两个以上单元格，连按两次 Ctrl+C | 不弹出，不记历史；日志 `double copy: ignored: Tab` | ✅ |
+| R6-13 | D012 补充 | 网页里选中一大段（超过 500 个字符，如维基百科的一整段），连按两次 Ctrl+C；再选中一句话连按 | 一大段：不弹出，日志 `ignored: TooLong { chars: N }`；一句话：照常显示 | ✅ |
+| R6-14 | D043 | VS Code 编辑器里**不选中任何文字**，连按两次 Ctrl+C | 显示"没有选中文字"（不查整行） | ✅ |
+| R6-15 | spec 二.6 | 开关打开，用**快捷键**在 Edge PDF 查一个词（走剪贴板兜底）；再快速连按两次快捷键 | 每次都只有快捷键的查词，日志里剪贴板更新都是 `ignored (own capture)`，没有 `lookup triggered` | ✅ 按模拟按键记录（第二阶段）：剪贴板更新都是 `ignored (own capture)`，没有触发连按查词 |
+| R6-16 | spec 二.8 | 悬浮窗显示时，在悬浮窗里选中原句的一部分，连按两次 Ctrl+C | 不再弹出新的查词；日志 `ignored (own window)` | 无法手动测：悬浮窗文字是 `user-select: none`，选不中。暂时只由代码保证（监听里 LexTrail 自己的窗口在前台时不读剪贴板），以后有可选中的文字时再测 |
+| R6-17 | D014 补充 | （R4-8 真实键盘复测）记事本里快速连按快捷键 20 次（每次看到悬浮窗就按 Esc），然后打几个字母 | 打出来的是字母，Ctrl 没有卡住 | ✅ |
+| R6-18 | D046 补充 | **[release]** 打开开关（release 版用真实设置文件 `%APPDATA%\io.github.aspeternity.lextrail\settings.toml`，测完改回），网页里连按两次 Ctrl+C；再按快捷键查一次 | 都能查词；悬浮窗底部**没有**"来自 xxx.exe"（debug 版有） | ✅ release 版底部没有"来自" |
+
+R6 发现的问题（2026-10-21，项目负责人用真实键盘测；需要日志的部分由 AI 启动程序、读日志）：
+
+| 编号 | 问题 | 处理 |
+|---|---|---|
+| R6-P1 | 密码管理器（Chrome 的 Bitwarden 扩展）里可见的密码选中后连按两次 Ctrl+C 会被查词：选中文字的复制不带"不要监视"标记 | 连按只查词典里有的单个词，或带空格的短语、句子；其他单个词（密码、密钥、用户名、邮箱、网址、订单号等）安静忽略（D012 补充，`content::double_copy_wanted`，单元测试）。测试用的数据目录（含真实密码）已删除，未读取 |
+| R6-P2 | 连按两次 Ctrl+C 时悬浮窗经常闪一下就消失：用鼠标点外面关掉悬浮窗后，下一次每次都闪，按 Esc 关掉则正常 | 日志：点外面关掉后 LexTrail 没有前台权限，获取焦点走后备路径（`AttachThreadInput`，R2-5 第一次在真实环境中触发）；解除附加时悬浮窗收到"失去焦点"，而前台仍是悬浮窗，被当成点了外面。改为按**前台窗口**判断是否点了外面（D042 补充） |
+| R6-P3 | R6-P2 第一次修复后不再闪退，但走后备路径弹出的悬浮窗 Esc 关不掉 | 第一次修复把焦点设回顶层窗口，wry 又把焦点交给 WebView2 页面，顶层窗口再报"失去焦点"，约 5 ms 一次来回，Esc 到不了页面。改为：前台仍是悬浮窗、焦点在悬浮窗或其子窗口里时什么都不做；焦点不在里面时才交给页面（`Webview::set_focus`），500 ms 内最多一次 |
+| R6-P4 | （自动检查发现）Esc 关掉后，前台可能变成别的程序（Windows 激活 Z 序中的下一个窗口） | Esc 时先把前台交回取词时的窗口，再隐藏（D042 补充） |
+| R6-P5 | （自动检查发现）快捷键后左 Ctrl 偶尔卡住：真实的 Ctrl 松开发生在"读按键状态"和"登记补发"之间，钩子看到了但没有记录 | 钩子装好后先缓存真实按键事件，登记补发时回放（D014 补充）。`stuck-keys.ps1` 120 次 0 卡住，其中 6 次走了"先松开"的补发松开 |
+
+自动检查（模拟按键，项目负责人同意后运行，2026-10-21）：`popup-e2e.ps1` 新增 `-ForceAttach`（debug 开关 `LEXTRAIL_DEBUG_FORCE_ATTACH`，强制走后备路径）和 `-CloseBy Esc|Click|ClickThenEsc`（关闭后检查悬浮窗已隐藏、测试页回到前台）。结果：强制后备路径 + 连按，点击 / Esc 交替 4 次、只用点击 3 次全部通过（后备路径的悬浮窗 Esc 能关、焦点回到测试页，没有焦点来回）；快捷键（直接获取前台）+ Esc 两轮共 10 次、+ 点击 3 次全部通过。点任务栏、桌面关闭没有用模拟按键测（会影响项目负责人的桌面），留给 R7。查询历史 `method`：连按记 `clipboard_double_copy`，快捷键记 `uia`（核对的是自动检查的临时数据库）。
+
+## 连按两次 Ctrl+C 复测（R7）
+
+对应 R6-P1 至 R6-P5。由 AI 启动 debug 版（开关打开、临时目录、日志写文件）并读日志，项目负责人用真实键盘按键、报告现象。
+
+| # | 对应 | 步骤 | 预期 | 结果 |
+|---|---|---|---|---|
+| R7-1 | R6-P2 | Edge 维基百科页面：双击一个普通单词，连按两次 Ctrl+C，**点页面别处关掉**；重复 10 次 | 不闪退；每次都点外面就关掉 | ✅ |
+| R7-2 | R6-P3、R6-P4 | 同上，但交替用点击和 **Esc** 关掉，10 次 | 不闪退；Esc 每次都能关掉，关掉后可以直接在 Edge 里继续操作（焦点回到 Edge） | ✅ 日志：Esc 16 次，每次前台都交回原窗口 |
+| R7-3 | R6-P2 | 记事本里做 R7-1、R7-2 | 同上 | ✅ |
+| R7-4 | D042 补充 | 悬浮窗显示时点**任务栏**空白处；再查一次，点**桌面** | 两次都关掉悬浮窗 | ✅ 日志里失去焦点时前台分别是 `Shell_TrayWnd`（任务栏）、`Progman`（桌面） |
+| R7-5 | R6-P3 | 用快捷键查词，按 Esc；再查一次，点外面 | 都能关掉，焦点回到原程序 | ✅ |
+| R7-6 | R6-P1 | Bitwarden 里显示密码，选中后连按两次 Ctrl+C；再选中一个邮箱地址、一个网址连按 | 都不弹出；日志 `double copy: ignored: single word not in the dictionary` | ✅ 6 次都是 `ignored: single word not in the dictionary` |
+| R7-7 | R6-P5 | 记事本里快速连按快捷键 20 次（每次看到悬浮窗就按 Esc），然后打几个字母 | 打出来的是字母，Ctrl 没有卡住 | ✅ 打字正常。日志有 2 次 `mask repeat did not come through the hook`（悬浮窗在前台、快捷键被忽略时），没有卡住 → ROADMAP（低优先级） |
+| R7-8 | D012 补充 | 开关打开时以管理员身份运行记事本，按快捷键 | 提示里是"可以改用连按两次 Ctrl+C 查词。"（没有"需先在设置中打开"） | ✅ 没有"（需先在设置中打开）"（日志 `elevated_double_copy`） |
+
 ## 记录
 
 | 日期 | 测试人 | Windows 版本 | 备注 |
 |---|---|---|---|
+| 2026-10-21 | 项目负责人 + AI（读日志） | Windows 11 | 第七轮（R7）：R6-P1 至 R6-P5 修复后的复测，真实键盘，R7-1 至 R7-8 全部通过。日志：获取焦点直接 40 次、后备路径 20 次，没有失败；没有焦点来回。连按两次 Ctrl+C 验收 |
+| 2026-10-21 | 项目负责人 + AI（模拟按键） | Windows 11 | 第六轮（R6）：连按两次 Ctrl+C，真实键盘。通过 14 项；R6-4 部分符合（按项目负责人决定改预期）；R6-10 失败（R6-P1）；R6-9、R6-15 按模拟按键记录；R6-16 无法手动测。另发现悬浮窗闪退（R6-P2），修复过程中又发现 R6-P3 至 R6-P5，均已修复并经自动检查通过，等 R7 复测 |
 | 2026-10-20 | 项目负责人 + AI（模拟按键） | Windows 11 | 第五轮（R5）：悬浮窗词典结果。项目负责人测 R5-1 至 R5-17（debug 版）、R5-18（release 版），全部通过；R5-6 发现 R5-P1，R5-3 中发现 R5-P2，修复后由 AI 用模拟按键截图复核；R5-17 的两个词条顺序无法实测（R5-P3） |
 | 2026-10-20 | 项目负责人 + AI（模拟按键） | Windows 11 | 第四轮（R4）：R3 修复后的复测。R4-5、R4-9、R4-10 由 AI 用模拟按键 + 截图核对，其余由项目负责人用真实键盘测（含 release 版）。发现 R4-P1（挂起后查词卡死）、R4-P2（VS Code 按住超过 3 秒提示不对），修复后 R4-1 至 R4-12 全部通过，取词部分验收 |
 | 2026-10-16 | 项目负责人 | Windows 11 | 第三轮（R3）：剪贴板兜底后的复测，debug 版全项 + release 版 R3-1。13 项通过，R3-9（Windows Terminal）失败；另发现问题 R3-P1 至 R3-P4（见下） |

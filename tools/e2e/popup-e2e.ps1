@@ -28,6 +28,33 @@ more shortly before the keys are released: held for over a second it must say
 "release the hotkey and try again"
 (R3-P2), otherwise the word. (Read with UI Automation, like the rest.)
 
+With -DoubleCopy the lookup is made with a double Ctrl+C (D012) instead of the hotkey:
+the setting hotkeys.double_ctrl_c is switched on in the scratch settings, and Ctrl+C is
+pressed twice, -CopyGapMs apart. Each lookup must then be started by the double copy
+(debug log "double copy: lookup triggered"); the sentence comes from UI Automation
+(with -Pdf there is none). -DoubleCopySetting switches the setting on but keeps using the
+hotkey: then no lookup may come from a double copy, although the clipboard fallback
+(-Pdf) copies and restores within the double-copy gap. -PressTwiceMs N presses the
+hotkey a second time N ms after the first (R1-5: two captures overlap).
+
+Edge InPrivate marks what it copies CanIncludeInClipboardHistory = 0, which double Ctrl+C
+ignores (spec section 2, rule 7): -DoubleCopy therefore needs -NoInPrivate (a fresh
+ordinary profile with sync off).
+
+Each popup is then closed (-CloseBy Esc, the default; Click: a click on the test page
+away from the popup; ClickThenEsc: Click for odd lookups, Esc for even ones) and must be gone afterwards, with the test page in the foreground
+again. -ForceAttach makes the app take the foreground through its fallback
+(AttachThreadInput, debug builds: LEXTRAIL_DEBUG_FORCE_ATTACH), which is what runs after
+a click outside closed the last popup; every activation must then be "Attached" (or
+"AlreadyInFront": after Esc, showing the popup already brings it to the front) and the
+popup must keep the focus (no focus ping-pong).
+
+With -Chrome the page opens in Google Chrome instead of Edge (incognito unless
+-NoInPrivate; not with -Pdf). -ExpectIgnored checks the opposite of a lookup: no popup
+may show, no lookup may be started or recorded. Use it with -DoubleCopy where double
+Ctrl+C must not trigger, e.g. in InPrivate / incognito windows (marked
+CanIncludeInClipboardHistory = 0, D012 supplement).
+
 The app reads its settings and writes its lookup history in fresh directories under
 -OutDir (debug builds only: LEXTRAIL_DEBUG_CONFIG_DIR, LEXTRAIL_DEBUG_DATA_DIR), never the
 user's own; release builds are refused for that reason. The lookups recorded are checked
@@ -43,6 +70,8 @@ pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Pdf
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Pdf -HoldMs 2000
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Lookups 3 -PauseMs 7000 -ResumeDelayMs 300
+pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -DoubleCopy
+pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Pdf -DoubleCopySetting -PressTwiceMs 150
 #>
 param(
   [string]$App = "target\debug\lextrail-desktop.exe",
@@ -51,7 +80,16 @@ param(
   [switch]$Pdf,
   [int]$HoldMs = 0,
   [int]$PauseMs = 600,
-  [int]$ResumeDelayMs = 0
+  [int]$ResumeDelayMs = 0,
+  [switch]$DoubleCopy,
+  [int]$CopyGapMs = 200,
+  [switch]$DoubleCopySetting,
+  [int]$PressTwiceMs = 0,
+  [switch]$NoInPrivate,
+  [switch]$Chrome,
+  [switch]$ExpectIgnored,
+  [switch]$ForceAttach,
+  [ValidateSet("Esc", "Click", "ClickThenEsc")][string]$CloseBy = "Esc"
 )
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
@@ -67,6 +105,11 @@ function Text([int[]]$CodePoints) { -join ($CodePoints | ForEach-Object { [char]
 # hotkey to capture..." (R3-P4).
 $keysHeldTitle = Text 0x8BF7, 0x677E, 0x5F00, 0x5FEB, 0x6377, 0x952E, 0x540E, 0x518D, 0x8BD5
 $holdHint = Text 0x677E, 0x5F00, 0x5FEB, 0x6377, 0x952E, 0x540E, 0x53D6, 0x8BCD, 0x2026
+# Debug builds show where the word came from ("from msedge.exe"); release builds never
+# send it (D046 supplement).
+$browserProc = if ($Chrome) { "chrome" } else { "msedge" }
+$expected += (Text 0x6765, 0x81EA) + " $browserProc.exe"
+if ($Chrome -and $Pdf) { throw "-Chrome is for the web page only" }
 if ($HoldMs -gt 3000) { $expected = @($keysHeldTitle) }
 
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing
@@ -176,17 +219,25 @@ $failures = 0
 Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
 $log = Join-Path $OutDir "app.log"
 if ($ResumeDelayMs -gt 0) { $env:LEXTRAIL_DEBUG_RESUME_DELAY_MS = "$ResumeDelayMs" }
+if ($ForceAttach) { $env:LEXTRAIL_DEBUG_FORCE_ATTACH = "1" }
 $configDir = Join-Path $OutDir ("config-" + [guid]::NewGuid())
 $dataDir = Join-Path $OutDir ("data-" + [guid]::NewGuid())
+if ($DoubleCopy -or $DoubleCopySetting) {
+  New-Item -ItemType Directory -Force $configDir | Out-Null
+  Set-Content -Path (Join-Path $configDir "settings.toml") -Value "[hotkeys]`ndouble_ctrl_c = true" -Encoding ASCII
+}
 $env:LEXTRAIL_DEBUG_CONFIG_DIR = $configDir
 $env:LEXTRAIL_DEBUG_DATA_DIR = $dataDir
 Start-Process $App -RedirectStandardError $log -WindowStyle Hidden
-Remove-Item Env:LEXTRAIL_DEBUG_RESUME_DELAY_MS, Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR -ErrorAction SilentlyContinue
+Remove-Item Env:LEXTRAIL_DEBUG_RESUME_DELAY_MS, Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR, Env:LEXTRAIL_DEBUG_FORCE_ATTACH -ErrorAction SilentlyContinue
 Start-Sleep 4
 
-$edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+$edge = if ($Chrome) { "$env:ProgramFiles\Google\Chrome\Application\chrome.exe" }
+  else { "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe" }
 $profileDir = Join-Path $env:TEMP ("lextrail-e2e-edge-" + [guid]::NewGuid())
 $url = "file:///" + (Join-Path $here "list-item.html").Replace([char]92, [char]47)
+$private = if ($NoInPrivate) { @("--disable-sync", "--no-default-browser-check") }
+  elseif ($Chrome) { @("--incognito", "--no-default-browser-check") } else { @("--inprivate") }
 if ($Pdf) {
   $pdfPath = Join-Path $OutDir "lextrail-e2e.pdf"
   Remove-Item $pdfPath -ErrorAction SilentlyContinue
@@ -195,13 +246,13 @@ if ($Pdf) {
     "--print-to-pdf=$pdfPath", "--no-pdf-header-footer", $url -Wait
   if (-not (Test-Path $pdfPath)) { throw "could not print the test page to PDF" }
   $pdfUrl = "file:///" + $pdfPath.Replace([char]92, [char]47)
-  Start-Process $edge -ArgumentList "--user-data-dir=$profileDir", "--no-first-run", "--inprivate", "--new-window", $pdfUrl | Out-Null
+  Start-Process $edge -ArgumentList (@("--user-data-dir=$profileDir", "--no-first-run") + $private + @("--new-window", $pdfUrl)) | Out-Null
 } else {
-  Start-Process $edge -ArgumentList "--user-data-dir=$profileDir", "--no-first-run", "--inprivate", "--disable-features=Translate,msTranslate", "--app=$url" | Out-Null
+  Start-Process $edge -ArgumentList (@("--user-data-dir=$profileDir", "--no-first-run") + $private + @("--disable-features=Translate,msTranslate", "--app=$url")) | Out-Null
 }
 Start-Sleep 6
 $ws = New-Object -ComObject WScript.Shell
-$page = Get-Process msedge | Where-Object { $_.MainWindowTitle -like "lextrail-e2e*" } | Select-Object -First 1
+$page = Get-Process $browserProc | Where-Object { $_.MainWindowTitle -like "lextrail-e2e*" } | Select-Object -First 1
 # Where "launch" is, in logical pixels from the window's top left corner.
 $word = if ($Pdf) { @(283, 230) } else { @(160, 110) }
 if ($Pdf -and $page) { [LtE2e]::Resize($page.MainWindowHandle, 1050, 1000); Start-Sleep 1 }
@@ -230,8 +281,23 @@ try {
       Start-Sleep -Milliseconds ([Math]::Min(400, $HoldMs))
       [LtE2e]::Key(0xA4, $true); [LtE2e]::Key(0xA2, $true)
       Start-Sleep -Milliseconds 900
+    } elseif ($DoubleCopy) {
+      # Left Ctrl + C, released, twice.
+      for ($c = 0; $c -lt 2; $c++) {
+        if ($c) { Start-Sleep -Milliseconds $CopyGapMs; Assert-Foreground $page.MainWindowHandle "test page" }
+        [LtE2e]::Key(0xA2, $false); [LtE2e]::Key(0x43, $false); [LtE2e]::Key(0x43, $true); [LtE2e]::Key(0xA2, $true)
+      }
+      Start-Sleep -Milliseconds 900
     } else {
-      $ws.SendKeys("^%x"); Start-Sleep -Milliseconds 900
+      $ws.SendKeys("^%x")
+      if ($PressTwiceMs -gt 0) {
+        Start-Sleep -Milliseconds $PressTwiceMs
+        # Still the page (the first press's popup does not take focus while capturing).
+        $fg = [LtE2e]::GetForegroundWindow()
+        if ($fg -eq $page.MainWindowHandle -or $fg -eq [LtE2e]::FindWindow("Tauri Window", "LexTrail")) { $ws.SendKeys("^%x") }
+        else { "  second press not sent: foreground is another window ($fg)" }
+      }
+      Start-Sleep -Milliseconds 900
     }
 
     $popup = [LtE2e]::FindWindow("Tauri Window", "LexTrail")
@@ -248,15 +314,36 @@ try {
     # Held for over a second (and read before the 3 s limit): the hint must be up.
     $hintOk = -not ($HoldMs -gt 1400 -and $HoldMs -le 3000) -or ($heldText -contains $holdHint)
     $ok = $responds -and $visible -and $focused -and $missing.Count -eq 0 -and $hintOk
+    # Nothing may show; the app must still answer if its window exists.
+    if ($ExpectIgnored) { $missing = @(); $ok = -not $visible -and ($popup -eq [IntPtr]::Zero -or $responds) }
     if (-not $ok) { $failures++ }
     "lookup ${i}: " + $(if ($ok) { "PASS" } else { "FAIL" }) + " (responds=$responds visible=$visible focused=$focused)"
     "  popup text: " + ($text -join " | ")
     if ($missing.Count) { "  missing: " + ($missing -join " | ") }
+    if ($ExpectIgnored -and $visible) { "  a popup showed although none was expected" }
     if ($HoldMs -gt 0) { "  while held: " + ($heldText -join " | ") + $(if ($hintOk) { "" } else { "  (hint missing)" }) }
     if ($shot) { "  screenshot: $shot" }
-    if (-not $responds) { "  the app's UI thread does not respond (hung); stopping"; break }
-    # Esc only to the popup itself; a popup without focus hides when the page is activated.
-    if ([LtE2e]::GetForegroundWindow() -eq $popup) { $ws.SendKeys("{ESC}") } else { "  popup not in front: Esc not sent" }
+    if ($popup -ne [IntPtr]::Zero -and -not $responds) { "  the app's UI thread does not respond (hung); stopping"; break }
+    if ($visible -and -not $ExpectIgnored) {
+      # Close it, then it must be gone and the page in front again.
+      $closeSent = $false
+      $how = if ($CloseBy -eq "ClickThenEsc") { if ($i % 2) { "Click" } else { "Esc" } } else { $CloseBy }
+      if ($how -eq "Esc") {
+        # Esc only to the popup itself.
+        if ([LtE2e]::GetForegroundWindow() -eq $popup) { $ws.SendKeys("{ESC}"); $closeSent = $true }
+        else { "  popup not in front: Esc not sent" }
+      } else {
+        # A click on the page, only where the page itself shows (not the popup).
+        $closeSent = [LtE2e]::ClickCenter($page.MainWindowHandle)
+        if (-not $closeSent) { "  the page's centre is covered: click not sent" }
+      }
+      Start-Sleep -Milliseconds 600
+      $stillVisible = [LtE2e]::IsWindowVisible($popup)
+      $backToPage = [LtE2e]::GetForegroundWindow() -eq $page.MainWindowHandle
+      $closedOk = $closeSent -and -not $stillVisible -and $backToPage
+      "  closed by ${how}: " + $(if ($closedOk) { "ok" } else { "FAIL" }) + " (popup visible=$stillVisible, page in front=$backToPage)"
+      if (-not $closedOk) { $failures++ }
+    }
     Start-Sleep -Milliseconds $PauseMs
   }
 } finally {
@@ -264,15 +351,33 @@ try {
   $held = [LtE2e]::ReleaseHeld()
   if ($held) { "modifier keys were still down at the end (released): $held"; $failures++ }
   Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
-  Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" |
+  Get-CimInstance Win32_Process -Filter "Name='$browserProc.exe'" |
     Where-Object { $_.CommandLine -like "*$profileDir*" } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 "app log: $log"
-Get-Content $log | Select-String "capture #|bring to front|WindowReady|resume delayed|Captured|activated" | ForEach-Object { "  " + $_.Line }
+Get-Content $log | Select-String "capture #|bring to front|WindowReady|resume delayed|Captured|activated|double copy" | ForEach-Object { "  " + $_.Line }
+# -ForceAttach: every activation took the fallback, and the focus did not bounce.
+$fronts = @(Get-Content $log | Select-String "popup: bring to front: (\w+)" | ForEach-Object { $_.Matches[0].Groups[1].Value })
+$refocus = @(Get-Content $log | Select-String "focusing the page").Count
+"activations: " + ($fronts -join ", ") + "; page focused by the app: $refocus time(s)"
+if ($ForceAttach -and -not $ExpectIgnored) {
+  $attachOk = $fronts.Count -gt 0 -and $fronts[0] -eq "Attached" -and
+    @($fronts | Where-Object { $_ -notin "Attached", "AlreadyInFront" }).Count -eq 0 -and $refocus -le $fronts.Count
+  if (-not $attachOk) { "  (FAIL: expected only Attached activations and at most one refocus each)"; $failures++ }
+}
+# Lookups started by a double Ctrl+C: one per lookup with -DoubleCopy, none otherwise.
+$triggered = @(Get-Content $log | Select-String "double copy: lookup triggered").Count
+$wantTriggered = if ($DoubleCopy -and -not $ExpectIgnored) { $Lookups } else { 0 }
+"double copy lookups: $triggered (expected $wantTriggered)" + $(if ($triggered -eq $wantTriggered) { "" } else { "  (FAIL)" })
+if ($triggered -ne $wantTriggered) { $failures++ }
 # Lookup history, in the scratch data directory: the first lookup recorded, the repeats
 # (same text and sentence within 30 s) not. Keys held over 3 s capture nothing.
-if ($HoldMs -le 3000) {
+if ($ExpectIgnored) {
+  $history = @(Get-Content $log | Select-String "capture #\d+: history (\w+)")
+  "history: " + $history.Count + " lookup(s) recorded (expected 0)" + $(if ($history.Count) { "  (FAIL)" } else { "" })
+  if ($history.Count) { $failures++ }
+} elseif ($HoldMs -le 3000) {
   $history = @(Get-Content $log | Select-String "capture #\d+: history (\w+)" | ForEach-Object { $_.Matches[0].Groups[1].Value })
   $historyOk = $history.Count -gt 0 -and $history[0] -eq "recorded" -and
     @($history | Select-Object -Skip 1 | Where-Object { $_ -ne "repeat" }).Count -eq 0 -and
