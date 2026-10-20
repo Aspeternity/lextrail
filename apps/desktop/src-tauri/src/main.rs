@@ -1,6 +1,7 @@
 // Release builds are GUI-only: no console window behind the tray app.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod dictionary;
 mod hotkey;
 mod keyboard;
 mod main_window;
