@@ -28,6 +28,19 @@ more shortly before the keys are released: held for over a second it must say
 "release the hotkey and try again"
 (R3-P2), otherwise the word. (Read with UI Automation, like the rest.)
 
+With -DoubleCopy the lookup is made with a double Ctrl+C (D012) instead of the hotkey:
+the setting hotkeys.double_ctrl_c is switched on in the scratch settings, and Ctrl+C is
+pressed twice, -CopyGapMs apart. Each lookup must then be started by the double copy
+(debug log "double copy: lookup triggered"); the sentence comes from UI Automation
+(with -Pdf there is none). -DoubleCopySetting switches the setting on but keeps using the
+hotkey: then no lookup may come from a double copy, although the clipboard fallback
+(-Pdf) copies and restores within the double-copy gap. -PressTwiceMs N presses the
+hotkey a second time N ms after the first (R1-5: two captures overlap).
+
+Edge InPrivate marks what it copies CanIncludeInClipboardHistory = 0, which double Ctrl+C
+ignores (spec section 2, rule 7): -DoubleCopy therefore needs -NoInPrivate (a fresh
+ordinary profile with sync off).
+
 The app reads its settings and writes its lookup history in fresh directories under
 -OutDir (debug builds only: LEXTRAIL_DEBUG_CONFIG_DIR, LEXTRAIL_DEBUG_DATA_DIR), never the
 user's own; release builds are refused for that reason. The lookups recorded are checked
@@ -43,6 +56,8 @@ pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Pdf
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Pdf -HoldMs 2000
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Lookups 3 -PauseMs 7000 -ResumeDelayMs 300
+pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -DoubleCopy
+pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe -Pdf -DoubleCopySetting -PressTwiceMs 150
 #>
 param(
   [string]$App = "target\debug\lextrail-desktop.exe",
@@ -51,7 +66,12 @@ param(
   [switch]$Pdf,
   [int]$HoldMs = 0,
   [int]$PauseMs = 600,
-  [int]$ResumeDelayMs = 0
+  [int]$ResumeDelayMs = 0,
+  [switch]$DoubleCopy,
+  [int]$CopyGapMs = 200,
+  [switch]$DoubleCopySetting,
+  [int]$PressTwiceMs = 0,
+  [switch]$NoInPrivate
 )
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
@@ -178,6 +198,10 @@ $log = Join-Path $OutDir "app.log"
 if ($ResumeDelayMs -gt 0) { $env:LEXTRAIL_DEBUG_RESUME_DELAY_MS = "$ResumeDelayMs" }
 $configDir = Join-Path $OutDir ("config-" + [guid]::NewGuid())
 $dataDir = Join-Path $OutDir ("data-" + [guid]::NewGuid())
+if ($DoubleCopy -or $DoubleCopySetting) {
+  New-Item -ItemType Directory -Force $configDir | Out-Null
+  Set-Content -Path (Join-Path $configDir "settings.toml") -Value "[hotkeys]`ndouble_ctrl_c = true" -Encoding ASCII
+}
 $env:LEXTRAIL_DEBUG_CONFIG_DIR = $configDir
 $env:LEXTRAIL_DEBUG_DATA_DIR = $dataDir
 Start-Process $App -RedirectStandardError $log -WindowStyle Hidden
@@ -187,6 +211,7 @@ Start-Sleep 4
 $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
 $profileDir = Join-Path $env:TEMP ("lextrail-e2e-edge-" + [guid]::NewGuid())
 $url = "file:///" + (Join-Path $here "list-item.html").Replace([char]92, [char]47)
+$private = if ($NoInPrivate) { @("--disable-sync", "--no-default-browser-check") } else { @("--inprivate") }
 if ($Pdf) {
   $pdfPath = Join-Path $OutDir "lextrail-e2e.pdf"
   Remove-Item $pdfPath -ErrorAction SilentlyContinue
@@ -195,9 +220,9 @@ if ($Pdf) {
     "--print-to-pdf=$pdfPath", "--no-pdf-header-footer", $url -Wait
   if (-not (Test-Path $pdfPath)) { throw "could not print the test page to PDF" }
   $pdfUrl = "file:///" + $pdfPath.Replace([char]92, [char]47)
-  Start-Process $edge -ArgumentList "--user-data-dir=$profileDir", "--no-first-run", "--inprivate", "--new-window", $pdfUrl | Out-Null
+  Start-Process $edge -ArgumentList (@("--user-data-dir=$profileDir", "--no-first-run") + $private + @("--new-window", $pdfUrl)) | Out-Null
 } else {
-  Start-Process $edge -ArgumentList "--user-data-dir=$profileDir", "--no-first-run", "--inprivate", "--disable-features=Translate,msTranslate", "--app=$url" | Out-Null
+  Start-Process $edge -ArgumentList (@("--user-data-dir=$profileDir", "--no-first-run") + $private + @("--disable-features=Translate,msTranslate", "--app=$url")) | Out-Null
 }
 Start-Sleep 6
 $ws = New-Object -ComObject WScript.Shell
@@ -230,8 +255,23 @@ try {
       Start-Sleep -Milliseconds ([Math]::Min(400, $HoldMs))
       [LtE2e]::Key(0xA4, $true); [LtE2e]::Key(0xA2, $true)
       Start-Sleep -Milliseconds 900
+    } elseif ($DoubleCopy) {
+      # Left Ctrl + C, released, twice.
+      for ($c = 0; $c -lt 2; $c++) {
+        if ($c) { Start-Sleep -Milliseconds $CopyGapMs; Assert-Foreground $page.MainWindowHandle "test page" }
+        [LtE2e]::Key(0xA2, $false); [LtE2e]::Key(0x43, $false); [LtE2e]::Key(0x43, $true); [LtE2e]::Key(0xA2, $true)
+      }
+      Start-Sleep -Milliseconds 900
     } else {
-      $ws.SendKeys("^%x"); Start-Sleep -Milliseconds 900
+      $ws.SendKeys("^%x")
+      if ($PressTwiceMs -gt 0) {
+        Start-Sleep -Milliseconds $PressTwiceMs
+        # Still the page (the first press's popup does not take focus while capturing).
+        $fg = [LtE2e]::GetForegroundWindow()
+        if ($fg -eq $page.MainWindowHandle -or $fg -eq [LtE2e]::FindWindow("Tauri Window", "LexTrail")) { $ws.SendKeys("^%x") }
+        else { "  second press not sent: foreground is another window ($fg)" }
+      }
+      Start-Sleep -Milliseconds 900
     }
 
     $popup = [LtE2e]::FindWindow("Tauri Window", "LexTrail")
@@ -269,7 +309,12 @@ try {
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 "app log: $log"
-Get-Content $log | Select-String "capture #|bring to front|WindowReady|resume delayed|Captured|activated" | ForEach-Object { "  " + $_.Line }
+Get-Content $log | Select-String "capture #|bring to front|WindowReady|resume delayed|Captured|activated|double copy" | ForEach-Object { "  " + $_.Line }
+# Lookups started by a double Ctrl+C: one per lookup with -DoubleCopy, none otherwise.
+$triggered = @(Get-Content $log | Select-String "double copy: lookup triggered").Count
+$wantTriggered = if ($DoubleCopy) { $Lookups } else { 0 }
+"double copy lookups: $triggered (expected $wantTriggered)" + $(if ($triggered -eq $wantTriggered) { "" } else { "  (FAIL)" })
+if ($triggered -ne $wantTriggered) { $failures++ }
 # Lookup history, in the scratch data directory: the first lookup recorded, the repeats
 # (same text and sentence within 30 s) not. Keys held over 3 s capture nothing.
 if ($HoldMs -le 3000) {

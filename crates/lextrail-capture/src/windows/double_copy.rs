@@ -89,8 +89,9 @@ enum Update {
     Ignored,
     /// Not read: LexTrail's own window is in front.
     OwnWindow,
-    /// Marked "do not monitor" or "not for the clipboard history" (spec section 2, rule 7).
-    Marked,
+    /// Marked "do not monitor" or "not for the clipboard history" (spec section 2, rule 7):
+    /// which of the two, for the debug log.
+    Marked(&'static str),
     Read(CopiedContent),
 }
 
@@ -133,7 +134,7 @@ fn listen(
             log_update(&update, at);
             let found = match update {
                 Update::Ignored => None,
-                Update::OwnWindow | Update::Marked => {
+                Update::OwnWindow | Update::Marked(_) => {
                     lock(detector).discard();
                     None
                 }
@@ -165,7 +166,7 @@ fn classify(
     }
     // SAFETY: plain Win32 call; needs no open clipboard.
     if unsafe { IsClipboardFormatAvailable(formats.exclude_from_monitors) }.is_ok() {
-        return Update::Marked;
+        return Update::Marked("exclude from monitors");
     }
     if owner_hung() {
         return Update::Read(CopiedContent::Other);
@@ -184,7 +185,7 @@ fn read(window: HWND, formats: &Formats) -> Update {
             && read_format(formats.can_include_in_history)
                 .is_some_and(|bytes| bytes.get(..4) == Some(&0u32.to_ne_bytes()[..]))
         {
-            return Update::Marked;
+            return Update::Marked("not for history");
         }
         let text = || read_format(CF_UNICODETEXT).map(|bytes| utf16_until_nul(&bytes));
         if IsClipboardFormatAvailable(formats.chromium_custom_mime).is_ok()
@@ -220,13 +221,17 @@ fn log_update(update: &Update, at: Instant) {
     let kind = match update {
         Update::Ignored => "ignored (own capture)",
         Update::OwnWindow => "ignored (own window)",
-        Update::Marked => "ignored (marked)",
+        Update::Marked(_) => "ignored (marked)",
         Update::Read(CopiedContent::Text(_)) => "text",
         Update::Read(CopiedContent::EmptySelectionLine(_)) => "vscode empty selection",
         Update::Read(CopiedContent::Other) => "no text",
     };
+    let marker = match update {
+        Update::Marked(which) => format!(": {which}"),
+        _ => String::new(),
+    };
     eprintln!(
-        "double copy: clipboard update: {kind} {:.1}ms",
+        "double copy: clipboard update: {kind}{marker} {:.1}ms",
         at.elapsed().as_secs_f64() * 1000.0
     );
 }

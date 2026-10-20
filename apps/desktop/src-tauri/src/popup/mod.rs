@@ -136,6 +136,9 @@ fn start_double_copy<R: Runtime>(app: &AppHandle<R>) {
     let handle = app.clone();
     let started = lextrail_capture::DoubleCopyListener::start(move |double| {
         let pressed = Instant::now();
+        // Without the text; tools/e2e/popup-e2e.ps1 counts these.
+        #[cfg(debug_assertions)]
+        eprintln!("double copy: lookup triggered");
         let app = handle.clone();
         let _ = handle.run_on_main_thread(move || {
             if let Err(e) = lookup(&app, pressed, Trigger::DoubleCopy(double)) {

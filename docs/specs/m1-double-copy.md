@@ -84,5 +84,12 @@ Excel 等程序复制大片内容时是**延迟生成**的（delayed rendering�
 1. **第一阶段**（已完成）：本文；`DoubleCopyDetector` 及单元测试。
 2. **第二阶段**（代码已完成，实机测试待跑）：Windows 剪贴板监听（`lextrail-capture` 的 `DoubleCopyListener`：单独线程上的只收消息窗口 + `AddClipboardFormatListener`；读 `CF_UNICODETEXT` 和 VS Code 的整行标记；第七、八条的检查）；`capture_context`；桌面端接入（`popup::Trigger::DoubleCopy`、设置开关、快捷键取词期间按编号通知监听器、`clipboard_double_copy`）。读剪贴板的要求见第五节。debug 版每次剪贴板更新打印一行 `double copy: clipboard update: text 0.4ms`（类型和读取用时，不含文字），每次连按查词打印 `capture #N: captured | ...; uia_context=captured 12.0ms (uia_focus); ...`。
    - 自动测试：判定逻辑 17 个单元测试；`listener_round_trip`（默认忽略，会改动真实剪贴板和 Win+V 历史，最后写回原内容）：真实剪贴板上连写两次相同文字触发、带两种标记不触发、自己取词期间不触发。
-   - 实机测试（需要模拟按键，先问项目负责人）：记事本、Edge 网页里连按两次 Ctrl+C 看到悬浮窗和原句；快捷键走剪贴板兜底（Edge PDF）时不误触发；快速连按两次快捷键（R1-5）不误触发；Excel 复制一大片单元格，看读剪贴板用时和是否卡顿。
+   - 实机测试（2026-10-21，项目负责人同意后运行；`popup-e2e.ps1` 新增 `-DoubleCopy`、`-DoubleCopySetting`、`-PressTwiceMs`、`-NoInPrivate`）：
+     - `listener_round_trip` 通过。
+     - Edge 网页（普通配置文件）连按两次 Ctrl+C：2/2 通过，截图看到单词和原句"launch missiles at ships."；`uia_context=captured` 第一次 58.6 ms（Chromium 第一次重试一次），之后 9.1 ms；查询历史第一次记录、第二次去重。
+     - Edge PDF 连按两次 Ctrl+C：2/2 通过，不读原句（`[chromium_pdf]`），只查单词。
+     - 开关打开、用快捷键在 Edge PDF 取词（走剪贴板兜底，模拟复制和写回都在连按间隔内）：普通配置文件 3/3、InPrivate 2/2，剪贴板更新全部是"ignored (own capture)"，没有触发连按查词。
+     - 快速连按两次快捷键（间隔 150 ms 和 20 ms）：两次取词重叠的情况出现过（20 ms 那次的第 1 轮），没有触发连按查词。20 ms 那次第 2、3 轮的第二次取词是"没有选中"（第二次模拟复制后剪贴板没有变化）；开关关闭时同样如此，是原有的情况，与本功能无关。
+     - Excel（2 万行 × 10 列，约 20 万个单元格）连按两次 Ctrl+C：Excel 一次复制先发 1–2 次没有文字的更新，再发有文字的更新；读一次文字用 87–136 ms（逼 Excel 当场生成文字）；4 秒内 Excel 回应消息最慢 25 ms，没有超时；LexTrail 正常；触发了查词（整片文字），查询历史只存前 1999 个字符（原有上限）。
+   - **发现：Edge InPrivate 窗口复制的内容带 `CanIncludeInClipboardHistory` = 0**，按第二节第七条会被忽略，所以 InPrivate（应当也包括 Chrome 无痕窗口，未测）里连按两次 Ctrl+C 不会触发。待项目负责人决定是否保持。
 3. **第三阶段**：e2e（在测试页面上连按两次 Ctrl+C，看到悬浮窗内容；快捷键走剪贴板兜底时不误触发）、手动测试清单、把这个用法加回提示文字（R1-9）、文档。

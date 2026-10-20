@@ -65,7 +65,8 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
   - **左 Ctrl 卡住已查明并修复**（D014 补充，2026-10-21）：两个进程几乎同时注入按键时，钩子看到"补发在前、真实松开在后"，按键状态却是反过来更新的，Ctrl 停在按下。现在补发通过钩子后再看 2 ms、读一次按键状态：钩子看到最后一次真实事件是松开、状态仍是按下，就补发松开（Ctrl、Shift 都核对，带自己的 `dwExtraInfo`），`keyboard.rs` 16 个测试。复测：正常模式 600 次按键、105 次补发、0 次卡住，新路径补发松开 2 次；关掉屏蔽键对照 0/60；`popup-e2e.ps1` 通过。真实键盘复测（R4-8 快速连按 20 次）并入连按两次 Ctrl+C 完成后的手动测试。工具：`tools/e2e/key-observer.ps1`（独立进程的低级钩子，父进程退出或 15 分钟后自己退出；日志里有机器上的所有按键，用完即删、不提交），`stuck-keys.ps1 -Observe`。
   - 左 Ctrl 卡住的修复和第一阶段已合并到 `main`（2026-10-21，项目负责人要求）。
   - **第二阶段代码完成**（spec 第三、五、六节）：`DoubleCopyListener`（单独线程上的只收消息窗口 + `AddClipboardFormatListener`；忽略期内、LexTrail 自己的窗口在前台、带 `ExcludeClipboardContentFromMonitorProcessing` 时不打开剪贴板；`CanIncludeInClipboardHistory` = 0 忽略；剪贴板主人挂起时不读；打开最多重试约 100 ms，读完马上关闭）；`capture_context` 以剪贴板文字为准，UIA 选区的词和它不同就不给上下文（`context_mismatch`），跑在 UIA 专用线程上、超时相同；桌面端 `popup::Trigger::DoubleCopy`，开关 `[hotkeys] double_ctrl_c` 启动时读一次，快捷键取词前后按编号通知监听器，查询历史记 `clipboard_double_copy`。debug 版每次剪贴板更新打印类型和读取用时（不含文字）。
-  - **下一步：第二阶段的实机测试**（要模拟按键和改动剪贴板，先问项目负责人）：`listener_round_trip`；记事本、Edge 里连按两次 Ctrl+C 看到悬浮窗和原句；Edge PDF（快捷键走剪贴板兜底）和快速连按两次快捷键时不误触发；Excel 复制一大片单元格（读剪贴板用时、是否卡顿）。之后第三阶段（e2e、手动测试清单、R1-9 提示文字）。
+  - **第二阶段实机测试已跑**（2026-10-21，结果见 spec 第六节）：Edge 网页、Edge PDF 连按查词通过（截图核对）；快捷键走剪贴板兜底、快速连按两次快捷键都没有误触发；Excel 20 万个单元格读一次 87–136 ms，Excel 不卡。**待项目负责人决定**：Edge InPrivate 复制时带 `CanIncludeInClipboardHistory` = 0，按规则被忽略，InPrivate 里连按不会触发；Excel 等大片复制也会触发查词（是否要限制长度）。另发现原有情况：Edge PDF 里 20 ms 内连按两次快捷键，第二次取词是"没有选中"（开关关闭时一样）。
+  - 下一步：第三阶段（e2e 收尾、手动测试清单、R1-9 提示文字、文档）。
 
 ## 下一步
 
