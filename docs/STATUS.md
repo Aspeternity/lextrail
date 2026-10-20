@@ -65,14 +65,15 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
   - **左 Ctrl 卡住已查明并修复**（D014 补充，2026-10-21）：两个进程几乎同时注入按键时，钩子看到"补发在前、真实松开在后"，按键状态却是反过来更新的，Ctrl 停在按下。现在补发通过钩子后再看 2 ms、读一次按键状态：钩子看到最后一次真实事件是松开、状态仍是按下，就补发松开（Ctrl、Shift 都核对，带自己的 `dwExtraInfo`），`keyboard.rs` 16 个测试。复测：正常模式 600 次按键、105 次补发、0 次卡住，新路径补发松开 2 次；关掉屏蔽键对照 0/60；`popup-e2e.ps1` 通过。真实键盘复测（R4-8 快速连按 20 次）并入连按两次 Ctrl+C 完成后的手动测试。工具：`tools/e2e/key-observer.ps1`（独立进程的低级钩子，父进程退出或 15 分钟后自己退出；日志里有机器上的所有按键，用完即删、不提交），`stuck-keys.ps1 -Observe`。
   - 左 Ctrl 卡住的修复和第一阶段已合并到 `main`（2026-10-21，项目负责人要求）。
   - **第二阶段代码完成**（spec 第三、五、六节）：`DoubleCopyListener`（单独线程上的只收消息窗口 + `AddClipboardFormatListener`；忽略期内、LexTrail 自己的窗口在前台、带 `ExcludeClipboardContentFromMonitorProcessing` 时不打开剪贴板；`CanIncludeInClipboardHistory` = 0 忽略；剪贴板主人挂起时不读；打开最多重试约 100 ms，读完马上关闭）；`capture_context` 以剪贴板文字为准，UIA 选区的词和它不同就不给上下文（`context_mismatch`），跑在 UIA 专用线程上、超时相同；桌面端 `popup::Trigger::DoubleCopy`，开关 `[hotkeys] double_ctrl_c` 启动时读一次，快捷键取词前后按编号通知监听器，查询历史记 `clipboard_double_copy`。debug 版每次剪贴板更新打印类型和读取用时（不含文字）。
-  - **第二阶段实机测试已跑**（2026-10-21，结果见 spec 第六节）：Edge 网页、Edge PDF 连按查词通过（截图核对）；快捷键走剪贴板兜底、快速连按两次快捷键都没有误触发；Excel 20 万个单元格读一次 87–136 ms，Excel 不卡。**待项目负责人决定**：Edge InPrivate 复制时带 `CanIncludeInClipboardHistory` = 0，按规则被忽略，InPrivate 里连按不会触发；Excel 等大片复制也会触发查词（是否要限制长度）。另发现原有情况：Edge PDF 里 20 ms 内连按两次快捷键，第二次取词是"没有选中"（开关关闭时一样）。
+  - **第二阶段实机测试已跑**（2026-10-21，结果见 spec 第六节）：Edge 网页、Edge PDF 连按查词通过（截图核对）；快捷键走剪贴板兜底、快速连按两次快捷键都没有误触发；Excel 20 万个单元格读一次 87–136 ms，Excel 不卡。**已决定（见下一条）**：Edge InPrivate 复制时带 `CanIncludeInClipboardHistory` = 0，按规则被忽略，InPrivate 里连按不会触发；Excel 等大片复制也会触发查词（是否要限制长度）。另发现原有情况：Edge PDF 里 20 ms 内连按两次快捷键，第二次取词是"没有选中"（开关关闭时一样）。
   - 项目负责人 2026-10-21 审阅第二阶段（D012 两条补充）：InPrivate / 无痕窗口里不触发，保持；连按加长度限制（去掉首尾空白后不超过 500 个字符、不含制表符，超出安静忽略）。500 的依据：Attention Is All You Need 全文按我们的切句，500 以内 99.1%，超过 400 的全是表格、标题块。Edge PDF 20 ms 内连按两次快捷键的问题记入 ROADMAP（低优先级）。cbbc285 的 CI 通过。
   - **不再显示和保存"单词来自哪里"**（D022、D039 修改，D046 补充，提交 8bac6b4）：release 版悬浮窗不显示来源、发给悬浮窗的内容里没有（debug 版保留）；`lookups` 删除 `source_app`、`url`（迁移 2，`DROP COLUMN`，内置 SQLite 3.53；在 e2e 留下的真实旧数据库副本上试过：版本 1 → 2，记录完整，`integrity_check` ok）；`Selection.url` 删除。
-  - **第三阶段进行中**：长度限制（`double_copy::check_text`，3 个新单元测试）；`popup-e2e.ps1` 加 `-Chrome`、`-ExpectIgnored`，并检查 debug 版悬浮窗显示"来自 msedge.exe"；管理员窗口提示加回连按用法（R1-9）；手动测试清单 R6 已写。待做：模拟按键跑 popup-e2e（debug 版）和 Chrome 无痕窗口实测（需项目负责人同意），按结果写设置说明；项目负责人用真实键盘测 R6。
+  - **第三阶段进行中**：长度限制（`double_copy::check_text`，3 个新单元测试）；`popup-e2e.ps1` 加 `-Chrome`、`-ExpectIgnored`，并检查 debug 版悬浮窗显示"来自 msedge.exe"；管理员窗口提示加回连按用法（R1-9）；手动测试清单 R6 已写。模拟按键实测（项目负责人同意后运行）：Edge + 快捷键 2/2 通过，debug 版仍显示"来自 msedge.exe"；Chrome 无痕窗口连按 2/2 不触发（复制带 `CanIncludeInClipboardHistory` = 0）；Chrome 普通窗口连按 2/2 触发（对照）。设置说明已按实测写（spec 第四节）。
+  - 下一步：项目负责人用真实键盘测 R6（`m1-capture-manual-tests.md`，含 R4-8 复测和 release 版不显示来源）；通过后合并到 `main`（合并前确认 CI 通过）。
 
 ## 下一步
 
-1. 连按两次 Ctrl+C（D012，默认关闭），分支 `feat/double-copy`，分三个阶段提交，每个阶段更新本文件：① spec + 连按判定逻辑和单元测试（已完成）；② Windows 剪贴板监听和 `capture_context`（代码完成，实机测试待跑）；③ e2e 和文档。完成后把这个用法加回提示文字（R1-9）。之后做快捷键设置界面。
+1. 连按两次 Ctrl+C（D012，默认关闭），分支 `feat/double-copy`，分三个阶段提交，每个阶段更新本文件：① spec + 连按判定逻辑和单元测试（已完成）；② Windows 剪贴板监听和 `capture_context`（已完成）；③ 长度限制、e2e、R1-9 提示文字、文档（已完成）。剩项目负责人的 R6 真实键盘测试，通过后合并到 `main`。之后做快捷键设置界面。
 2. 查询历史的界面（列表、删除）不在 M1；"不记录查询历史"的界面开关随快捷键设置界面一起做。
 
 待跟进（已在 ROADMAP 中，或在此记录）：
