@@ -47,8 +47,8 @@
 - [ ] 上下文整理：句子开头的省略号（如维基百科"你知道吗"）；上下文过长（如网页源代码中一整行代码）时只截取选中词前后一部分（新增，来自手动测试第 1 节，优先级低）
 - [ ] 连按两次 Ctrl+C（默认关闭）：剪贴板变化监听、50–500 ms 判定、UIA 补充上下文（实现 `capture_context`）；完成后在"管理员窗口"等提示中加回这个用法，并检查所有提示文字是否准确（R1-9）
 - [x] 来源软件识别（进程名 / 窗口类名 / 窗口标题；标题只在内存中使用）
-- [ ] `tools/dict-builder`：ECDICT → 精简版 SQLite；义项拆分；索引
-- [ ] `dict-builder` 下载固定版本 ECDICT 并校验 SHA-256；CI 缓存下载与生成结果（D038）（新增）
+- [x] `tools/dict-builder`：ECDICT → 精简版 SQLite；义项拆分；索引（D044）
+- [x] `dict-builder` 下载固定版本 ECDICT 并校验 SHA-256；CI 缓存下载与生成结果（D038）（新增）
 - [ ] `lextrail-dict`：查询、词形还原、单词 / 短语 / 句子分类
 - [ ] 悬浮窗显示词典结果：音标、词性、释义、考试标签
 - [ ] 行末连字符：词典接入后，取词结果先经 `text::resolve_line_end_hyphens` 用 `lextrail-dict` 判断（去掉连字符后查得到就合并，如 compu-tation），再规范化；用 R2-10 中 Chrome PDF 的 `transduc-tion`（应合并为 transduction）验证（新增，R1-7）
