@@ -12,6 +12,7 @@ pub struct Settings {
     pub version: u32,
     pub hotkeys: HotkeySettings,
     pub popup: PopupSettings,
+    pub history: HistorySettings,
 }
 
 impl Default for Settings {
@@ -20,6 +21,7 @@ impl Default for Settings {
             version: SCHEMA_VERSION,
             hotkeys: HotkeySettings::default(),
             popup: PopupSettings::default(),
+            history: HistorySettings::default(),
         }
     }
 }
@@ -59,6 +61,20 @@ pub enum PopupMode {
     MemorySaver,
 }
 
+/// Lookup history (`ARCHITECTURE.md` 6.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HistorySettings {
+    /// Record lookups in the local database; `false` is the "不记录查询历史" switch.
+    pub record: bool,
+}
+
+impl Default for HistorySettings {
+    fn default() -> Self {
+        Self { record: true }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,6 +85,7 @@ mod tests {
         assert_eq!(settings.version, SCHEMA_VERSION);
         assert_eq!(settings.hotkeys.lookup, "Ctrl+Alt+X"); // D014
         assert_eq!(settings.popup.mode, PopupMode::Responsive); // D009
+        assert!(settings.history.record);
     }
 
     #[test]
@@ -80,6 +97,7 @@ mod tests {
             hotkeys: HotkeySettings {
                 lookup: "Ctrl+Shift+F1".into(),
             },
+            history: HistorySettings { record: false },
             ..Settings::default()
         };
         let text = toml::to_string(&settings).unwrap();
@@ -91,6 +109,7 @@ mod tests {
         let settings: Settings = toml::from_str("[popup]\nmode = \"memory_saver\"\n").unwrap();
         assert_eq!(settings.popup.mode, PopupMode::MemorySaver);
         assert_eq!(settings.hotkeys, HotkeySettings::default());
+        assert!(settings.history.record);
         assert_eq!(settings.version, SCHEMA_VERSION);
     }
 

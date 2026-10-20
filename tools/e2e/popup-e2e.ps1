@@ -28,6 +28,11 @@ more shortly before the keys are released: held for over a second it must say
 "release the hotkey and try again"
 (R3-P2), otherwise the word. (Read with UI Automation, like the rest.)
 
+The app reads its settings and writes its lookup history in fresh directories under
+-OutDir (debug builds only: LEXTRAIL_DEBUG_CONFIG_DIR, LEXTRAIL_DEBUG_DATA_DIR), never the
+user's own; release builds are refused for that reason. The lookups recorded are checked
+against the popup: the first is recorded, a repeat within 30 s is not.
+
 It moves the mouse and sends keys: leave the machine alone while it runs. Exits with 1 if
 any check fails.
 
@@ -49,6 +54,8 @@ param(
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
 $App = (Resolve-Path $App).Path
+# Only debug builds honour the directory overrides below.
+if ($App -like "*\release\*") { throw "use a debug build: release builds would use the real settings and history" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $expected = if ($Pdf) { @("launch") } else { @("launch", "launch missiles at ships.") }
 # The clipboard fallback gives up after 3 s of held keys (D043).
@@ -122,8 +129,12 @@ $failures = 0
 Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
 $log = Join-Path $OutDir "app.log"
 if ($ResumeDelayMs -gt 0) { $env:LEXTRAIL_DEBUG_RESUME_DELAY_MS = "$ResumeDelayMs" }
+$configDir = Join-Path $OutDir ("config-" + [guid]::NewGuid())
+$dataDir = Join-Path $OutDir ("data-" + [guid]::NewGuid())
+$env:LEXTRAIL_DEBUG_CONFIG_DIR = $configDir
+$env:LEXTRAIL_DEBUG_DATA_DIR = $dataDir
 Start-Process $App -RedirectStandardError $log -WindowStyle Hidden
-Remove-Item Env:LEXTRAIL_DEBUG_RESUME_DELAY_MS -ErrorAction SilentlyContinue
+Remove-Item Env:LEXTRAIL_DEBUG_RESUME_DELAY_MS, Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR -ErrorAction SilentlyContinue
 Start-Sleep 4
 
 $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
@@ -205,5 +216,15 @@ try {
 }
 "app log: $log"
 Get-Content $log | Select-String "capture #|bring to front|WindowReady|resume delayed|Captured|activated" | ForEach-Object { "  " + $_.Line }
+# Lookup history, in the scratch data directory: the first lookup recorded, the repeats
+# (same text and sentence within 30 s) not. Keys held over 3 s capture nothing.
+if ($HoldMs -le 3000) {
+  $history = @(Get-Content $log | Select-String "capture #\d+: history (\w+)" | ForEach-Object { $_.Matches[0].Groups[1].Value })
+  $historyOk = $history.Count -gt 0 -and $history[0] -eq "recorded" -and
+    @($history | Select-Object -Skip 1 | Where-Object { $_ -ne "repeat" }).Count -eq 0 -and
+    (Test-Path (Join-Path $dataDir "lextrail.db"))
+  "history: " + ($history -join ", ") + " in $dataDir" + $(if ($historyOk) { "" } else { "  (FAIL)" })
+  if (-not $historyOk) { $failures++ }
+}
 if ($failures) { "FAILED: $failures lookup(s)"; exit 1 }
 "all lookups passed"

@@ -119,7 +119,7 @@ SQLite 文件 `data/build/lextrail-dict-core.db`，只读，查询时按需从�
   - `FormOf`：查的词本身、同时是另一个词的变形——**显示时必须标出和原形的关系**，如"left（leave 的过去式、过去分词）""better（good 的比较级）"（`Inflection::describe_zh()`）。否则像 `found`（自身释义"建立"，但多数时候是 find 的过去式）这种情况，变形在前会误导；
   - `Lemma`：原形的词条。
 
-  例如 `better` 给 `better`（good 的比较级）和 `good`；`launched`、`improving` 的词条没有任何标记，给 `launch` 和 `launched`（launch 的过去式、过去分词）、`improve` 和 `improving`（improve 的现在分词）；变形词条只是说明时（测试数据里的 `launched`）只给原形。两个词条按语境排序留到 M2（D019）。
+  例如 `better` 给 `better`（good 的比较级）和 `good`；`launched`、`improving` 的词条没有任何标记，给 `launch` 和 `launched`（launch 的过去式、过去分词）、`improve` 和 `improving`（improve 的现在分词）；变形词条只是说明时只给原形（`went` 只给 `go`，上方注明"went 是 go 的过去式"）。两个词条按语境排序留到 M2（D019）。
 - `inflection`：原形、词形种类（过去式、复数等）和来源（`exchange` / 后缀规则 / 短语）。
 - `lemma()`：写入查询历史 `lookups.lemma` 的原形。
 

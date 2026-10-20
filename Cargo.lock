@@ -2091,6 +2091,7 @@ dependencies = [
  "lextrail-config",
  "lextrail-core",
  "lextrail-dict",
+ "lextrail-store",
  "rusqlite",
  "serde",
  "serde_json",

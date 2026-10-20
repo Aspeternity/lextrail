@@ -1,14 +1,14 @@
 //! Loading the settings file at startup.
 
 use lextrail_config::{LoadOutcome, Settings, SettingsFile};
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Runtime};
 
 const TITLE: &str = "LexTrail 设置文件";
 
 /// Loads the settings from the app config directory. Problems never stop the app:
 /// the user is told and defaults are used.
 pub fn load<R: Runtime>(app: &AppHandle<R>) -> Settings {
-    let dir = match app.path().app_config_dir() {
+    let dir = match crate::paths::config_dir(app) {
         Ok(dir) => dir,
         Err(e) => {
             eprintln!("cannot resolve config directory: {e}");

@@ -5,9 +5,11 @@ use lextrail_core::lookup::normalize_text;
 use lextrail_core::text::{
     join_unmarked_line_breaks, resolve_line_end_hyphens, sentence_around, starts_sentence,
 };
-use lextrail_dict::view::LookupView;
-use lextrail_dict::{Dictionary, LookupOptions};
+use lextrail_dict::view::{Looked, LookupView};
+use lextrail_dict::{Classification, Dictionary, LookupOptions};
 use serde::Serialize;
+
+use crate::history::Record;
 
 pub const EVENT: &str = "popup:content";
 
@@ -40,12 +42,16 @@ impl Content {
     /// lines are joined first, in the selection and in its sentence (D044 supplement):
     /// PDFium's line-end hyphen marker everywhere; in text copied from a Chromium PDF
     /// viewer (`pdf_clipboard`, where the hyphen is gone) unmarked line breaks too.
+    ///
+    /// Also gives what the lookup history records: captured English text, as shown
+    /// (`None` for anything else, D045). Without a dictionary it is classified on its own
+    /// and has no base form.
     pub fn from_capture(
         result: Result<CaptureOutcome, CaptureError>,
         pdf_clipboard: bool,
         source_app: Option<String>,
         dict: Option<&Dictionary>,
-    ) -> Self {
+    ) -> (Self, Option<Record>) {
         match result {
             Ok(CaptureOutcome::Captured(selection)) => {
                 let raw_sentence = selection
@@ -66,32 +72,54 @@ impl Content {
                 };
                 let text = normalize_text(&text);
                 if text.is_empty() {
-                    return Self::Unavailable {
+                    let content = Self::Unavailable {
                         reason: reason(Unavailable::NoSelection),
                     };
+                    return (content, None);
                 }
-                let sentence = sentence.map(|s| normalize_text(&s));
+                let sentence = sentence
+                    .map(|s| normalize_text(&s))
+                    .filter(|s| !s.is_empty() && *s != text);
                 let options = LookupOptions {
                     sentence_start: sentence.as_ref().is_some_and(|s| starts_sentence(s, &text)),
                 };
-                let lookup = dict.and_then(|dict| match dict.view(&text, options) {
-                    Ok(view) => Some(view),
+                let looked = dict.and_then(|dict| match dict.look_up(&text, options) {
+                    Ok(looked) => Some(looked),
                     Err(e) => {
                         eprintln!("dictionary lookup failed: {e}");
                         None
                     }
                 });
-                Self::Selection {
-                    sentence: sentence.filter(|s| !s.is_empty() && *s != text),
+                let (kind, lemma) = match &looked {
+                    Some(l) => (l.kind, l.lemma.clone()),
+                    None => match lextrail_dict::classify(&text, |_| false) {
+                        Classification::English(kind) => (Some(kind), None),
+                        Classification::NotEnglish => (None, None),
+                    },
+                };
+                let record = kind.map(|kind| Record {
+                    query: text.clone(),
+                    kind,
+                    lemma,
+                    context: sentence.clone(),
+                    source_app: source_app.clone(),
+                    method: selection.method,
+                });
+                let content = Self::Selection {
+                    sentence,
                     text,
                     source_app,
-                    lookup,
-                }
+                    lookup: looked.map(|Looked { view, .. }| view),
+                };
+                (content, record)
             }
-            Ok(CaptureOutcome::Unavailable(u)) => Self::Unavailable { reason: reason(u) },
-            Err(e) => Self::Error {
-                message: e.to_string(),
-            },
+            Ok(CaptureOutcome::Unavailable(u)) => (Self::Unavailable { reason: reason(u) }, None),
+            Err(e) => (
+                Self::Error {
+                    message: e.to_string(),
+                },
+                None,
+            ),
         }
     }
 }
@@ -160,6 +188,16 @@ mod tests {
         Dictionary::open(&path).unwrap()
     }
 
+    /// The content only.
+    fn build(
+        result: Result<CaptureOutcome, CaptureError>,
+        pdf_clipboard: bool,
+        source_app: Option<String>,
+        dict: Option<&Dictionary>,
+    ) -> Content {
+        Content::from_capture(result, pdf_clipboard, source_app, dict).0
+    }
+
     fn captured(
         text: &str,
         context: Option<RawContext>,
@@ -211,7 +249,7 @@ mod tests {
             text: "First. We must  address it. Last.".into(),
             selection: Some(16..23),
         };
-        let content = Content::from_capture(
+        let content = build(
             uia(" address ", Some(context)),
             false,
             Some("chrome.exe".into()),
@@ -236,7 +274,7 @@ mod tests {
         let paragraph = "Sequence modeling and transduc\u{2}tion models in various tasks. \
                          Instead of sequence\u{2}aligned recurrence.";
         let selected = "transduc\u{2}tion";
-        let content = Content::from_capture(
+        let content = build(
             uia(&format!(" {selected} "), Some(context(paragraph, selected))),
             false,
             None,
@@ -253,7 +291,7 @@ mod tests {
 
         // A compound's hyphen is kept, in the sentence too, and it is split into parts.
         let selected = "sequence\u{2}aligned";
-        let content = Content::from_capture(
+        let content = build(
             uia(selected, Some(context(paragraph, selected))),
             false,
             None,
@@ -280,7 +318,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dict = dictionary(dir.path());
         let clipboard = |text: &str, pdf: bool| {
-            let content = Content::from_capture(
+            let content = build(
                 captured(text, None, CaptureMethod::Clipboard),
                 pdf,
                 None,
@@ -301,7 +339,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let dict = dictionary(dir.path());
         let in_paragraph = |paragraph: &str| {
-            Content::from_capture(
+            build(
                 uia("The", Some(context(paragraph, "The"))),
                 false,
                 None,
@@ -309,7 +347,7 @@ mod tests {
             )
         };
         // No sentence: the selected text's own case first.
-        let content = Content::from_capture(uia("The", None), false, None, Some(&dict));
+        let content = build(uia("The", None), false, None, Some(&dict));
         assert_eq!(words(&content), ["The", "the"]);
         // At a sentence start: lowercase first.
         assert_eq!(words(&in_paragraph("The model is large.")), ["the", "The"]);
@@ -319,7 +357,7 @@ mod tests {
 
     #[test]
     fn without_a_dictionary_the_text_is_still_shown() {
-        let content = Content::from_capture(uia("transduc\u{2}tion", None), false, None, None);
+        let content = build(uia("transduc\u{2}tion", None), false, None, None);
         assert_eq!(
             content,
             Content::Selection {
@@ -332,19 +370,71 @@ mod tests {
     }
 
     #[test]
+    fn history_record_is_what_the_popup_shows() {
+        use lextrail_core::lookup::LookupKind;
+        let dir = tempfile::tempdir().unwrap();
+        let dict = dictionary(dir.path());
+        let paragraph = "We use sequence models. Then more.";
+        let (_, record) = Content::from_capture(
+            uia(" models ", Some(context(paragraph, "models"))),
+            false,
+            Some("chrome.exe".into()),
+            Some(&dict),
+        );
+        assert_eq!(
+            record,
+            Some(Record {
+                query: "models".into(),
+                kind: LookupKind::Word,
+                lemma: Some("model".into()),
+                context: Some("We use sequence models.".into()),
+                source_app: Some("chrome.exe".into()),
+                method: CaptureMethod::Uia,
+            })
+        );
+        // The joined word, as shown; nothing found: no base form.
+        let (_, record) = Content::from_capture(
+            captured("convolu\r\ntional", None, CaptureMethod::Clipboard),
+            true,
+            None,
+            Some(&dict),
+        );
+        let record = record.unwrap();
+        assert_eq!(
+            (record.query.as_str(), record.lemma, record.method),
+            ("convolutional", None, CaptureMethod::Clipboard)
+        );
+        // Without a dictionary: classified on its own.
+        let (_, record) = Content::from_capture(uia("We give up on it.", None), false, None, None);
+        let record = record.unwrap();
+        assert_eq!((record.kind, record.lemma), (LookupKind::Sentence, None));
+        // Not recorded: no English (D045), nothing captured.
+        for result in [
+            uia("注意力", None),
+            uia(" ", None),
+            Ok(CaptureOutcome::Unavailable(Unavailable::NoSelection)),
+        ] {
+            assert_eq!(
+                Content::from_capture(result, false, None, Some(&dict)).1,
+                None
+            );
+        }
+    }
+
+    #[test]
     fn sentence_equal_to_selection_is_dropped() {
         let context = RawContext {
             text: "Hello world.".into(),
             selection: None,
         };
-        let content = Content::from_capture(uia("Hello world.", Some(context)), false, None, None);
+        let content = build(uia("Hello world.", Some(context)), false, None, None);
         assert!(matches!(content, Content::Selection { sentence: None, .. }));
     }
 
     #[test]
     fn whitespace_only_selection_is_no_selection() {
         assert_eq!(
-            Content::from_capture(uia(" \n ", None), false, None, None),
+            build(uia(" \n ", None), false, None, None),
             Content::Unavailable {
                 reason: "no_selection"
             }
@@ -353,8 +443,7 @@ mod tests {
 
     #[test]
     fn unavailable_and_error() {
-        let unavailable =
-            |u| Content::from_capture(Ok(CaptureOutcome::Unavailable(u)), false, None, None);
+        let unavailable = |u| build(Ok(CaptureOutcome::Unavailable(u)), false, None, None);
         assert_eq!(
             unavailable(Unavailable::Elevated),
             Content::Unavailable { reason: "elevated" }
@@ -367,7 +456,7 @@ mod tests {
         );
         let err = CaptureError::WorkerUnavailable("gone".into());
         assert!(matches!(
-            Content::from_capture(Err(err), false, None, None),
+            build(Err(err), false, None, None),
             Content::Error { message } if message.contains("gone")
         ));
     }

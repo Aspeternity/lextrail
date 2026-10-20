@@ -20,7 +20,7 @@ pub enum LookupView {
     /// The text is in the dictionary, possibly through its base form.
     Entries {
         /// Shown above a base form's entry when the text has no entry of its own:
-        /// "launched 是 launch 的过去式、过去分词".
+        /// "went 是 go 的过去式".
         note: Option<String>,
         entries: Vec<EntryView>,
     },
@@ -75,19 +75,55 @@ pub struct PartView {
     pub line: Option<SenseLine>,
 }
 
+/// A lookup for display, with what the lookup history stores about it
+/// (`ARCHITECTURE.md` 6.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Looked {
+    pub view: LookupView,
+    /// `None` for text without English letters, which is not recorded (D045).
+    pub kind: Option<LookupKind>,
+    /// The base form (`lookups.lemma`, [`LookupResult::lemma`]); `None` for sentences,
+    /// text not found and compounds found only as parts.
+    pub lemma: Option<String>,
+}
+
 impl Dictionary {
     /// Classifies `text` (D045) and, for a word or phrase, looks it up (splitting a
     /// compound the dictionary lacks) and shapes the result for display. `options`: see
     /// [`LookupOptions`].
     pub fn view(&self, text: &str, options: LookupOptions) -> Result<LookupView, DictError> {
-        Ok(match self.classify(text)? {
-            Classification::NotEnglish => LookupView::NotEnglish,
-            Classification::English(LookupKind::Sentence) => LookupView::Sentence,
-            Classification::English(_) => match self.lookup_with_parts(text, options)? {
-                None => LookupView::NotFound,
-                Some(Found::Whole(result)) => entries_view(&result),
-                Some(Found::Parts(parts)) => parts_view(&parts),
-            },
+        Ok(self.look_up(text, options)?.view)
+    }
+
+    /// Like [`Dictionary::view`], with the classification and base form for the lookup
+    /// history.
+    pub fn look_up(&self, text: &str, options: LookupOptions) -> Result<Looked, DictError> {
+        let kind = match self.classify(text)? {
+            Classification::NotEnglish => {
+                return Ok(Looked {
+                    view: LookupView::NotEnglish,
+                    kind: None,
+                    lemma: None,
+                });
+            }
+            Classification::English(kind) => kind,
+        };
+        let (view, lemma) = match kind {
+            LookupKind::Sentence => (LookupView::Sentence, None),
+            LookupKind::Word | LookupKind::Phrase => {
+                match self.lookup_with_parts(text, options)? {
+                    None => (LookupView::NotFound, None),
+                    Some(Found::Whole(result)) => {
+                        (entries_view(&result), Some(result.lemma().to_owned()))
+                    }
+                    Some(Found::Parts(parts)) => (parts_view(&parts), None),
+                }
+            }
+        };
+        Ok(Looked {
+            view,
+            kind: Some(kind),
+            lemma,
         })
     }
 }

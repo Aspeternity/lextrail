@@ -3,7 +3,7 @@
 > 每次开发结束前更新本文件（见 `AGENTS.md` 的"结束流程"）。
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
-**最后更新**：2026-10-20（R5 手动测试通过；修复 R5-P1、R5-P2 后截图复核，`feat/popup-dict` 合并到 `main`；下一步接入查询历史）
+**最后更新**：2026-10-20（`feat/popup-dict` 已合并到 `main`；查询历史接入桌面端完成，分支 `feat/lookup-history`，CI 通过后合并）
 **当前阶段**：M1 · 取词与词典（进行中）。取词部分（UIA + 剪贴板兜底 + 悬浮窗焦点）已完成；R3 发现的问题 R3-P1 至 R3-P4 已修复（分支 `fix/r3-hotkey-and-clipboard`）。R4 中发现的悬浮窗挂起后卡死（R4-P1）已修复，重做的 R4 全部通过；又发现 VS Code 中按住快捷键超过 3 秒提示不对（R4-P2），已修复；R4-1 至 R4-12 全部通过，**取词部分验收**，分支合并到 `main`。词典：`tools/dict-builder` 已在分支 `feat/dict-builder` 完成（D044），等本分支合并后把 `main` 合进去，再做 `lextrail-dict`。
 
 ---
@@ -13,7 +13,7 @@
 M0 全部完成（路线 A 已确认，D036）。M1 已完成：
 
 - **数据模型公共部分**评审（D039）：同步元数据、HLC 时间戳格式、`lookups` 表，见 `ARCHITECTURE.md` 6.1–6.3，推迟事项在 6.5。
-- **`lextrail-core` 的 HLC** 与 **`lextrail-store`**（D037、D040：数据库在 `%LOCALAPPDATA%`，按需打开）。**桌面端尚未接入查询历史。**
+- **`lextrail-core` 的 HLC** 与 **`lextrail-store`**（D037、D040：数据库在 `%LOCALAPPDATA%`，按需打开）。桌面端已接入查询历史（`history.rs`，分支 `feat/lookup-history`）。
 - **取词**（D041）：统一接口 + Windows UIA，在专用 MTA 线程上运行；Chromium 窗口第一次取词时在预算内重试；Edge 的 PDF 阅读器报告的选区会错位，所以不走 UIA（`[chromium_pdf]`），Chrome 的 PDF 正常走 UIA。
 - **悬浮窗焦点方案 B**（D042）：取词期间不抢焦点，超过约 100 ms 才显示"正在取词…"（按住快捷键的时间不算，松开时重新计时；按住超过约 1 秒显示"松开快捷键后取词…"，D042 补充），取词完成后获取焦点（`SetForegroundWindow`，被拒时用 `AttachThreadInput`；不再用 Tauri 模拟 Alt 的后备做法）；仍失败时不带焦点显示结果，可用右上角 × 关闭；悬浮窗在前台时再按快捷键会被忽略；每次显示时按目标显示器当前缩放设置尺寸。
 - **快捷键屏蔽键**（D014 补充）：快捷键触发时 Alt 仍按着，就对仍按着的 Ctrl（其次 Shift）补发一次按下、不发松开，避免 VS Code 等程序把它当成单独按 Alt 而激活菜单栏；原来的 `0xE8` 会让 Windows Terminal 清掉选区（R3-P1），现在只在只有 Alt 时使用。补发期间在单独线程上装几毫秒的低级键盘钩子，用户恰好在补发前松开时再补发松开，避免 Ctrl 卡住。执行顺序：屏蔽键 → 记录前台窗口 → 启动取词线程 → 请求显示悬浮窗（第一次时创建窗口）。
@@ -30,15 +30,16 @@ M0 全部完成（路线 A 已确认，D036）。M1 已完成：
 - `crates/lextrail-core`：HLC（`Hlc`、`HlcClock`、可注入的 `Clock`）；`lookup`（`LookupKind`、`CaptureMethod`、`normalize_text`、30 秒去重）；`text`（见上，另有 `join_unmarked_line_breaks`、`starts_sentence`）。48 个测试
 - `crates/lextrail-capture`（D041、D043）：`TextCapture`（`snapshot` / `capture` / `capture_traced` / `capture_context`，最后一个目前返回 `None`，做连按两次 Ctrl+C 时实现）；`Pipeline` 按顺序运行各步骤，步骤间用 `StepContext` 传递信息，UIA 的"没有选中"默认就是最终结果；`clipboard_rules.rs`（剪贴板兜底的规则，与平台无关）；`windows/`：`window.rs`（快照）、`uia.rs`（UIA 步骤）、`clipboard.rs`（剪贴板步骤）。33 个测试，其中 `clipboard_round_trip` 默认忽略（会改动真实剪贴板，需要时用 `cargo test -p lextrail-capture -- --ignored clipboard_round_trip`）。`examples/capture_probe.rs`（手动测试真实窗口）、`examples/uia_dump.rs`（打印原始 UIA 数据）。`capture_traced` 接收进度回调（`CaptureProgress`：等松开快捷键 / 已松开），步骤结果带 `key_wait`
 - `crates/lextrail-store`（D037、D040）：SQLite、`user_version` 迁移、`meta` / `lookups` 表、`record_lookup` 等。20 个测试
-- `crates/lextrail-config`（D035）：设置文件与凭据管理器。17 个测试
+- `crates/lextrail-config`（D035）：设置文件与凭据管理器；`[history] record`（"不记录查询历史"开关）。17 个测试
 - `apps/desktop/src-tauri`：托盘、单实例、主窗口（占位）、设置、全局快捷键（`hotkey.rs` + `keyboard.rs` 屏蔽键与防卡键钩子，10 个测试）、悬浮窗（`popup/`：`lifecycle.rs` 窗口生命周期 20 个测试，`request.rs` 一次查词 15 个测试，`activation.rs` 获取焦点，`foreground.rs` 前台窗口监视，`content.rs` 内容事件，`placement.rs` 位置，`timing.rs` bench 计时）。悬浮窗页面先订阅内容事件再调用 `popup_ready`，之后才显示；权限在 `capabilities/popup.json`（只有 `core:event:allow-listen`）。共 77 个测试
 - `apps/desktop/src`：悬浮窗页面（`popup/`：`content.ts`、`ipc.ts`、`App.vue`），主窗口占位。**前端还没有测试框架**
 - `tools/e2e/`：`popup-e2e.ps1`（悬浮窗内容端到端检查：真实鼠标、真实快捷键、全新 Edge，用 UI Automation 读出悬浮窗文字核对并截图；`-Pdf` 走剪贴板路径；`-HoldMs` 按住 Ctrl+Alt 指定时间）、`stuck-keys.ps1`（屏蔽键防卡键压力测试）、`list-item.html`、`key-log.html`（记录页面收到的键盘事件）
 - `tools/bench`：性能测试；应用在 `LEXTRAIL_BENCH_TIMINGS` 下写出分项计时；`--lookup-text TEXT` 在词典打开的状态下测（m0-benchmark 7.3）。14 个测试
 - `crates/lextrail-dict`（D044–D046）：查询、词形还原、输入分类、`is_word`（合并断词用，含完整版词头表 `extra_words`）、`view`（显示用的结果）。`examples/view.rs` 打印某个词的显示结果（JSON）
-- `apps/desktop/src-tauri/src/dictionary.rs`：词典常驻服务（第一次取到文字时打开）；`popup/content.rs` 合并断词、分类、查词；悬浮窗页面 `popup/DictResult.vue`
+- `apps/desktop/src-tauri/src/dictionary.rs`：词典常驻服务（第一次取到文字时打开）；`popup/content.rs` 合并断词、分类、查词，并给出查询历史要记的内容（`history::Record`）；悬浮窗页面 `popup/DictResult.vue`
+- `apps/desktop/src-tauri/src/history.rs`：查询历史（第一次记录时打开数据库，结果发给悬浮窗之后在取词线程上写入；打开失败提示一次，本次运行不再记录）。debug 版每次取词多打印一行 `capture #N: history recorded|repeat|skipped 5.3ms`
 
-debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 0 节）：`LEXTRAIL_DEBUG_CAPTURE_DELAY_MS`（让取词变慢）、`LEXTRAIL_DEBUG_SKIP_ACTIVATION`（不获取焦点）、`LEXTRAIL_DEBUG_NO_ALT_MASK`（关掉屏蔽键）、`LEXTRAIL_DEBUG_ALT_MASK_E8`（屏蔽键总用旧的 `0xE8`，用来对比）、`LEXTRAIL_DEBUG_CLIPBOARD_ONLY`（跳过 UIA，只走剪贴板）。debug 版每次取词在控制台打印一行，如 `capture #2: captured | start +7.6ms; uia=no_selection 16.8ms (uia_focus); clipboard=captured 160.3ms keys=150.1ms [ctrl_insert]; total 177.1ms`（不含取到的文字；`start` 是从按下快捷键到开始取词，`keys` 是等松开快捷键的时间）；每次补发屏蔽键打印 `hotkey: alt mask: ...`。
+debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 0 节）：`LEXTRAIL_DEBUG_CAPTURE_DELAY_MS`（让取词变慢）、`LEXTRAIL_DEBUG_SKIP_ACTIVATION`（不获取焦点）、`LEXTRAIL_DEBUG_NO_ALT_MASK`（关掉屏蔽键）、`LEXTRAIL_DEBUG_ALT_MASK_E8`（屏蔽键总用旧的 `0xE8`，用来对比）、`LEXTRAIL_DEBUG_CLIPBOARD_ONLY`（跳过 UIA，只走剪贴板）、`LEXTRAIL_DEBUG_CONFIG_DIR` / `LEXTRAIL_DEBUG_DATA_DIR`（设置文件、数据库改用指定目录；`popup-e2e.ps1`、`stuck-keys.ps1` 已默认用临时目录。**自动测试一律用临时目录，不碰项目负责人的真实设置和数据库**）。debug 版每次取词在控制台打印一行，如 `capture #2: captured | start +7.6ms; uia=no_selection 16.8ms (uia_focus); clipboard=captured 160.3ms keys=150.1ms [ctrl_insert]; total 177.1ms`（不含取到的文字；`start` 是从按下快捷键到开始取词，`keys` 是等松开快捷键的时间）；每次补发屏蔽键打印 `hotkey: alt mask: ...`。
 
 性能（`docs/specs/m0-benchmark.md` 第 7 节，口径见 D036）：最近一次（2026-10-20，词典接入后，7.3 节）托盘 1.6 MiB、挂起 81.4 MiB（查过词、词典已打开 82.6 MiB）、冷启动 301–376 ms、挂起后恢复 35 ms，全部达标。**bench 要在普通终端窗口（如 Windows Terminal）中运行**：从 Claude 桌面应用等 Chromium 系窗口里启动时，前台是它，每次多等约 400 ms 的剪贴板确认，结果不可比。
 
@@ -56,23 +57,25 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
 
 ## 正在进行
 
-- **悬浮窗显示词典结果**已完成并合并到 `main`（规格 `docs/specs/m1-popup-dict.md`，决定 D046 和 D044 补充）。R5 手动测试（`m1-capture-manual-tests.md`）R5-1 至 R5-18 通过，发现的问题已处理：
-  - R5-P1：Edge PDF 的 "English to-German" 拆成了 "English to"。走拆分（文字里有连字符）时空格也当分隔；没有连字符的短语不拆。
-  - R5-P2：没有考试标签、柯林斯星级、牛津标记的变形词条（improving "有启发的"）改为排在原形后面（D044 补充的修改，项目负责人同意）。精简版中两个词条都给的 23,131 个变形里 21,630 个换了顺序；launched 变为 launch 在前，found、better、left 不变。
-  - R5-P3：ECDICT 的词头不分大小写唯一，没有"同一个词大小写两个词条"的情况，D046 的大小写顺序规则目前不会触发（只有单元测试）。
-  - 文档：ECDICT 音标"只有一个音标，以英音为主"（原写"不分英美"）。
-  - 截图核对（AI 模拟按键，debug 版）：Edge PDF "English to-German" → English、German；Chrome PDF 中 improving → improve 在前。
+- **查询历史接入桌面端**（分支 `feat/lookup-history`）：
+  - `lextrail-dict` 新增 `Dictionary::look_up`（显示结果 + `kind` + `lemma`）；`popup/content.rs` 给出要记录的内容（悬浮窗显示的文字和原句，纯中文等不记录）；`history.rs` 第一次记录时打开数据库，结果发给悬浮窗之后在取词线程上写入。
+  - "不记录查询历史"：设置文件 `[history] record = false`；界面开关随快捷键设置界面一起做（项目负责人同意）。
+  - `paths.rs`：debug 版的 `LEXTRAIL_DEBUG_CONFIG_DIR` / `LEXTRAIL_DEBUG_DATA_DIR`；`popup-e2e.ps1`、`stuck-keys.ps1` 默认用临时目录，`popup-e2e.ps1` 拒绝 release 版，并检查第一次查词被记录、30 秒内重复的不记录。
+  - 核对：`popup-e2e.ps1`（网页、`-Pdf`）通过；开关关闭时不记录；**数据库打不开时**（临时目录里 `lextrail.db` 是文件夹）在记事本查两次词并截图：提示框只弹一次，两次查词都正常显示，日志两次都是 `history skipped`。
+  - 性能（m0-benchmark 7.4）：挂起 84.9 MiB（词典和数据库都打开；只开词典时 82.6 MiB），冷启动 264 ms，热显示 26 ms，挂起后恢复 32 ms。
+  - 之前的自动测试往项目负责人真实的查询历史里写了 2 条测试记录，已删除（删除前 2 条、删除后 0 条）。
 
 ## 下一步
 
-1. 按 `ROADMAP.md` 继续 M1：**查询历史接入桌面端**（新分支）→ 连按两次 Ctrl+C（实现 `capture_context`，完成后把这个用法加回提示文字，R1-9）→ 快捷键设置界面。
-2. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。查询历史的 `kind` 用 `Dictionary::classify` 的结果，`lemma` 用 `LookupResult::lemma()`。
+1. `feat/lookup-history` CI 通过后合并到 `main`，然后按 `ROADMAP.md` 继续 M1：连按两次 Ctrl+C（实现 `capture_context`，完成后把这个用法加回提示文字，R1-9）→ 快捷键设置界面。
+2. 查询历史的界面（列表、删除）不在 M1；"不记录查询历史"的界面开关随快捷键设置界面一起做。
 
 待跟进（已在 ROADMAP 中，或在此记录）：
 - **B3 没有结论**：VS Code 编辑器里 UIA 报告"没有选中"的原因未确认。把 `editor.accessibilitySupport` 设为 `on` 后，我用模拟按键没能做出选区（屏幕阅读器模式下 Ctrl+Shift+→ 的行为不同），这次测试不成立。剪贴板兜底已覆盖 VS Code，且不改用户设置，所以暂不继续；如需要，可在 `on` 模式下手动选词，用 `capture_probe` 看 UIA 是否取到。
 - **获取焦点的后备路径未在真实环境中触发过**（R2-5）：`AttachThreadInput` 重试只经代码审查；"被拒后不带焦点显示"只用模拟开关验证过。以后如在日志里看到 `Attached` 或 `Refused`，记下当时的场景。
 - 前端测试框架（Vitest）还没引入（M1 任务）。
 - 低优先级：Windows Terminal 跨行选中时句子带上提示符（R1-10）；句首省略号、过长上下文截取（R1-11）。
+- 依赖漏洞提示 RUSTSEC-2024-0429（`glib` 的 `VariantStrIter`）：只影响 Linux；`glib` 0.18.5 是 Tauri 在 Linux 上的依赖，修复要 0.20，我们自己升级不了。项目负责人已在 GitHub 上标为"风险可接受"。**等 Tauri 升级到 glib 0.20 以上时再看。**
 - 低优先级：冷启动后 0–100 ms 内按 Esc 可能无效（`m0-benchmark.md` 4.5 节）。
 - 第一次显示的悬浮窗比之后高（debug 版、1.5 倍缩放：592×446，之后 592×403），2026-10-20 截图时发现；窗口大小只由 Rust 设置，这次没有改，应是原来就有，原因未查（ROADMAP 已记）。
 - bench 运行环境：2026-10-20 有几次运行中取词约 430 ms（`main` 也出现），应是 bench 终端没有一直在前台；看 bench 结果时先看"capture (in app)"是否正常（约 20–35 ms）。

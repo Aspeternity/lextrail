@@ -36,6 +36,7 @@ use tauri::{
 };
 
 use crate::dictionary::DictionaryService;
+use crate::history::HistoryService;
 use content::Content;
 use lifecycle::{Action, Event, Lifecycle};
 use placement::{Point, Rect, Size};
@@ -69,10 +70,15 @@ struct PopupState {
     timings: Option<Timings>,
     /// Opened by the first lookup that captured text.
     dictionary: DictionaryService,
+    /// Opened by the first lookup to record.
+    history: HistoryService,
 }
 
-/// Registers the popup state. Call once during setup.
-pub fn init<R: Runtime>(app: &AppHandle<R>, mode: PopupMode) {
+/// Registers the popup state. Call once during setup. `record_history`: the
+/// `history.record` setting.
+pub fn init<R: Runtime>(app: &AppHandle<R>, mode: PopupMode, record_history: bool) {
+    let timings = Timings::from_env();
+    let data_dir = crate::paths::data_dir(app, timings.is_some());
     app.manage(PopupState {
         lifecycle: Mutex::new(Lifecycle::new()),
         request: Mutex::new(Request::new()),
@@ -81,7 +87,8 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, mode: PopupMode) {
         capture: platform_capture(),
         next_request: AtomicU64::new(0),
         target_window: AtomicIsize::new(0),
-        timings: Timings::from_env(),
+        timings,
+        history: HistoryService::new(data_dir, record_history),
         dictionary: DictionaryService::new(
             app.path()
                 .resource_dir()
@@ -185,7 +192,7 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result
         #[cfg(debug_assertions)]
         let label = result_label(&result);
         let lookup_start = Instant::now();
-        let content = if matches!(result, Ok(CaptureOutcome::Captured(_))) {
+        let (content, record) = if matches!(result, Ok(CaptureOutcome::Captured(_))) {
             let dictionary = state.dictionary.get();
             Content::from_capture(
                 result,
@@ -207,6 +214,34 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result
         #[cfg(not(debug_assertions))]
         let _ = lookup_start;
         dispatch_request(&capture_app, request::Event::Captured { id, content });
+        // After the result is on its way: the first record opens the database.
+        if let Some(record) = record {
+            let started = Instant::now();
+            let outcome = state.history.record(&record, |e| {
+                crate::notice::warn(
+                    &capture_app,
+                    "LexTrail 查询历史",
+                    format!(
+                        "无法打开查询历史数据库（{e}），本次运行不记录查询历史，查词不受影响。"
+                    ),
+                );
+            });
+            // Without the text: recorded, repeat (deduplicated), or skipped (switched off or
+            // the database is unavailable).
+            #[cfg(debug_assertions)]
+            eprintln!(
+                "capture #{id}: history {} {:.1}ms",
+                match outcome {
+                    Some(lextrail_store::LookupOutcome::Recorded(_)) => "recorded",
+                    Some(lextrail_store::LookupOutcome::Repeat) => "repeat",
+                    Some(lextrail_store::LookupOutcome::Empty) => "empty",
+                    None => "skipped",
+                },
+                started.elapsed().as_secs_f64() * 1000.0
+            );
+            #[cfg(not(debug_assertions))]
+            let _ = (outcome, started);
+        }
     });
 
     // May create the window and block for a while (first lookup).
