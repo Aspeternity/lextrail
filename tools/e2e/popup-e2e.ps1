@@ -41,6 +41,12 @@ Edge InPrivate marks what it copies CanIncludeInClipboardHistory = 0, which doub
 ignores (spec section 2, rule 7): -DoubleCopy therefore needs -NoInPrivate (a fresh
 ordinary profile with sync off).
 
+With -Chrome the page opens in Google Chrome instead of Edge (incognito unless
+-NoInPrivate; not with -Pdf). -ExpectIgnored checks the opposite of a lookup: no popup
+may show, no lookup may be started or recorded. Use it with -DoubleCopy where double
+Ctrl+C must not trigger, e.g. in InPrivate / incognito windows (marked
+CanIncludeInClipboardHistory = 0, D012 supplement).
+
 The app reads its settings and writes its lookup history in fresh directories under
 -OutDir (debug builds only: LEXTRAIL_DEBUG_CONFIG_DIR, LEXTRAIL_DEBUG_DATA_DIR), never the
 user's own; release builds are refused for that reason. The lookups recorded are checked
@@ -71,7 +77,9 @@ param(
   [int]$CopyGapMs = 200,
   [switch]$DoubleCopySetting,
   [int]$PressTwiceMs = 0,
-  [switch]$NoInPrivate
+  [switch]$NoInPrivate,
+  [switch]$Chrome,
+  [switch]$ExpectIgnored
 )
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
@@ -89,7 +97,9 @@ $keysHeldTitle = Text 0x8BF7, 0x677E, 0x5F00, 0x5FEB, 0x6377, 0x952E, 0x540E, 0x
 $holdHint = Text 0x677E, 0x5F00, 0x5FEB, 0x6377, 0x952E, 0x540E, 0x53D6, 0x8BCD, 0x2026
 # Debug builds show where the word came from ("from msedge.exe"); release builds never
 # send it (D046 supplement).
-$expected += (Text 0x6765, 0x81EA) + " msedge.exe"
+$browserProc = if ($Chrome) { "chrome" } else { "msedge" }
+$expected += (Text 0x6765, 0x81EA) + " $browserProc.exe"
+if ($Chrome -and $Pdf) { throw "-Chrome is for the web page only" }
 if ($HoldMs -gt 3000) { $expected = @($keysHeldTitle) }
 
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing
@@ -211,10 +221,12 @@ Start-Process $App -RedirectStandardError $log -WindowStyle Hidden
 Remove-Item Env:LEXTRAIL_DEBUG_RESUME_DELAY_MS, Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR -ErrorAction SilentlyContinue
 Start-Sleep 4
 
-$edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+$edge = if ($Chrome) { "$env:ProgramFiles\Google\Chrome\Application\chrome.exe" }
+  else { "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe" }
 $profileDir = Join-Path $env:TEMP ("lextrail-e2e-edge-" + [guid]::NewGuid())
 $url = "file:///" + (Join-Path $here "list-item.html").Replace([char]92, [char]47)
-$private = if ($NoInPrivate) { @("--disable-sync", "--no-default-browser-check") } else { @("--inprivate") }
+$private = if ($NoInPrivate) { @("--disable-sync", "--no-default-browser-check") }
+  elseif ($Chrome) { @("--incognito", "--no-default-browser-check") } else { @("--inprivate") }
 if ($Pdf) {
   $pdfPath = Join-Path $OutDir "lextrail-e2e.pdf"
   Remove-Item $pdfPath -ErrorAction SilentlyContinue
@@ -229,7 +241,7 @@ if ($Pdf) {
 }
 Start-Sleep 6
 $ws = New-Object -ComObject WScript.Shell
-$page = Get-Process msedge | Where-Object { $_.MainWindowTitle -like "lextrail-e2e*" } | Select-Object -First 1
+$page = Get-Process $browserProc | Where-Object { $_.MainWindowTitle -like "lextrail-e2e*" } | Select-Object -First 1
 # Where "launch" is, in logical pixels from the window's top left corner.
 $word = if ($Pdf) { @(283, 230) } else { @(160, 110) }
 if ($Pdf -and $page) { [LtE2e]::Resize($page.MainWindowHandle, 1050, 1000); Start-Sleep 1 }
@@ -291,13 +303,16 @@ try {
     # Held for over a second (and read before the 3 s limit): the hint must be up.
     $hintOk = -not ($HoldMs -gt 1400 -and $HoldMs -le 3000) -or ($heldText -contains $holdHint)
     $ok = $responds -and $visible -and $focused -and $missing.Count -eq 0 -and $hintOk
+    # Nothing may show; the app must still answer if its window exists.
+    if ($ExpectIgnored) { $missing = @(); $ok = -not $visible -and ($popup -eq [IntPtr]::Zero -or $responds) }
     if (-not $ok) { $failures++ }
     "lookup ${i}: " + $(if ($ok) { "PASS" } else { "FAIL" }) + " (responds=$responds visible=$visible focused=$focused)"
     "  popup text: " + ($text -join " | ")
     if ($missing.Count) { "  missing: " + ($missing -join " | ") }
+    if ($ExpectIgnored -and $visible) { "  a popup showed although none was expected" }
     if ($HoldMs -gt 0) { "  while held: " + ($heldText -join " | ") + $(if ($hintOk) { "" } else { "  (hint missing)" }) }
     if ($shot) { "  screenshot: $shot" }
-    if (-not $responds) { "  the app's UI thread does not respond (hung); stopping"; break }
+    if ($popup -ne [IntPtr]::Zero -and -not $responds) { "  the app's UI thread does not respond (hung); stopping"; break }
     # Esc only to the popup itself; a popup without focus hides when the page is activated.
     if ([LtE2e]::GetForegroundWindow() -eq $popup) { $ws.SendKeys("{ESC}") } else { "  popup not in front: Esc not sent" }
     Start-Sleep -Milliseconds $PauseMs
@@ -307,7 +322,7 @@ try {
   $held = [LtE2e]::ReleaseHeld()
   if ($held) { "modifier keys were still down at the end (released): $held"; $failures++ }
   Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
-  Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" |
+  Get-CimInstance Win32_Process -Filter "Name='$browserProc.exe'" |
     Where-Object { $_.CommandLine -like "*$profileDir*" } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
@@ -315,12 +330,16 @@ try {
 Get-Content $log | Select-String "capture #|bring to front|WindowReady|resume delayed|Captured|activated|double copy" | ForEach-Object { "  " + $_.Line }
 # Lookups started by a double Ctrl+C: one per lookup with -DoubleCopy, none otherwise.
 $triggered = @(Get-Content $log | Select-String "double copy: lookup triggered").Count
-$wantTriggered = if ($DoubleCopy) { $Lookups } else { 0 }
+$wantTriggered = if ($DoubleCopy -and -not $ExpectIgnored) { $Lookups } else { 0 }
 "double copy lookups: $triggered (expected $wantTriggered)" + $(if ($triggered -eq $wantTriggered) { "" } else { "  (FAIL)" })
 if ($triggered -ne $wantTriggered) { $failures++ }
 # Lookup history, in the scratch data directory: the first lookup recorded, the repeats
 # (same text and sentence within 30 s) not. Keys held over 3 s capture nothing.
-if ($HoldMs -le 3000) {
+if ($ExpectIgnored) {
+  $history = @(Get-Content $log | Select-String "capture #\d+: history (\w+)")
+  "history: " + $history.Count + " lookup(s) recorded (expected 0)" + $(if ($history.Count) { "  (FAIL)" } else { "" })
+  if ($history.Count) { $failures++ }
+} elseif ($HoldMs -le 3000) {
   $history = @(Get-Content $log | Select-String "capture #\d+: history (\w+)" | ForEach-Object { $_.Matches[0].Groups[1].Value })
   $historyOk = $history.Count -gt 0 -and $history[0] -eq "recorded" -and
     @($history | Select-Object -Skip 1 | Where-Object { $_ -ne "repeat" }).Count -eq 0 -and

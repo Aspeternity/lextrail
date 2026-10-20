@@ -229,6 +229,44 @@ R5 发现的问题（2026-10-20，项目负责人测 R5-1 至 R5-17 debug 版、
 | R5-P2 | Chrome PDF 查 improving（"...while also improving model performance..."）："improving（improve 的现在分词）a. 有启发的…"排在 improve 前面，会误导 | 变形词条没有考试标签、柯林斯星级、牛津标记时原形在前（D044 补充的修改）；better、left、found 不变，launched 改为 launch 在前。单元测试 + 截图复核 |
 | R5-P3 | R5-17 的"两个词条时的顺序"在真实环境里没有验证到 | 核对后发现 ECDICT 的词头不分大小写唯一（完整版 770,611 条、精简版都没有大小写两个词条的词），所以这条规则目前不会触发，只有单元测试覆盖；文档已注明 |
 
+## 连按两次 Ctrl+C（R6）
+
+对应 D012 及其补充、`m1-double-copy.md`。准备：
+
+- 构建 debug 版。用临时设置目录打开开关，不改自己的设置文件：
+
+  ```powershell
+  $env:LEXTRAIL_DEBUG_CONFIG_DIR = "$env:TEMP\lextrail-r6-config"
+  New-Item -ItemType Directory -Force $env:LEXTRAIL_DEBUG_CONFIG_DIR | Out-Null
+  Set-Content "$env:LEXTRAIL_DEBUG_CONFIG_DIR\settings.toml" "[hotkeys]`ndouble_ctrl_c = true" -Encoding ASCII
+  $env:LEXTRAIL_DEBUG_DATA_DIR = "$env:TEMP\lextrail-r6-data"
+  .\target\debug\lextrail-desktop.exe
+  ```
+
+- 日志：每次剪贴板更新一行 `double copy: clipboard update: text 0.4ms`；连按查词 `double copy: lookup triggered`，然后照常 `capture #N: ...; uia_context=...`；长度限制忽略时 `double copy: ignored: TooLong { chars: N }` / `ignored: Tab`。
+- 用**真实键盘**；"连按"指 0.5 秒内按两次 Ctrl+C（中间松不松开 Ctrl 都可以）。
+
+| # | 对应 | 步骤 | 预期 | 结果 |
+|---|---|---|---|---|
+| R6-1 | D012 | **开关关闭**（不设 `LEXTRAIL_DEBUG_CONFIG_DIR`，或设为 `false`）：在网页里选中一个词，连按两次 Ctrl+C | 没有任何反应；日志里没有 `double copy` | |
+| R6-2 | D012 | 开关打开：Edge 普通窗口，网页里双击一个词，连按两次 Ctrl+C（中间松开 Ctrl） | 弹出悬浮窗，显示这个词和原句；日志 `uia_context=captured`；查询历史 `method` 为 `clipboard_double_copy` | |
+| R6-3 | D012 | 同上，按住 Ctrl 不放，按两次 C | 同 R6-2 | |
+| R6-4 | spec 二.4 | 选中一个词，快速按三次 Ctrl+C；再试按四次 | 三次只弹出一次；四次弹出两次（第二次是同一个词，查询历史去重） | |
+| R6-5 | spec 二.2 | 选中一个词，按一次 Ctrl+C，隔约 1 秒再按一次 | 不弹出 | |
+| R6-6 | spec 三 | Edge 打开 PDF（`arxiv.org/pdf/1706.03762`），拖选 transduc-tion，连按两次 Ctrl+C | 显示 transduction，没有原句（Edge PDF 不读上下文） | |
+| R6-7 | spec 三 | 记事本、Word 中选中一个词，连按两次 Ctrl+C | 显示这个词和原句 | |
+| R6-8 | R1-9 | 以管理员身份运行记事本，选中一个词，先按快捷键，再连按两次 Ctrl+C | 快捷键：显示"无法读取以管理员身份运行的程序"，提示里提到"可以改用连按两次 Ctrl+C 查词（需先在设置中打开）"；连按：显示这个词，没有原句 | |
+| R6-9 | D012 补充 | Edge InPrivate 窗口、Chrome 无痕窗口里选中一个词，连按两次 Ctrl+C | 不弹出；日志 `ignored (marked): not for history` | |
+| R6-10 | D012 补充 | 用密码管理器（如果有，如 KeePass、Bitwarden 桌面版）复制一条测试密码两次 | 不弹出；日志 `ignored (marked)` | |
+| R6-11 | D012 补充 | Excel：选中一个单元格（内容是一个英文单词），连按两次 Ctrl+C | 显示这个词（单元格末尾的换行不影响） | |
+| R6-12 | D012 补充 | Excel：选中两个以上单元格，连按两次 Ctrl+C | 不弹出，不记历史；日志 `double copy: ignored: Tab` | |
+| R6-13 | D012 补充 | 网页里选中一大段（超过 500 个字符，如维基百科的一整段），连按两次 Ctrl+C；再选中一句话连按 | 一大段：不弹出，日志 `ignored: TooLong { chars: N }`；一句话：照常显示 | |
+| R6-14 | D043 | VS Code 编辑器里**不选中任何文字**，连按两次 Ctrl+C | 显示"没有选中文字"（不查整行） | |
+| R6-15 | spec 二.6 | 开关打开，用**快捷键**在 Edge PDF 查一个词（走剪贴板兜底）；再快速连按两次快捷键 | 每次都只有快捷键的查词，日志里剪贴板更新都是 `ignored (own capture)`，没有 `lookup triggered` | |
+| R6-16 | spec 二.8 | 悬浮窗显示时，在悬浮窗里选中原句的一部分，连按两次 Ctrl+C | 不再弹出新的查词；日志 `ignored (own window)` | |
+| R6-17 | D014 补充 | （R4-8 真实键盘复测）记事本里快速连按快捷键 20 次（每次看到悬浮窗就按 Esc），然后打几个字母 | 打出来的是字母，Ctrl 没有卡住 | |
+| R6-18 | D046 补充 | **[release]** 打开开关（release 版用真实设置文件 `%APPDATA%\io.github.aspeternity.lextrail\settings.toml`，测完改回），网页里连按两次 Ctrl+C；再按快捷键查一次 | 都能查词；悬浮窗底部**没有**"来自 xxx.exe"（debug 版有） | |
+
 ## 记录
 
 | 日期 | 测试人 | Windows 版本 | 备注 |
