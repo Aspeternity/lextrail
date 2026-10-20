@@ -57,7 +57,7 @@
 - [x] `lextrail-dict`：单词 / 短语 / 句子分类；不含英文字母时提示只支持英文（D045）
 - [x] 悬浮窗显示词典结果：音标、词性、释义、考试标签（D046；`m1-popup-dict.md`）
 - [x] 行末连字符：词典接入后，取词结果先经 `text::resolve_line_end_hyphens` 用 `lextrail-dict` 判断（去掉连字符后查得到就合并，如 compu-tation），再规范化；用 R2-10 中 Chrome PDF 的 `transduc-tion`（应合并为 transduction）验证（新增，R1-7）。完整版词头表（`extra_words`）；选中文字和句子都合并；Edge PDF 剪贴板丢掉了连字符，用猜测规则（D044 补充）
-- [ ] 悬浮窗高度随内容自动调整（新增，2026-10-21，项目负责人确定；分支 `feat/popup-auto-height`）：代码、单元测试、popup-e2e（launch 与 run、展开到最高高度并滚动、强制后备路径、PDF）、性能重测（m0-benchmark 7.5）完成；等项目负责人用真实键盘看效果
+- [x] 悬浮窗高度随内容自动调整（新增，2026-10-21，项目负责人确定）：代码、单元测试、popup-e2e、性能重测（m0-benchmark 7.5）完成；真实键盘验收通过（R8，R8-P1 展开时闪烁已修复）
 - [ ] 快捷键设置界面与冲突提示；整理常用软件快捷键清单，确定默认快捷键（D014）。用户设成"只有 Alt 加字母"（没有 Ctrl / Shift）的快捷键时，提示这类组合会让 Windows Terminal 查词时选区消失（屏蔽键只能退回 `0xE8`，D014 补充）
 - [x] 查询历史写入本地数据库（`lextrail-store` 的 `record_lookup` 已完成，剩桌面端接入：第一次查询时按需打开数据库（D040）；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词）
 - [x] "不记录查询历史"开关（`ARCHITECTURE.md` 6.3）（新增）：设置文件 `[history] record = false`
