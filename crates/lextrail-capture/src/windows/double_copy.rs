@@ -91,7 +91,7 @@ enum Update {
     OwnWindow,
     /// Marked "do not monitor" or "not for the clipboard history" (spec section 2, rule 7):
     /// which of the two, for the debug log.
-    Marked(&'static str),
+    Marked(#[cfg_attr(not(debug_assertions), allow(dead_code))] &'static str),
     Read(CopiedContent),
 }
 
