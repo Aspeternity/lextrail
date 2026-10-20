@@ -61,6 +61,13 @@ export type UnavailableReason =
 
 export const CONTENT_EVENT = 'popup:content';
 
+/** The `popup:content` event (`ContentEvent` in content.rs): the page reports `seq` back
+ * with the content's height. */
+export interface ContentEvent {
+  seq: number;
+  content: Content;
+}
+
 export const UNAVAILABLE_MESSAGES: Record<UnavailableReason, { title: string; hint?: string }> = {
   no_selection: { title: '没有选中文字', hint: '先选中要查的英文，再按快捷键。' },
   elevated: {

@@ -37,6 +37,30 @@ pub struct HeldKeys {
     pub right_shift: bool,
 }
 
+impl HeldKeys {
+    /// Corrected by real key events the hook already saw (virtual key, `true` = up), in
+    /// order: the key state can lag behind the hook (another program's hook is slow), and
+    /// a release seen there is newer than the state read. A mask sent after Alt's release
+    /// is useless, and a repeated Ctrl after Ctrl's release stays stuck down (seen in
+    /// tools/e2e/popup-e2e.ps1: the hook saw `A4^` before the repeat, never `A2^`).
+    pub fn with_events(mut self, events: &[(u32, bool)]) -> Self {
+        for &(vk, up) in events {
+            let down = !up;
+            match vk {
+                0x12 | 0xA4 | 0xA5 => self.alt = down,
+                0x11 => (self.left_ctrl, self.right_ctrl) = (down, down),
+                0xA2 => self.left_ctrl = down,
+                0xA3 => self.right_ctrl = down,
+                0x10 => (self.left_shift, self.right_shift) = (down, down),
+                0xA0 => self.left_shift = down,
+                0xA1 => self.right_shift = down,
+                _ => {}
+            }
+        }
+        self
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Modifier {
     LeftCtrl,
@@ -160,6 +184,11 @@ impl RepeatWatch {
         self.delivered
     }
 
+    /// The latest real event of the key was its release.
+    pub fn saw_release(&self) -> bool {
+        self.last_real_up == Some(true)
+    }
+
     /// The repeat came after the real key-up, so the key is logically stuck down.
     pub fn needs_release(&self) -> bool {
         self.delivered && self.released_first
@@ -270,6 +299,12 @@ mod win {
     /// state is read: a release injected at the same moment reaches the hook and the key
     /// state within it.
     const CHECK_DELAY: Duration = Duration::from_millis(2);
+    /// After the repeat came through, how long the hook waits for the real release of
+    /// the key: it can come later than the repeat in the hook's order and still be
+    /// applied to the key state first (seen in tools/e2e/popup-e2e.ps1: hook saw only
+    /// `A2v* A4^` within the old 2 ms, and Ctrl stayed down). Holding the key longer than
+    /// this is a deliberate hold; nothing is sent then.
+    const RELEASE_WAIT: Duration = Duration::from_millis(1000);
 
     /// The repeat being watched by the hook; one at a time.
     static WATCH: Mutex<Option<RepeatWatch>> = Mutex::new(None);
@@ -317,11 +352,21 @@ mod win {
         // of real events already queued), which would hide exactly the race the hook is
         // for (seen in tools/e2e/stuck-keys.ps1).
         let watcher = Watcher::start();
-        let mask = choose_mask(held_keys());
-        match (mask, &watcher) {
+        let seen: Vec<(u32, bool)> = early().clone();
+        let mask = choose_mask(held_keys().with_events(&seen));
+        let armed = match (mask, &watcher) {
+            (Some(Mask::Repeat(modifier)), Some(w)) => Some((modifier, w.arm(modifier))),
+            _ => None,
+        };
+        match (mask, armed) {
             (None, _) => {}
-            (Some(Mask::Repeat(modifier)), Some(w)) if w.arm(modifier) => {
+            (_, Some((modifier, Arm::Armed))) => {
                 send(&[key(modifier.vk(), modifier.extended(), false)]);
+            }
+            // Alt or the modifier was released just now: no mask, no repeat to get stuck.
+            (_, Some((_modifier, Arm::Released))) => {
+                #[cfg(debug_assertions)]
+                eprintln!("hotkey: alt mask: none, {_modifier:?} or Alt released meanwhile");
             }
             // Without the hook a stuck key would go unnoticed: use the plain key-press.
             (Some(_), _) => {
@@ -333,6 +378,16 @@ mod win {
         if let Some(watcher) = watcher {
             watcher.done();
         }
+    }
+
+    /// Whether a repeat may go out.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Arm {
+        Armed,
+        /// Another hotkey's repeat is still watched.
+        Busy,
+        /// Alt or the modifier was released after the keys were read.
+        Released,
     }
 
     /// The hook thread, from the hotkey thread's side.
@@ -374,21 +429,34 @@ mod win {
             }
         }
 
-        /// Starts watching `modifier`; false if another hotkey's repeat is still watched.
-        fn arm(&self, modifier: Modifier) -> bool {
+        /// Starts watching `modifier`, unless another hotkey's repeat is still watched or
+        /// the hook has seen Alt or `modifier` released since the keys were read.
+        fn arm(&self, modifier: Modifier) -> Arm {
             let mut w = watch();
             if w.is_some() {
-                return false;
+                return Arm::Busy;
+            }
+            let events: Vec<(u32, bool)> = early().drain(..).collect();
+            let still = HeldKeys {
+                alt: true,
+                left_ctrl: modifier == Modifier::LeftCtrl,
+                right_ctrl: modifier == Modifier::RightCtrl,
+                left_shift: modifier == Modifier::LeftShift,
+                right_shift: modifier == Modifier::RightShift,
+            }
+            .with_events(&events);
+            if choose_mask(still) != Some(Mask::Repeat(modifier)) {
+                return Arm::Released;
             }
             let mut repeat = RepeatWatch::new(modifier);
             // Everything real since the hook went in, in order: only the latest event of
             // the key counts, so a release (and a press again) before the read is harmless.
-            for (vk, up) in early().drain(..) {
+            for (vk, up) in events {
                 repeat.on_key(vk, up, false);
             }
             *w = Some(repeat);
             self.flags.armed.store(true, Ordering::SeqCst);
-            true
+            Arm::Armed
         }
 
         /// The mask is out (or not needed): the hook thread finishes and wakes up for it.
@@ -436,6 +504,9 @@ mod win {
         });
         let armed = flags.armed.load(Ordering::SeqCst);
         if armed && watch().as_ref().is_some_and(RepeatWatch::delivered) {
+            pump_until(Instant::now() + RELEASE_WAIT, Wait::Block, || {
+                watch().as_ref().is_none_or(RepeatWatch::saw_release)
+            });
             pump_until(Instant::now() + CHECK_DELAY, Wait::Spin, || false);
         }
         // Only this watcher's own repeat (another hotkey's may be in `WATCH`).
@@ -612,6 +683,35 @@ mod tests {
         };
         f(&mut keys);
         keys
+    }
+
+    #[test]
+    fn events_the_hook_saw_override_a_lagging_key_state() {
+        let state = held(|k| {
+            k.alt = true;
+            k.left_ctrl = true;
+        });
+        // Alt's release already seen: no mask at all.
+        assert_eq!(choose_mask(state.with_events(&[(0xA4, true)])), None);
+        // Ctrl's release seen, Alt still down: the unassigned key, never a stuck Ctrl.
+        assert_eq!(
+            choose_mask(state.with_events(&[(0xA2, true)])),
+            Some(Mask::Unassigned)
+        );
+        // Released and pressed again: held.
+        assert_eq!(
+            choose_mask(state.with_events(&[(0xA2, true), (0xA2, false)])),
+            Some(Mask::Repeat(Modifier::LeftCtrl))
+        );
+        // Side-neutral codes count for both sides; other keys do not count.
+        assert_eq!(
+            choose_mask(state.with_events(&[(0x11, true), (0x58, true)])),
+            Some(Mask::Unassigned)
+        );
+        assert_eq!(
+            choose_mask(state.with_events(&[])),
+            Some(Mask::Repeat(Modifier::LeftCtrl))
+        );
     }
 
     #[test]

@@ -3,6 +3,8 @@ import { reactive } from 'vue';
 import type { EntryView, LookupView, SenseLine } from './content';
 
 defineProps<{ text: string; view: LookupView | null }>();
+// A section was unfolded or folded: the window follows the new height.
+const emit = defineEmits<{ toggled: [] }>();
 
 // Unfolded sections, by entry index: "domain" (专业释义) and "more" (更多). The parent
 // re-creates this component for each lookup, so nothing stays open across lookups.
@@ -14,6 +16,7 @@ function toggle(key: string): void {
   } else {
     open.add(key);
   }
+  emit('toggled');
 }
 
 function generalLines(entry: EntryView, index: number): SenseLine[] {
