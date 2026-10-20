@@ -169,3 +169,64 @@ SQLite 文件 `data/build/lextrail-dict-core.db`，只读，查询时按需从�
 | parallelisation、optimiser | 完整版也没有 | 英式拼写 |
 
 `exchange` 还原结果抽查都正确：best / better → good、worse → bad、is / was / were → be、has → have、could → can、found → find、left → leave、took → take、further → far。
+
+## 10. 待决定：收录规则放宽、行末连字符（2026-10-20 数据）
+
+### 10.1 放宽单词收录规则
+
+假设在 B+ 之外，再收录"单个单词（不含空格）、有中文释义、释义不以领域标记开头"的词条（不要求音标和标记）：
+
+| 项 | B+（现在） | 放宽后 | 增加 |
+|---|---|---|---|
+| 词条 | 277,936 | 374,824 | 96,888 |
+| 义项 | 530,878 | 692,942 | 162,064 |
+| 文件 | 33.4 MiB | 43.2 MiB | 9.8 MiB |
+
+新增的 96,888 条中：36% 的释义本身就是"xx 的复数 / 过去式 / 变形"（这些词靠词形还原本来就能查到原形）；8% 是人名、地名；14,694 条带连字符；9,407 条首字母大写。
+
+第 9 节的普通词汇缺口放宽后只多收 parallelization、overfitting（以及释义错误的 GPU）；convolutional、optimizer、subword、overfit 的释义以 `[计]`、`[网络]` 开头，**放宽后仍然收不到**。
+
+随机抽 50 条（种子 20261020）的质量：
+
+| 判断 | 条数 | 例子 |
+|---|---|---|
+| 明显错误 | 3（6%） | badgered "贪睡的獾（电影名）"（实为 badger 的过去式"纠缠"）；convented "(convent 的过去时) …召集"（convent 不是动词）；fiers "(fier 的复数) 菲尔（人名）" |
+| 不完整或过时（像 GPU 那样） | 3（6%） | MRA 只有"道德重整运动"；ecstacy（拼写错误）只有"迷幻药"；conamore 词性标成 v. |
+| 价值很低 | 12（24%） | 人名 arrigo、blaisdell、sadowski；没有实际释义的 glossarially、troublousness"xx 的变形"；德语 drueckelement；生僻缩写 ijt、woh；拼写可疑 tilobitus 等 |
+| 正常 | 32（64%） | antidromy 反旋、ontologies 本体论、palichnology 古遗迹学、voltaite 绿钾铁矾、swell-mobsman 等，多为生僻专业词 |
+
+### 10.2 行末连字符：精简版查不到的词无法合并
+
+`pdftotext -raw` 提取 1706.03762v7 全文，共 16 处行末断词（行尾"字母-"、下一行以字母开头）。正确答案按原文判断（BerkeleyParser 正文写作一个词）：
+
+| 断词 | 正确 | 现在（精简版整词） | A（完整版词头） | B（片段不是词就合并） |
+|---|---|---|---|---|
+| English- / to-German | 保留 | 保留 | 保留 | 保留 |
+| transduc- / tion | transduction | ✓ | ✓ | ✓ |
+| sequence- / aligned（2 处） | 保留 | ✓ | ✓ | ✓ |
+| position- / wise | 保留 | ✓ | ✓ | ✓ |
+| multi- / plicative | multiplicative | ✓ | ✓ | ✓ |
+| transfor- / mation | transformation | ✓ | ✓ | ✓ |
+| convolu- / tional | convolutional | ✗ 保留 | ✓ | ✓ |
+| source- / target | 保留 | ✓ | ✓ | ✓ |
+| sur- / prisingly | surprisingly | ✓ | ✓ | ✓ |
+| Berkeley- / Parser | BerkeleyParser | ✗ 保留 | ✗ 保留 | ✗ 保留 |
+| Convolu- / tional | Convolutional | ✗ 保留 | ✓ | ✓ |
+| im- / age | image | ✓ | ✓ | ✓ |
+| Ko- / ray（人名） | Koray | ✗ 保留 | ✗ 保留 | ✗ 保留 |
+| attention- / based | 保留 | ✓ | ✓ | ✓ |
+| Salakhutdi- / nov（人名） | Salakhutdinov | ✗ 保留 | ✗ 保留 | ✓ |
+| **正确数（共 16）** | | **11** | **13** | **14** |
+
+**A：额外存完整版 ECDICT 的单词词头**（只用于判断是否合并，查释义仍只用精简词典）。只需存"完整版有、精简版没有"的纯字母单词（合并结果不含连字符）：165,001 个，小写存放；SQLite 表约 **2.2 MiB**（纯文本 1.6 MiB，gzip 0.5 MiB）。
+- 修好：完整版有的词（convolutional）。
+- 仍然不合并：完整版也没有的词（人名 Koray、Salakhutdinov；softmax、hyperparameters 等），结果是保留连字符（"hyper-parameters"），可读但不完美。
+- 不会误合并真正的复合词。
+
+**B：合并后的词查不到时，只要任一片段本身不是单词就合并。**
+- 修好：convolutional、人名 Salakhutdinov。
+- 片段"是单词"的判断被词典里的词缀和短词条削弱：tion、im、sur、nov、Ko 都能查到，所以 Ko-ray 仍不合并。
+- **会误合并**：片段是缩写、模型名、人名的真复合词。实测这些片段都不在精简版里：COVID、LSTM、RNN、ReLU、softmax、ResNet、BiLSTM、Thang。所以 COVID-related、LSTM-based、RNN-based、ReLU-activated、softmax-normalized、ResNet-based、Minh-Thang 正好断在行末时，会被合并成 COVIDrelated、LSTMbased 等不存在的词——这类复合词在技术文章中很常见，而且误合并后查词和发给 AI 的上下文都会出错。
+- （GPT-based、BERT-style、CNN-based 不会误合并：GPT、BERT、CNN 在词典里。）
+
+两个方案共同的局限：合并后恰好是词、但原文的连字符是真的（re-cover、co-op）时都会误合并，与现在相同，很少见。
