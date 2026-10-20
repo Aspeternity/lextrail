@@ -5,9 +5,14 @@
 //! mouse cursor and sends key presses, so leave the machine alone while it runs.
 //!
 //! ```text
-//! lextrail-bench quick [--app PATH] [--cold N] [--samples N]
-//! lextrail-bench long  [--app PATH] [--wait-mins N]
+//! lextrail-bench quick [--app PATH] [--cold N] [--samples N] [--lookup-text TEXT]
+//! lextrail-bench long  [--app PATH] [--wait-mins N] [--lookup-text TEXT]
 //! ```
+//!
+//! The hotkey is pressed over the benchmark's own terminal, where nothing is selected, so
+//! the popup shows "no selection" and the dictionary stays closed. `--lookup-text launch`
+//! makes the app look that text up instead (`LEXTRAIL_BENCH_LOOKUP_TEXT`): the dictionary
+//! is opened by the first lookup and a dictionary result is on screen.
 
 mod procs;
 mod stats;
@@ -44,6 +49,8 @@ mod run {
     use crate::ui;
 
     const APP_NAME: &str = "lextrail-desktop.exe";
+    /// Read by the app only when [`timings::ENV`] is set too.
+    const LOOKUP_TEXT_ENV: &str = "LEXTRAIL_BENCH_LOOKUP_TEXT";
     const DEFAULT_APP: &str = r"target\release\lextrail-desktop.exe";
     /// Time for the tray app to finish starting before it is measured.
     const STARTUP_SETTLE: Duration = Duration::from_secs(4);
@@ -59,6 +66,7 @@ mod run {
         cold: usize,
         samples: usize,
         wait_mins: u64,
+        lookup_text: Option<String>,
     }
 
     fn parse_args() -> Result<Options> {
@@ -70,6 +78,7 @@ mod run {
             cold: 5,
             samples: 10,
             wait_mins: 120,
+            lookup_text: None,
         };
         while let Some(flag) = args.next() {
             let value = args
@@ -80,6 +89,7 @@ mod run {
                 "--cold" => options.cold = value.parse()?,
                 "--samples" => options.samples = value.parse()?,
                 "--wait-mins" => options.wait_mins = value.parse()?,
+                "--lookup-text" => options.lookup_text = Some(value),
                 other => bail!("unknown option {other}"),
             }
         }
@@ -98,6 +108,10 @@ mod run {
         let cpus = std::thread::available_parallelism().map_or(1, |n| n.get());
         println!("app: {}", options.app.display());
         println!("logical CPUs: {cpus}");
+        match &options.lookup_text {
+            Some(text) => println!("lookup text: {text:?} (dictionary opened by the first lookup)"),
+            None => println!("lookup text: none (no selection; dictionary not opened)"),
+        }
         match options.command.as_str() {
             "quick" => quick(&options, cpus),
             "long" => long(&options),
@@ -231,8 +245,12 @@ mod run {
             kill_all()?;
             let timings = std::env::temp_dir().join("lextrail-bench-timings.txt");
             let _ = std::fs::remove_file(&timings);
-            let child = Command::new(&options.app)
-                .env(timings::ENV, &timings)
+            let mut command = Command::new(&options.app);
+            command.env(timings::ENV, &timings);
+            if let Some(text) = &options.lookup_text {
+                command.env(LOOKUP_TEXT_ENV, text);
+            }
+            let child = command
                 .spawn()
                 .with_context(|| format!("cannot start {}", options.app.display()))?;
             sleep(STARTUP_SETTLE);
