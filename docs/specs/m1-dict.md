@@ -230,3 +230,18 @@ SQLite 文件 `data/build/lextrail-dict-core.db`，只读，查询时按需从�
 - （GPT-based、BERT-style、CNN-based 不会误合并：GPT、BERT、CNN 在词典里。）
 
 两个方案共同的局限：合并后恰好是词、但原文的连字符是真的（re-cover、co-op）时都会误合并，与现在相同，很少见。
+
+## 11. 输入分类：单词 / 短语 / 句子（D045）
+
+`lextrail_dict::classify(text, in_dictionary)`（纯函数）和 `Dictionary::classify(text)`（用本词典判断"整体是否在词典里"）。结果 `Classification::English(LookupKind)` 或 `Classification::NotEnglish`；`LookupKind` 即查询历史 `lookups.kind`（`lextrail-core`）。
+
+1. **没有英文字母**（不含任何 ASCII 字母：纯中文、数字、符号）→ `NotEnglish`：不查词典、不请求 AI、不写查询历史，悬浮窗提示"目前只支持英文"。中英混合、含英文字母的照常分类。
+2. 规范化（同第 8 节）后**只有一个词** → 单词。带连字符的复合词（`self-attention`、`English-to-German`）、`e.g.`、`model's` 都算一个词；`Hello.` 也是单词。
+3. **多个词**：
+   - 整体在词典里（`lookup` 能整词查到，包括 `gave up` → give up 这样的短语词形还原）→ 短语，不管结尾是什么；
+   - 否则，不超过 5 个词（`MAX_PHRASE_WORDS`）且不以句末标点结尾 → 短语（如 `the multi-head attention layer`、`Attention Is All You Need`）；
+   - 其余 → 句子。
+
+句末标点：`.` `!` `?` `…` 及中文 `。！？`，忽略结尾的空白、引号和右括号（`It works!"`、`(see below.)` 都算以句末标点结尾）。
+
+用途：单词、短语走词典 + AI 语境解析；句子走 AI 翻译（ARCHITECTURE.md 5.1）。

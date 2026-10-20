@@ -60,8 +60,8 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
 
 ## 下一步
 
-1. 项目负责人根据 `m1-dict.md` 第 9 节决定是否调整收录规则（convolutional、optimizer、overfitting 等完整版有、被 B+ 过滤）。
-2. `lextrail-dict` 的输入分类（单词 / 短语 / 句子）。
+1. **等项目负责人决定**（数据见 `m1-dict.md` 第 10 节）：是否放宽单词收录规则（多 9.7 万条、9.8 MiB，抽样 6% 明显错误）；行末连字符用方案 A（存完整版单词词头，约 2.2 MiB）还是方案 B（片段不是词就合并，会误合并 COVID-related、LSTM-based 等）。
+2. 输入分类（D045）已在分支 `feat/input-classification` 完成：`lextrail_dict::classify` / `Dictionary::classify`，单元测试覆盖单词、短语、句子、非英文。
 3. 之后按 `ROADMAP.md` 继续 M1：连按两次 Ctrl+C（实现 `capture_context`，完成后把这个用法加回提示文字，R1-9）→ 悬浮窗显示词典结果 → 行末连字符接入词典（用 `transduc-tion` 验证）→ 查询历史接入桌面端 → 快捷键设置界面。
 4. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。
 5. 悬浮窗加入词典结果后重测性能预算（M1 任务）。
