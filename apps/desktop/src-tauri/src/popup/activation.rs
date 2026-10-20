@@ -10,6 +10,9 @@
 /// How the popup got (or did not get) the foreground.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Activation {
+    /// The popup was the foreground window already (showing it activated it: the process
+    /// still had the right to, e.g. after Esc closed the last popup).
+    AlreadyInFront,
     /// `SetForegroundWindow` succeeded on its own.
     Direct,
     /// It succeeded after attaching to the foreground thread's input queue.
@@ -36,6 +39,9 @@ pub fn bring_to_front(hwnd: windows::Win32::Foundation::HWND) -> Activation {
 
     // SAFETY: plain Win32 calls; the attachment is always undone below.
     unsafe {
+        if GetForegroundWindow() == hwnd {
+            return Activation::AlreadyInFront;
+        }
         if !force_attach && SetForegroundWindow(hwnd).as_bool() {
             return Activation::Direct;
         }

@@ -447,7 +447,38 @@ pub fn popup_ready<R: Runtime>(app: AppHandle<R>, error: Option<String>) {
 pub fn hide_popup<R: Runtime>(app: AppHandle<R>) {
     #[cfg(debug_assertions)]
     eprintln!("popup: Esc @{}", debug_clock());
+    // Back to the window the text came from: on its own, Windows activates whichever
+    // window is next in z-order, often another program. The popup is in front, so it
+    // may hand the foreground on. (A click outside needs nothing: the window clicked is
+    // in front already.)
+    let target = app
+        .state::<PopupState>()
+        .target_window
+        .load(Ordering::SeqCst);
+    let back = return_foreground(target);
+    #[cfg(debug_assertions)]
+    eprintln!("popup: foreground back to the source window: {back}");
+    #[cfg(not(debug_assertions))]
+    let _ = back;
     hide(&app);
+}
+
+/// Makes `window` (a native handle; 0 for none) the foreground window again, if it
+/// still exists and is visible.
+#[cfg(windows)]
+fn return_foreground(window: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{IsWindow, IsWindowVisible, SetForegroundWindow};
+    let hwnd = HWND(window as *mut _);
+    // SAFETY: plain Win32 calls; a stale handle only makes them fail.
+    window != 0
+        && unsafe { IsWindow(Some(hwnd)).as_bool() && IsWindowVisible(hwnd).as_bool() }
+        && unsafe { SetForegroundWindow(hwnd).as_bool() }
+}
+
+#[cfg(not(windows))]
+fn return_foreground(_window: isize) -> bool {
+    false
 }
 
 /// Debug builds: milliseconds since the first call, to line up popup, request and

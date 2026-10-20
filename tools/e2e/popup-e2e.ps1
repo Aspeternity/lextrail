@@ -41,11 +41,12 @@ Edge InPrivate marks what it copies CanIncludeInClipboardHistory = 0, which doub
 ignores (spec section 2, rule 7): -DoubleCopy therefore needs -NoInPrivate (a fresh
 ordinary profile with sync off).
 
-Each popup is then closed (-CloseBy Esc, the default, or Click: a click on the test page
-away from the popup) and must be gone afterwards, with the test page in the foreground
+Each popup is then closed (-CloseBy Esc, the default; Click: a click on the test page
+away from the popup; ClickThenEsc: Click for odd lookups, Esc for even ones) and must be gone afterwards, with the test page in the foreground
 again. -ForceAttach makes the app take the foreground through its fallback
 (AttachThreadInput, debug builds: LEXTRAIL_DEBUG_FORCE_ATTACH), which is what runs after
-a click outside closed the last popup; every activation must then be "Attached" and the
+a click outside closed the last popup; every activation must then be "Attached" (or
+"AlreadyInFront": after Esc, showing the popup already brings it to the front) and the
 popup must keep the focus (no focus ping-pong).
 
 With -Chrome the page opens in Google Chrome instead of Edge (incognito unless
@@ -88,7 +89,7 @@ param(
   [switch]$Chrome,
   [switch]$ExpectIgnored,
   [switch]$ForceAttach,
-  [ValidateSet("Esc", "Click")][string]$CloseBy = "Esc"
+  [ValidateSet("Esc", "Click", "ClickThenEsc")][string]$CloseBy = "Esc"
 )
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
@@ -326,7 +327,8 @@ try {
     if ($visible -and -not $ExpectIgnored) {
       # Close it, then it must be gone and the page in front again.
       $closeSent = $false
-      if ($CloseBy -eq "Esc") {
+      $how = if ($CloseBy -eq "ClickThenEsc") { if ($i % 2) { "Click" } else { "Esc" } } else { $CloseBy }
+      if ($how -eq "Esc") {
         # Esc only to the popup itself.
         if ([LtE2e]::GetForegroundWindow() -eq $popup) { $ws.SendKeys("{ESC}"); $closeSent = $true }
         else { "  popup not in front: Esc not sent" }
@@ -339,7 +341,7 @@ try {
       $stillVisible = [LtE2e]::IsWindowVisible($popup)
       $backToPage = [LtE2e]::GetForegroundWindow() -eq $page.MainWindowHandle
       $closedOk = $closeSent -and -not $stillVisible -and $backToPage
-      "  closed by ${CloseBy}: " + $(if ($closedOk) { "ok" } else { "FAIL" }) + " (popup visible=$stillVisible, page in front=$backToPage)"
+      "  closed by ${how}: " + $(if ($closedOk) { "ok" } else { "FAIL" }) + " (popup visible=$stillVisible, page in front=$backToPage)"
       if (-not $closedOk) { $failures++ }
     }
     Start-Sleep -Milliseconds $PauseMs
@@ -360,7 +362,8 @@ $fronts = @(Get-Content $log | Select-String "popup: bring to front: (\w+)" | Fo
 $refocus = @(Get-Content $log | Select-String "focusing the page").Count
 "activations: " + ($fronts -join ", ") + "; page focused by the app: $refocus time(s)"
 if ($ForceAttach -and -not $ExpectIgnored) {
-  $attachOk = $fronts.Count -gt 0 -and @($fronts | Where-Object { $_ -ne "Attached" }).Count -eq 0 -and $refocus -le $fronts.Count
+  $attachOk = $fronts.Count -gt 0 -and $fronts[0] -eq "Attached" -and
+    @($fronts | Where-Object { $_ -notin "Attached", "AlreadyInFront" }).Count -eq 0 -and $refocus -le $fronts.Count
   if (-not $attachOk) { "  (FAIL: expected only Attached activations and at most one refocus each)"; $failures++ }
 }
 # Lookups started by a double Ctrl+C: one per lookup with -DoubleCopy, none otherwise.
