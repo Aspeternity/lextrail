@@ -15,7 +15,10 @@ SendInput many times, varying the time between the hotkey's key-down and the rel
 GetAsyncKeyState that no Ctrl, Alt or Shift key is still down, closes the popup with
 Esc, and goes on. It also prints the app's "alt mask" log lines (debug builds).
 
-It sends keys: leave the machine alone while it runs. Exits with 1 if a key was stuck.
+It sends keys: leave the machine alone while it runs. The hotkey is only sent while the
+test window is in the foreground, and Esc only while the popup (or the test window) is;
+otherwise the script stops, so no key lands in another program. Exits with 1 if a key was
+stuck.
 
 .EXAMPLE
 pwsh tools/e2e/stuck-keys.ps1 -App target\debug\lextrail-desktop.exe
@@ -38,6 +41,25 @@ public static class LtKeys {
   [DllImport("user32.dll")] static extern uint SendInput(uint n, IN[] i, int size);
   [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint type);
   [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string t);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [StructLayout(LayoutKind.Sequential)] public struct R { public int L, T, Ri, B; }
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out R r);
+  [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] static extern void mouse_event(uint f, uint x, uint y, uint d, IntPtr e);
+  [StructLayout(LayoutKind.Sequential)] public struct Pt { public int X, Y; }
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Pt p);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+  // Clicks the middle of the window, only if that point shows this window (not one on top).
+  public static bool ClickCenter(IntPtr h) {
+    R r; GetWindowRect(h, out r);
+    var p = new Pt { X = (r.L + r.Ri) / 2, Y = (r.T + r.B) / 2 };
+    if (GetAncestor(WindowFromPoint(p), 2) != h) return false;
+    SetCursorPos(p.X, p.Y); mouse_event(2, 0, 0, 0, IntPtr.Zero); mouse_event(4, 0, 0, 0, IntPtr.Zero);
+    return true;
+  }
   static void Key(ushort vk, bool up) {
     var i = new IN[1];
     i[0].type = 1; i[0].ki.vk = vk; i[0].ki.scan = (ushort)MapVirtualKey(vk, 0);
@@ -61,6 +83,8 @@ public static class LtKeys {
   }
 }
 "@
+# Real pixel coordinates for ClickCenter on scaled displays.
+[void][LtKeys]::SetProcessDPIAware()
 
 Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
 $log = Join-Path $OutDir "stuck-keys-app.log"
@@ -91,6 +115,15 @@ try {
     foreach ($gap in $GapsMs) {
       $n++
       [void]$ws.AppActivate($target.Id); Start-Sleep -Milliseconds 300
+      if ([LtKeys]::GetForegroundWindow() -ne $target.MainWindowHandle) {
+        [void][LtKeys]::SetForegroundWindow($target.MainWindowHandle); Start-Sleep -Milliseconds 300
+      }
+      # Refused while another program is in front: click the test window itself.
+      if ([LtKeys]::GetForegroundWindow() -ne $target.MainWindowHandle) {
+        [void][LtKeys]::ClickCenter($target.MainWindowHandle); Start-Sleep -Milliseconds 300
+      }
+      $fg = [LtKeys]::GetForegroundWindow()
+      if ($fg -ne $target.MainWindowHandle) { throw "test window is not in the foreground ($fg); not sending keys" }
       $lines = @(Get-Content $log).Count
       [LtKeys]::Hotkey($gap); Start-Sleep -Milliseconds 700
       $held = [LtKeys]::Held()
@@ -99,12 +132,18 @@ try {
       # This press's mask decision (debug builds).
       Get-Content $log | Select-Object -Skip $lines | Select-String "alt mask|released before|not come through" |
         ForEach-Object { "    " + $_.Line }
-      [LtKeys]::Esc(); Start-Sleep -Milliseconds 300
+      # Esc only to the popup (or the test window, when the popup did not take focus).
+      $fg = [LtKeys]::GetForegroundWindow()
+      if ($fg -eq [LtKeys]::FindWindow("Tauri Window", "LexTrail") -or $fg -eq $target.MainWindowHandle) { [LtKeys]::Esc() }
+      else { "    foreground is another window ($fg): Esc not sent" }
+      Start-Sleep -Milliseconds 300
       # Release whatever is stuck, so the next press starts clean.
       if ($held) { foreach ($vk in $held.Split(" ")) { [LtKeys]::Up([Convert]::ToInt32($vk, 16)) } }
     }
   }
 } finally {
+  # Never leave a modifier down for the user's next keystrokes.
+  foreach ($vk in 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C) { if ([LtKeys]::GetAsyncKeyState($vk) -lt 0) { [LtKeys]::Up($vk) } }
   Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
   Stop-Process -Id $target.Id -Force -ErrorAction SilentlyContinue
 }

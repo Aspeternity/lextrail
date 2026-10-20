@@ -33,8 +33,10 @@ The app reads its settings and writes its lookup history in fresh directories un
 user's own; release builds are refused for that reason. The lookups recorded are checked
 against the popup: the first is recorded, a repeat within 30 s is not.
 
-It moves the mouse and sends keys: leave the machine alone while it runs. Exits with 1 if
-any check fails.
+It moves the mouse and sends keys: leave the machine alone while it runs. Keys are only
+sent while the window they are meant for (the test page, or the popup for Esc) is in the
+foreground; otherwise the script stops, so no key lands in another program. Screenshots
+cover only the test page and the popup. Exits with 1 if any check fails.
 
 .EXAMPLE
 pwsh tools/e2e/popup-e2e.ps1 -App target\debug\lextrail-desktop.exe
@@ -79,6 +81,7 @@ public static class LtE2e {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string c, string t);
   [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int hh, bool r);
   [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr h, uint msg, IntPtr w, IntPtr l, uint flags, uint ms, out IntPtr result);
@@ -87,6 +90,25 @@ public static class LtE2e {
   [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
   [DllImport("user32.dll")] static extern uint MapVirtualKey(uint code, uint type);
   public static void Key(byte vk, bool up) { keybd_event(vk, (byte)MapVirtualKey(vk, 0), up ? 2u : 0u, IntPtr.Zero); }
+  [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
+  // Sends a key-up for every modifier still logically down; returns their codes.
+  public static string ReleaseHeld() {
+    string s = "";
+    int[] vks = { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C };
+    foreach (int vk in vks) if (GetAsyncKeyState(vk) < 0) { Key((byte)vk, true); s += vk.ToString("X") + " "; }
+    return s.Trim();
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct Pt { public int X, Y; }
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Pt p);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+  // Clicks the middle of the window, only if that point shows this window (not one on top).
+  public static bool ClickCenter(IntPtr h) {
+    R r; GetWindowRect(h, out r);
+    var p = new Pt { X = (r.L + r.Ri) / 2, Y = (r.T + r.B) / 2 };
+    if (GetAncestor(WindowFromPoint(p), 2) != h) return false;
+    SetCursorPos(p.X, p.Y); mouse_event(2, 0, 0, 0, IntPtr.Zero); mouse_event(4, 0, 0, 0, IntPtr.Zero);
+    return true;
+  }
   // Fixed size in logical pixels, so the PDF page lays out the same every time.
   public static void Resize(IntPtr h, int w, int hh) {
     double scale = GetDpiForWindow(h) / 96.0;
@@ -109,6 +131,26 @@ function Save-Screenshot([IntPtr]$Hwnd, [string]$Path) {
   $bmp = New-Object System.Drawing.Bitmap ($r.Ri - $r.L), ($r.B - $r.T)
   [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size)
   $bmp.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
+}
+
+# Keys go to whatever window is in front: check it is the one meant, or send nothing.
+function Assert-Foreground([IntPtr]$Hwnd, [string]$What) {
+  $fg = [LtE2e]::GetForegroundWindow()
+  if ($fg -ne $Hwnd) { throw "the $What ($Hwnd) is not in the foreground ($fg); not sending keys" }
+}
+
+# AppActivate can pick another window of the process (or Explorer's TabProxyWindow), and
+# SetForegroundWindow is refused while another program is in front: then a click on the
+# page itself, after checking the page is what is under that point.
+function Show-TestPage($Page) {
+  [void]$ws.AppActivate($Page.Id); Start-Sleep -Milliseconds 300
+  if ([LtE2e]::GetForegroundWindow() -ne $Page.MainWindowHandle) {
+    [void][LtE2e]::SetForegroundWindow($Page.MainWindowHandle); Start-Sleep -Milliseconds 300
+  }
+  if ([LtE2e]::GetForegroundWindow() -ne $Page.MainWindowHandle) {
+    [void][LtE2e]::ClickCenter($Page.MainWindowHandle); Start-Sleep -Milliseconds 300
+  }
+  Assert-Foreground $Page.MainWindowHandle "test page"
 }
 
 # The popup is a WebView2 (Chromium) window, which builds its accessibility tree only
@@ -162,10 +204,12 @@ if ($Pdf -and $page) { [LtE2e]::Resize($page.MainWindowHandle, 1050, 1000); Star
 try {
   if (-not $page) { throw "Edge test window not found" }
   for ($i = 1; $i -le $Lookups; $i++) {
-    [void]$ws.AppActivate($page.Id); Start-Sleep -Milliseconds 500
+    Show-TestPage $page; Start-Sleep -Milliseconds 200
     # Close any Edge bubble (e.g. "translate this page?") that would hold focus.
     $ws.SendKeys("{ESC}"); Start-Sleep -Milliseconds 300
+    Assert-Foreground $page.MainWindowHandle "test page"
     [LtE2e]::DoubleClick($page.MainWindowHandle, $word[0], $word[1]); Start-Sleep -Milliseconds 400
+    Assert-Foreground $page.MainWindowHandle "test page"
     Save-Screenshot $page.MainWindowHandle (Join-Path $OutDir "page-$i.png")
     $heldText = @()
     if ($HoldMs -gt 0) {
@@ -206,9 +250,14 @@ try {
     if ($HoldMs -gt 0) { "  while held: " + ($heldText -join " | ") + $(if ($hintOk) { "" } else { "  (hint missing)" }) }
     if ($shot) { "  screenshot: $shot" }
     if (-not $responds) { "  the app's UI thread does not respond (hung); stopping"; break }
-    $ws.SendKeys("{ESC}"); Start-Sleep -Milliseconds $PauseMs
+    # Esc only to the popup itself; a popup without focus hides when the page is activated.
+    if ([LtE2e]::GetForegroundWindow() -eq $popup) { $ws.SendKeys("{ESC}") } else { "  popup not in front: Esc not sent" }
+    Start-Sleep -Milliseconds $PauseMs
   }
 } finally {
+  # A modifier left down would act on whatever the user does next: release it, and fail.
+  $held = [LtE2e]::ReleaseHeld()
+  if ($held) { "modifier keys were still down at the end (released): $held"; $failures++ }
   Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
   Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" |
     Where-Object { $_.CommandLine -like "*$profileDir*" } |
