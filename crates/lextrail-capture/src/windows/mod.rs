@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
-    CaptureError, CaptureOutcome, CaptureTarget, CaptureTrace, Pipeline, RawContext, TextCapture,
-    Unavailable,
+    CaptureError, CaptureOutcome, CaptureTarget, CaptureTrace, Pipeline, Progress, RawContext,
+    TextCapture, Unavailable,
 };
 use uia::UiaStep;
 
@@ -62,6 +62,7 @@ impl TextCapture for WindowsCapture {
     fn capture_traced(
         &self,
         target: &CaptureTarget,
+        progress: Progress<'_>,
     ) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace) {
         // The desktop has nothing to select: say so rather than "unsupported".
         if target
@@ -79,7 +80,7 @@ impl TextCapture for WindowsCapture {
                 trace,
             );
         }
-        self.pipeline.run_traced(target)
+        self.pipeline.run_traced(target, progress)
     }
 
     fn capture_context(
@@ -106,7 +107,7 @@ mod tests {
         let mut window = WindowInfo::for_tests("explorer.exe");
         window.class_name = Some("Progman".into());
         let (result, trace) =
-            WindowsCapture::new().capture_traced(&CaptureTarget::for_tests(Some(window)));
+            WindowsCapture::new().capture_traced(&CaptureTarget::for_tests(Some(window)), &|_| {});
         assert_eq!(
             result,
             Ok(CaptureOutcome::Unavailable(Unavailable::NoSelection))

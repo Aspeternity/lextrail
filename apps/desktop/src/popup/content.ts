@@ -2,12 +2,13 @@
 export type Content =
   | { kind: 'empty' }
   | { kind: 'loading' }
+  | { kind: 'release_keys' }
   | { kind: 'selection'; text: string; sentence: string | null; source_app: string | null }
   | { kind: 'unavailable'; reason: UnavailableReason }
   | { kind: 'error'; message: string };
 
 export type UnavailableReason =
-  'no_selection' | 'elevated' | 'no_foreground_window' | 'unsupported' | 'timed_out';
+  'no_selection' | 'elevated' | 'no_foreground_window' | 'unsupported' | 'timed_out' | 'keys_held';
 
 export const CONTENT_EVENT = 'popup:content';
 
@@ -21,4 +22,5 @@ export const UNAVAILABLE_MESSAGES: Record<UnavailableReason, { title: string; hi
   no_foreground_window: { title: '没有找到当前窗口', hint: '切换到要查词的窗口后再试。' },
   unsupported: { title: '这个窗口暂时无法取词', hint: '这个程序没有提供选中的文字。' },
   timed_out: { title: '取词超时', hint: '程序响应较慢，请稍后再试。' },
+  keys_held: { title: '请松开快捷键后再试', hint: '按住快捷键时无法复制选中的文字。' },
 };

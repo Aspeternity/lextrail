@@ -1,5 +1,7 @@
 //! Global hotkeys: registration and reporting registration failures (D014).
 
+use std::time::Instant;
+
 use lextrail_config::HotkeySettings;
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -80,13 +82,15 @@ fn register<R: Runtime>(app: &AppHandle<R>, binding: &Binding) -> Result<(), Fai
 }
 
 fn on_triggered<R: Runtime>(app: &AppHandle<R>, action: HotkeyAction) {
+    let pressed = Instant::now();
+    // First, before anything else can happen (the popup, the capture): Alt is still held
+    // now. Returns once the mask key is sent.
+    crate::keyboard::mask_alt_release();
     #[cfg(debug_assertions)]
     eprintln!("hotkey triggered: {action:?}");
-    // First, before anything else can happen: Alt is still held now.
-    crate::keyboard::mask_alt_release();
     match action {
         HotkeyAction::Lookup => {
-            if let Err(e) = crate::popup::lookup(app) {
+            if let Err(e) = crate::popup::lookup(app, pressed) {
                 eprintln!("cannot start lookup: {e}");
             }
         }

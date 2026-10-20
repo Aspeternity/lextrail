@@ -22,7 +22,7 @@ fn main() {
     let start = Instant::now();
     let target = capture.snapshot().expect("snapshot");
     let snapshot_time = start.elapsed();
-    let (outcome, trace) = capture.capture_traced(&target);
+    let (outcome, trace) = capture.capture_traced(&target, &|_| {});
     let capture_time = start.elapsed() - snapshot_time;
 
     println!("window: {:#?}", target.window);

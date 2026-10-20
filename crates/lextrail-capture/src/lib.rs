@@ -34,14 +34,16 @@ pub trait TextCapture: Send + Sync {
     /// Reads the selected text and its context from `target`. Blocks for up to about the
     /// time budget; never call it on the UI thread.
     fn capture(&self, target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError> {
-        self.capture_traced(target).0
+        self.capture_traced(target, &|_| {}).0
     }
 
     /// [`TextCapture::capture`] plus what each method did and how long it took, for
-    /// diagnostics. The trace holds no captured text.
+    /// diagnostics. The trace holds no captured text. `progress` is called on the
+    /// capturing thread as the capture goes (see [`CaptureProgress`]).
     fn capture_traced(
         &self,
         target: &CaptureTarget,
+        progress: Progress<'_>,
     ) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace);
 
     /// Reads only the context around `selected_text` (already known, e.g. from a double
@@ -52,6 +54,19 @@ pub trait TextCapture: Send + Sync {
         selected_text: &str,
     ) -> Result<Option<RawContext>, CaptureError>;
 }
+
+/// What a running capture reports, so the caller can tell time spent waiting for the user
+/// from time spent capturing (the popup's "capturing..." delay, R3-P4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureProgress {
+    /// The clipboard fallback is waiting for the hotkey's keys to be released.
+    WaitingForKeys,
+    /// They were released; the copy follows.
+    KeysReleased,
+}
+
+/// Receives [`CaptureProgress`] reports.
+pub type Progress<'a> = &'a dyn Fn(CaptureProgress);
 
 /// The foreground window and focus at the moment the hotkey fired.
 #[derive(Debug, Clone)]
@@ -93,6 +108,7 @@ impl TextCapture for UnsupportedCapture {
     fn capture_traced(
         &self,
         _target: &CaptureTarget,
+        _progress: Progress<'_>,
     ) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace) {
         (
             Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported)),
@@ -175,6 +191,9 @@ pub enum Unavailable {
     Unsupported,
     /// Every method ran out of time.
     TimedOut,
+    /// The hotkey's keys were still held after the wait, so the clipboard fallback could
+    /// not send its copy keys (D043). The user should release them and try again.
+    KeysHeld,
 }
 
 /// Something went wrong while capturing. Platform errors are converted inside the
@@ -247,6 +266,9 @@ pub struct StepOutput {
     /// The class name of the focused element, if the step learned it (UIA). Passed on to
     /// later steps in [`StepContext`].
     pub focused_class: Option<String>,
+    /// How long the step waited for the hotkey's keys to be released (clipboard), part of
+    /// its elapsed time.
+    pub key_wait: Option<Duration>,
 }
 
 /// What earlier steps of one capture learned, for the later ones.
@@ -267,6 +289,7 @@ impl From<Result<CaptureOutcome, CaptureError>> for StepOutput {
             attempts: 1,
             note: None,
             focused_class: None,
+            key_wait: None,
         }
     }
 }
@@ -288,6 +311,7 @@ pub struct StepTrace {
     pub element: Option<ElementSource>,
     pub attempts: u32,
     pub note: Option<&'static str>,
+    pub key_wait: Option<Duration>,
 }
 
 /// A short, text-free label for a capture result: `captured`, `no_selection`, ..., `error`.
@@ -307,13 +331,15 @@ impl Unavailable {
             Self::NoForegroundWindow => "no_foreground_window",
             Self::Unsupported => "unsupported",
             Self::TimedOut => "timed_out",
+            Self::KeysHeld => "keys_held",
         }
     }
 }
 
 impl fmt::Display for CaptureTrace {
     /// e.g. `uia=captured 21.3ms (uia_focus); total 21.4ms`, `uia=captured 48.0ms x2 ...`
-    /// (retried once) or `precheck=elevated; total 0.0ms`.
+    /// (retried once), `clipboard=captured 160.2ms keys=150.1ms` (of which 150.1 ms
+    /// waiting for the hotkey's keys to be released) or `precheck=elevated; total 0.0ms`.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
         if let Some(u) = self.precheck {
@@ -323,6 +349,9 @@ impl fmt::Display for CaptureTrace {
             write!(f, "{}={} {:.1}ms", step.step, step.result, ms(step.elapsed))?;
             if step.attempts > 1 {
                 write!(f, " x{}", step.attempts)?;
+            }
+            if let Some(wait) = step.key_wait {
+                write!(f, " keys={:.1}ms", ms(wait))?;
             }
             if let Some(element) = step.element {
                 write!(f, " ({})", element.label())?;
@@ -344,6 +373,7 @@ impl fmt::Display for Unavailable {
             Self::NoForegroundWindow => "no foreground window",
             Self::Unsupported => "unsupported target",
             Self::TimedOut => "timed out",
+            Self::KeysHeld => "hotkey still held",
         })
     }
 }

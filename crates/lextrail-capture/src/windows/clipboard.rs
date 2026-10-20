@@ -2,7 +2,8 @@
 //! the text, and put the user's clipboard back.
 //!
 //! 1. Wait until the hotkey's modifiers are released (otherwise Ctrl+C would arrive as
-//!    e.g. Ctrl+Alt+C).
+//!    e.g. Ctrl+Alt+C), for up to [`MODIFIER_WAIT`]; still held after that →
+//!    [`Unavailable::KeysHeld`] (D043).
 //! 2. Save every clipboard format that holds plain memory ([`is_restorable_format`]).
 //!    Formats that are GDI handles (bitmaps, metafiles, palettes) are skipped; the system
 //!    synthesizes them from the memory formats (e.g. `CF_BITMAP` from `CF_DIB`).
@@ -43,12 +44,12 @@ use crate::clipboard_rules::{
     is_restorable_format, is_vscode_empty_selection_copy,
 };
 use crate::{
-    CaptureError, CaptureMethod, CaptureOutcome, CaptureStep, CaptureTarget, Selection,
-    StepContext, StepOutput, Unavailable,
+    CaptureError, CaptureMethod, CaptureOutcome, CaptureProgress, CaptureStep, CaptureTarget,
+    Progress, Selection, StepContext, StepOutput, Unavailable,
 };
 
-/// How long to wait for the user to release the hotkey's modifiers.
-const MODIFIER_WAIT: Duration = Duration::from_millis(600);
+/// How long to wait for the user to release the hotkey's modifiers (D043).
+const MODIFIER_WAIT: Duration = Duration::from_secs(3);
 /// How long the target has to put the copy on the clipboard.
 const COPY_WAIT: Duration = Duration::from_millis(400);
 /// Retrying `OpenClipboard` while another program holds it.
@@ -98,12 +99,17 @@ impl CaptureStep for ClipboardStep {
         target.window.as_ref().is_some_and(confirm_no_selection)
     }
 
-    fn try_capture(&self, target: &CaptureTarget, context: &StepContext) -> StepOutput {
+    fn try_capture(
+        &self,
+        target: &CaptureTarget,
+        context: &StepContext,
+        progress: Progress<'_>,
+    ) -> StepOutput {
         let Some(window) = &target.window else {
             return unavailable(Unavailable::NoForegroundWindow, None);
         };
         let keys = copy_keys(window, context);
-        let mut output = self.copy_selection(keys);
+        let mut output = self.copy_selection(keys, progress);
         if keys == CopyKeys::CtrlInsert && output.note.is_none() {
             output.note = Some("ctrl_insert");
         }
@@ -133,10 +139,20 @@ enum Save {
 }
 
 impl ClipboardStep {
-    fn copy_selection(&self, keys: CopyKeys) -> StepOutput {
-        if !wait_modifiers_released(MODIFIER_WAIT) {
-            return unavailable(Unavailable::TimedOut, Some("modifiers_held"));
-        }
+    fn copy_selection(&self, keys: CopyKeys, progress: Progress<'_>) -> StepOutput {
+        let start = Instant::now();
+        let released = wait_modifiers_released(MODIFIER_WAIT, progress);
+        let key_wait = Some(start.elapsed());
+        let output = if released {
+            self.copy_released(keys)
+        } else {
+            unavailable(Unavailable::KeysHeld, None)
+        };
+        StepOutput { key_wait, ..output }
+    }
+
+    /// Copies once the hotkey's keys are up.
+    fn copy_released(&self, keys: CopyKeys) -> StepOutput {
         let owner = match MessageWindow::new() {
             Ok(w) => w,
             Err(e) => return StepOutput::from(Err(e)),
@@ -234,18 +250,28 @@ enum Copied {
     VscodeEmptySelection,
 }
 
-fn wait_modifiers_released(timeout: Duration) -> bool {
+/// Reports [`CaptureProgress::WaitingForKeys`] when it has to wait, then
+/// [`CaptureProgress::KeysReleased`] once the keys are up.
+fn wait_modifiers_released(timeout: Duration, progress: Progress<'_>) -> bool {
     let deadline = Instant::now() + timeout;
+    let mut waiting = false;
     loop {
         // SAFETY: plain Win32 calls. The high bit is set while a key is down.
         let held = [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN]
             .iter()
             .any(|vk| unsafe { GetAsyncKeyState(i32::from(vk.0)) } < 0);
         if !held {
+            if waiting {
+                progress(CaptureProgress::KeysReleased);
+            }
             return true;
         }
         if Instant::now() >= deadline {
             return false;
+        }
+        if !waiting {
+            waiting = true;
+            progress(CaptureProgress::WaitingForKeys);
         }
         thread::sleep(POLL);
     }

@@ -20,9 +20,11 @@ mod webview;
 use std::sync::atomic::{AtomicIsize, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use lextrail_capture::{CaptureTrace, TextCapture, result_label};
+#[cfg(debug_assertions)]
+use lextrail_capture::result_label;
+use lextrail_capture::{CaptureProgress, CaptureTrace, TextCapture};
 use lextrail_config::PopupMode;
 use tauri::window::Color;
 use tauri::{
@@ -98,7 +100,15 @@ fn platform_capture() -> Arc<dyn TextCapture> {
 
 /// Starts a lookup: records the foreground window and focus *before* the popup can
 /// change anything, then captures in the background while the popup gets ready.
-pub fn lookup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
+/// `pressed` is when the hotkey fired.
+///
+/// The capture thread starts before the popup is asked to show: on the first lookup that
+/// creates the window, which blocks this (main) thread for a while, and the capture runs
+/// alongside it instead of after it (R3-P3).
+pub fn lookup<R: Runtime>(app: &AppHandle<R>, pressed: Instant) -> tauri::Result<()> {
+    // Only the debug log uses it (`start +N ms`).
+    #[cfg(not(debug_assertions))]
+    let _ = pressed;
     let state = app.state::<PopupState>();
     let id = state.next_request.fetch_add(1, Ordering::SeqCst) + 1;
     if let Some(t) = &state.timings {
@@ -129,25 +139,27 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     );
 
     dispatch_request(app, request::Event::Started { id });
-    dispatch(app, Event::ShowRequested);
-
-    let timer_app = app.clone();
-    spawn("popup-delay", move || {
-        thread::sleep(request::LOADING_DELAY);
-        dispatch_request(&timer_app, request::Event::DelayElapsed { id });
-    });
 
     let capture_app = app.clone();
     let capture = Arc::clone(&state.capture);
     spawn("popup-capture", move || {
+        #[cfg(debug_assertions)]
+        let start = pressed.elapsed();
         let source_app = target
             .as_ref()
             .ok()
             .and_then(|t| t.window.as_ref())
             .and_then(|w| w.process_name.clone());
         debug_capture_delay();
+        let progress = |p: CaptureProgress| {
+            let event = match p {
+                CaptureProgress::WaitingForKeys => request::Event::WaitingForKeys { id },
+                CaptureProgress::KeysReleased => request::Event::KeysReleased { id },
+            };
+            dispatch_request(&capture_app, event);
+        };
         let (result, trace) = match target {
-            Ok(t) => capture.capture_traced(&t),
+            Ok(t) => capture.capture_traced(&t, &progress),
             Err(e) => (Err(e), CaptureTrace::default()),
         };
         if let Err(e) = &result {
@@ -156,13 +168,20 @@ pub fn lookup<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         // One line per capture, without the captured text: method, result, time and
         // where the element came from.
         #[cfg(debug_assertions)]
-        eprintln!("capture #{id}: {} | {trace}", result_label(&result));
+        eprintln!(
+            "capture #{id}: {} | start +{:.1}ms; {trace}",
+            result_label(&result),
+            start.as_secs_f64() * 1000.0
+        );
         if let Some(t) = &capture_app.state::<PopupState>().timings {
             t.capture(id, trace.total);
         }
         let content = Content::from_capture(result, source_app);
         dispatch_request(&capture_app, request::Event::Captured { id, content });
     });
+
+    // May create the window and block for a while (first lookup).
+    dispatch(app, Event::ShowRequested);
     Ok(())
 }
 
@@ -318,6 +337,14 @@ fn perform_request<R: Runtime>(app: &AppHandle<R>, action: &request::Action) -> 
             None => Ok(()),
         },
         &A::WatchForeground(on) => app.run_on_main_thread(move || foreground::set_watching(on)),
+        &A::StartTimer { id, timer, after } => {
+            let app = app.clone();
+            spawn("popup-timer", move || {
+                thread::sleep(after);
+                dispatch_request(&app, request::Event::TimerFired { id, timer });
+            });
+            Ok(())
+        }
         A::Hide => {
             dispatch(app, Event::HideRequested);
             Ok(())

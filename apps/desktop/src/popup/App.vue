@@ -31,6 +31,9 @@ onMounted(() => {
     <template v-if="content.kind === 'loading'">
       <p class="popup__hint">正在取词…</p>
     </template>
+    <template v-else-if="content.kind === 'release_keys'">
+      <p class="popup__hint">松开快捷键后取词…</p>
+    </template>
     <template v-else-if="content.kind === 'selection'">
       <header class="popup__header">{{ content.text }}</header>
       <p v-if="content.sentence" class="popup__sentence">{{ content.sentence }}</p>

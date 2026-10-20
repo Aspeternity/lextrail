@@ -14,6 +14,8 @@ pub enum Content {
     Empty,
     /// Capture is taking a while.
     Loading,
+    /// The clipboard fallback waits for the hotkey to be released (held for a while).
+    ReleaseKeys,
     Selection {
         text: String,
         sentence: Option<String>,
@@ -67,6 +69,7 @@ fn reason(u: Unavailable) -> &'static str {
         Unavailable::NoForegroundWindow => "no_foreground_window",
         Unavailable::Unsupported => "unsupported",
         Unavailable::TimedOut => "timed_out",
+        Unavailable::KeysHeld => "keys_held",
     }
 }
 
@@ -131,6 +134,12 @@ mod tests {
             Content::from_capture(Ok(CaptureOutcome::Unavailable(Unavailable::Elevated)), None),
             Content::Unavailable { reason: "elevated" }
         );
+        assert_eq!(
+            Content::from_capture(Ok(CaptureOutcome::Unavailable(Unavailable::KeysHeld)), None),
+            Content::Unavailable {
+                reason: "keys_held"
+            }
+        );
         let err = CaptureError::WorkerUnavailable("gone".into());
         assert!(matches!(
             Content::from_capture(Err(err), None),
@@ -145,6 +154,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Content::Loading).unwrap(),
             r#"{"kind":"loading"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&Content::ReleaseKeys).unwrap(),
+            r#"{"kind":"release_keys"}"#
         );
     }
 }

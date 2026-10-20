@@ -74,6 +74,8 @@ LexTrail 是一款常驻后台的 Windows 桌面翻译与词汇学习工具（�
   - `fix(popup): resume webview before show`
   - `docs(status): update after M1 capture work`
 - 每个功能在单独的分支上开发，完成后合并到 `main`；`main` 必须始终能构建通过。
+- **每次推送后**用 `gh run list --branch <分支> --limit 3` 查看 CI 结果；失败时先修复再做别的事，并在汇报里写明 CI 状态（通过 / 失败 / 还在运行）。**合并到 `main` 前必须确认 CI 通过**（项目负责人的要求）。
+- 本地 `pnpm check` 包含 release 配置的 clippy（CI 的 release 构建用 `-D warnings`，只在 debug 版使用的名字在 release 下会报"未使用"）。
 - **不要在提交说明和 PR 描述中添加任何 AI 署名**，例如 `Co-Authored-By: Claude …`、`Generated with Claude Code`、会话链接等（项目负责人的要求）。Claude Code 已通过 `.claude/settings.json` 关闭自动署名；其他 AI 工具请手动遵守。
 - 提交作者使用项目负责人在本机配置的 Git 身份，不要修改 `user.name` / `user.email`。
 

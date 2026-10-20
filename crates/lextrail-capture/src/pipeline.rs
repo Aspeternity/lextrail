@@ -4,8 +4,8 @@
 use std::time::Instant;
 
 use crate::{
-    CaptureError, CaptureOutcome, CaptureTarget, CaptureTrace, Integrity, StepContext, StepOutput,
-    StepTrace, Unavailable, result_label,
+    CaptureError, CaptureOutcome, CaptureTarget, CaptureTrace, Integrity, Progress, StepContext,
+    StepOutput, StepTrace, Unavailable, result_label,
 };
 
 /// One capture method (UI Automation, clipboard, ...). Each step enforces its own time
@@ -13,8 +13,14 @@ use crate::{
 pub trait CaptureStep: Send + Sync {
     fn name(&self) -> &'static str;
 
-    /// `context` holds what earlier steps learned (e.g. the focused element's class).
-    fn try_capture(&self, target: &CaptureTarget, context: &StepContext) -> StepOutput;
+    /// `context` holds what earlier steps learned (e.g. the focused element's class);
+    /// `progress` receives the step's [`crate::CaptureProgress`] reports.
+    fn try_capture(
+        &self,
+        target: &CaptureTarget,
+        context: &StepContext,
+        progress: Progress<'_>,
+    ) -> StepOutput;
 
     /// Whether to run even though an earlier step reported "no selection". By default
     /// "no selection" is final: re-checking a reliable answer only costs time (and, for
@@ -30,8 +36,13 @@ impl<T: CaptureStep + ?Sized> CaptureStep for std::sync::Arc<T> {
         (**self).name()
     }
 
-    fn try_capture(&self, target: &CaptureTarget, context: &StepContext) -> StepOutput {
-        (**self).try_capture(target, context)
+    fn try_capture(
+        &self,
+        target: &CaptureTarget,
+        context: &StepContext,
+        progress: Progress<'_>,
+    ) -> StepOutput {
+        (**self).try_capture(target, context, progress)
     }
 
     fn confirms_no_selection(&self, target: &CaptureTarget, context: &StepContext) -> bool {
@@ -50,7 +61,12 @@ impl<T: CaptureStep + ?Sized> CaptureStep for std::sync::Arc<T> {
 /// [`Unavailable::NoSelection`], later steps run only if they
 /// [confirm](CaptureStep::confirms_no_selection) it for this target. When no step captures
 /// anything, the result is the most useful of what they reported:
-/// `NoSelection` > `TimedOut` > an error > `Unsupported`.
+/// `NoSelection` > `KeysHeld` > `TimedOut` > an error > `Unsupported`.
+///
+/// Except: a confirming step that could not finish the check (`KeysHeld`, `TimedOut` or an
+/// error) wins over the unconfirmed `NoSelection` it was checking, because the user may
+/// well have selected text (R4-P2). A confirming step that declined to run (`Unsupported`,
+/// e.g. a huge clipboard) leaves the `NoSelection`: it is the only information there is.
 pub struct Pipeline {
     steps: Vec<Box<dyn CaptureStep>>,
     own_process_id: u32,
@@ -69,17 +85,19 @@ impl Pipeline {
     }
 
     pub fn run(&self, target: &CaptureTarget) -> Result<CaptureOutcome, CaptureError> {
-        self.run_traced(target).0
+        self.run_traced(target, &|_| {}).0
     }
 
-    /// [`Pipeline::run`] plus a [`CaptureTrace`] of the steps that ran.
+    /// [`Pipeline::run`] plus a [`CaptureTrace`] of the steps that ran; the steps report
+    /// progress to `progress`.
     pub fn run_traced(
         &self,
         target: &CaptureTarget,
+        progress: Progress<'_>,
     ) -> (Result<CaptureOutcome, CaptureError>, CaptureTrace) {
         let start = Instant::now();
         let mut trace = CaptureTrace::default();
-        let result = self.run_steps(target, &mut trace);
+        let result = self.run_steps(target, progress, &mut trace);
         trace.total = start.elapsed();
         (result, trace)
     }
@@ -87,6 +105,7 @@ impl Pipeline {
     fn run_steps(
         &self,
         target: &CaptureTarget,
+        progress: Progress<'_>,
         trace: &mut CaptureTrace,
     ) -> Result<CaptureOutcome, CaptureError> {
         let unavailable = |u| Ok(CaptureOutcome::Unavailable(u));
@@ -107,8 +126,10 @@ impl Pipeline {
             if context.no_selection && !step.confirms_no_selection(target, &context) {
                 continue;
             }
+            // This step runs to check an earlier, unconfirmed "no selection".
+            let confirming = context.no_selection;
             let start = Instant::now();
-            let output = step.try_capture(target, &context);
+            let output = step.try_capture(target, &context, progress);
             if output.focused_class.is_some() {
                 context.focused_class.clone_from(&output.focused_class);
             }
@@ -119,6 +140,7 @@ impl Pipeline {
                 element: output.element,
                 attempts: output.attempts,
                 note: output.note,
+                key_wait: output.key_wait,
             });
             match output.result {
                 Ok(CaptureOutcome::Captured(selection)) => {
@@ -129,9 +151,9 @@ impl Pipeline {
                 }
                 Ok(CaptureOutcome::Unavailable(u)) => {
                     context.no_selection |= u == Unavailable::NoSelection;
-                    keep_best(&mut best, Ok(u));
+                    keep_result(&mut best, Ok(u), confirming);
                 }
-                Err(e) => keep_best(&mut best, Err(e)),
+                Err(e) => keep_result(&mut best, Err(e), confirming),
             }
         }
         match best {
@@ -144,19 +166,29 @@ impl Pipeline {
 
 fn rank(result: &Result<Unavailable, CaptureError>) -> u8 {
     match result {
-        Ok(Unavailable::NoSelection) => 4,
+        Ok(Unavailable::NoSelection) => 5,
+        Ok(Unavailable::KeysHeld) => 4,
         Ok(Unavailable::TimedOut) => 3,
         Err(_) => 2,
         Ok(_) => 1,
     }
 }
 
-fn keep_best(
+/// Keeps the more useful result; see [`Pipeline`] for the order and for `confirming`.
+fn keep_result(
     best: &mut Option<Result<Unavailable, CaptureError>>,
     next: Result<Unavailable, CaptureError>,
+    confirming: bool,
 ) {
-    // Ties keep the earlier step's result.
-    if best.as_ref().is_none_or(|b| rank(&next) > rank(b)) {
+    let check_failed = matches!(
+        next,
+        Ok(Unavailable::KeysHeld) | Ok(Unavailable::TimedOut) | Err(_)
+    );
+    let unconfirmed = matches!(best, Some(Ok(Unavailable::NoSelection)));
+    // Otherwise ties keep the earlier step's result.
+    if (confirming && check_failed && unconfirmed)
+        || best.as_ref().is_none_or(|b| rank(&next) > rank(b))
+    {
         *best = Some(next);
     }
 }
@@ -179,7 +211,7 @@ mod tests {
             "fixed"
         }
 
-        fn try_capture(&self, _: &CaptureTarget, _: &StepContext) -> StepOutput {
+        fn try_capture(&self, _: &CaptureTarget, _: &StepContext, _: Progress<'_>) -> StepOutput {
             self.calls.fetch_add(1, Ordering::SeqCst);
             StepOutput {
                 element: Some(ElementSource::HwndFocus),
@@ -201,7 +233,12 @@ mod tests {
             "probe"
         }
 
-        fn try_capture(&self, _: &CaptureTarget, context: &StepContext) -> StepOutput {
+        fn try_capture(
+            &self,
+            _: &CaptureTarget,
+            context: &StepContext,
+            _: Progress<'_>,
+        ) -> StepOutput {
             *self.seen_class.lock().unwrap() = Some(context.focused_class.clone());
             StepOutput {
                 focused_class: self.focused_class.map(str::to_owned),
@@ -311,6 +348,14 @@ mod tests {
                 unavailable(TimedOut),
             ),
             (vec![error(), unavailable(TimedOut)], unavailable(TimedOut)),
+            (
+                vec![unavailable(TimedOut), unavailable(KeysHeld)],
+                unavailable(KeysHeld),
+            ),
+            (
+                vec![unavailable(Unsupported), unavailable(KeysHeld)],
+                unavailable(KeysHeld),
+            ),
             (vec![unavailable(Unsupported), error()], error()),
             (vec![unavailable(Unsupported)], unavailable(Unsupported)),
             (vec![], unavailable(Unsupported)),
@@ -373,7 +418,8 @@ mod tests {
                 calls: Arc::default(),
             }),
         ];
-        let (result, trace) = Pipeline::with_own_process_id(steps, 1).run_traced(&target());
+        let (result, trace) =
+            Pipeline::with_own_process_id(steps, 1).run_traced(&target(), &|_| {});
         assert_eq!(result, captured("secret text"));
         assert_eq!(trace.precheck, None);
         let labels: Vec<_> = trace
@@ -395,9 +441,31 @@ mod tests {
     }
 
     #[test]
+    fn trace_shows_the_key_wait() {
+        use std::time::Duration;
+        let trace = CaptureTrace {
+            steps: vec![StepTrace {
+                step: "clipboard",
+                result: "captured",
+                elapsed: Duration::from_micros(160_200),
+                element: None,
+                attempts: 1,
+                note: Some("ctrl_insert"),
+                key_wait: Some(Duration::from_micros(150_100)),
+            }],
+            precheck: None,
+            total: Duration::from_micros(160_300),
+        };
+        assert_eq!(
+            trace.to_string(),
+            "clipboard=captured 160.2ms keys=150.1ms [ctrl_insert]; total 160.3ms"
+        );
+    }
+
+    #[test]
     fn trace_records_prechecks() {
-        let (_, trace) =
-            Pipeline::with_own_process_id(vec![], 1).run_traced(&CaptureTarget::for_tests(None));
+        let (_, trace) = Pipeline::with_own_process_id(vec![], 1)
+            .run_traced(&CaptureTarget::for_tests(None), &|_| {});
         assert_eq!(trace.precheck, Some(Unavailable::NoForegroundWindow));
         assert!(trace.steps.is_empty());
         let line = trace.to_string();
@@ -443,6 +511,47 @@ mod tests {
         let steps: Vec<Box<dyn CaptureStep>> = vec![
             Box::new(probe(unavailable(Unavailable::NoSelection), false)),
             Box::new(probe(unavailable(Unavailable::NoSelection), true)),
+        ];
+        assert_eq!(
+            Pipeline::with_own_process_id(steps, 1).run(&target()),
+            unavailable(Unavailable::NoSelection)
+        );
+    }
+
+    #[test]
+    fn a_failed_check_wins_over_the_unconfirmed_no_selection() {
+        // R4-P2: UIA says "no selection" in VS Code, the clipboard check cannot copy
+        // because the hotkey is still held -> "release the hotkey", not "no selection".
+        let run = |check: Result<CaptureOutcome, CaptureError>| {
+            let steps: Vec<Box<dyn CaptureStep>> = vec![
+                Box::new(probe(unavailable(Unavailable::NoSelection), false)),
+                Box::new(probe(check, true)),
+            ];
+            Pipeline::with_own_process_id(steps, 1).run(&target())
+        };
+        assert_eq!(
+            run(unavailable(Unavailable::KeysHeld)),
+            unavailable(Unavailable::KeysHeld)
+        );
+        assert_eq!(
+            run(unavailable(Unavailable::TimedOut)),
+            unavailable(Unavailable::TimedOut)
+        );
+        assert!(run(error()).is_err());
+        // A check that declined to run leaves the "no selection".
+        assert_eq!(
+            run(unavailable(Unavailable::Unsupported)),
+            unavailable(Unavailable::NoSelection)
+        );
+    }
+
+    #[test]
+    fn without_a_check_no_selection_still_ranks_first() {
+        // Steps that run as plain fallbacks (not checking a "no selection") keep the
+        // usual order.
+        let steps: Vec<Box<dyn CaptureStep>> = vec![
+            Box::new(probe(unavailable(Unavailable::KeysHeld), false)),
+            Box::new(probe(unavailable(Unavailable::NoSelection), false)),
         ];
         assert_eq!(
             Pipeline::with_own_process_id(steps, 1).run(&target()),
