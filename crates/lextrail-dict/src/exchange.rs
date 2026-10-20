@@ -33,6 +33,19 @@ impl FormKind {
         })
     }
 
+    /// Chinese name for display: 过去式, 复数, ...
+    pub fn name_zh(self) -> &'static str {
+        match self {
+            Self::Past => "过去式",
+            Self::PastParticiple => "过去分词",
+            Self::PresentParticiple => "现在分词",
+            Self::ThirdPerson => "第三人称单数",
+            Self::Plural => "复数",
+            Self::Comparative => "比较级",
+            Self::Superlative => "最高级",
+        }
+    }
+
     /// The ECDICT code, also used in the dictionary file (`forms.kind`).
     pub fn code(self) -> &'static str {
         match self {

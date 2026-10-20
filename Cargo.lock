@@ -2105,6 +2105,7 @@ dependencies = [
 name = "lextrail-dict"
 version = "0.0.0"
 dependencies = [
+ "lextrail-core",
  "rusqlite",
  "tempfile",
  "thiserror 2.0.21",

@@ -42,6 +42,21 @@ pub struct Inflection {
     pub source: InflectionSource,
 }
 
+impl Inflection {
+    /// How the form relates to its base form, for display: `leave 的过去式、过去分词`,
+    /// `good 的比较级`; a phrase gives `give up 的变化形式`.
+    pub fn describe_zh(&self) -> String {
+        let mut kinds = self.kinds.clone();
+        kinds.sort();
+        kinds.dedup();
+        if kinds.is_empty() {
+            return format!("{} 的变化形式", self.lemma);
+        }
+        let names: Vec<&str> = kinds.iter().map(|k| k.name_zh()).collect();
+        format!("{} 的{}", self.lemma, names.join("、"))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InflectionSource {
     /// ECDICT's `exchange` data (the `forms` table).
@@ -52,6 +67,25 @@ pub enum InflectionSource {
     PhraseWords,
 }
 
+/// An entry in a lookup result, with its relation to the looked-up text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundEntry {
+    pub entry: Entry,
+    pub role: EntryRole,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EntryRole {
+    /// The looked-up word's own entry.
+    Query,
+    /// The looked-up word's own entry, which is also a form of another word: shown with
+    /// [`Inflection::describe_zh`], e.g. "left（leave 的过去式）", because the base form's
+    /// meaning is often the one meant (`found` is mostly "find" past tense, not "建立").
+    FormOf(Inflection),
+    /// The base form's entry.
+    Lemma,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LookupResult {
     /// The text as looked up, after normalization.
@@ -59,7 +93,8 @@ pub struct LookupResult {
     /// The text's own entry (if it says more than "past tense of ..."), then its base
     /// form's entry. A capitalized word with both a lowercase and a capitalized entry gives
     /// both, lowercase first: `March` is "三月" mid-sentence but "行军" at a sentence start.
-    pub entries: Vec<Entry>,
+    /// Ordering by context is left to the AI (M2, D019).
+    pub entries: Vec<FoundEntry>,
     pub inflection: Option<Inflection>,
 }
 
@@ -68,10 +103,35 @@ impl LookupResult {
     pub fn lemma(&self) -> &str {
         match &self.inflection {
             Some(i) => &i.lemma,
-            None => &self.entries[0].word,
+            None => &self.entries[0].entry.word,
         }
     }
 }
+
+/// Result of [`Dictionary::lookup_with_parts`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Found {
+    /// The text itself is in the dictionary (possibly through its base form).
+    Whole(LookupResult),
+    /// The text is a hyphenated compound the dictionary does not have; these are its parts
+    /// (shown under "词典没有整词，以下是各部分的释义").
+    Parts(PartsResult),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartsResult {
+    pub query: String,
+    /// Found parts, in order, without repeats and without function words.
+    pub parts: Vec<LookupResult>,
+    /// Parts that are not in the dictionary either.
+    pub not_found: Vec<String>,
+}
+
+/// Parts of a compound that get no entry of their own (`English-to-German`).
+const FUNCTION_WORDS: &[&str] = &[
+    "a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "nor", "of", "on",
+    "onto", "or", "per", "the", "to", "via", "vs", "with",
+];
 
 /// An open dictionary file, read-only. Not `Sync`: share it behind a mutex.
 #[derive(Debug)]
@@ -103,8 +163,10 @@ impl Dictionary {
         Ok(Self { conn })
     }
 
-    /// Looks up a word or phrase. `None` when neither it nor a base form is in the
-    /// dictionary.
+    /// Looks up a word or phrase as a whole. `None` when neither it nor a base form is in
+    /// the dictionary. This is the check for "is this a word" (e.g. joining a line-end
+    /// hyphen, `lextrail_core::text::resolve_line_end_hyphens`); never use
+    /// [`Dictionary::lookup_with_parts`] for that.
     pub fn lookup(&self, text: &str) -> Result<Option<LookupResult>, DictError> {
         let query = normalize_query(text);
         if query.is_empty() {
@@ -125,29 +187,69 @@ impl Dictionary {
             None => None,
         };
 
+        // A base form is only worth reporting when its entry is shown.
+        let lemma_entry = lemma_entry.filter(|l| !direct.iter().any(|d| same_word(d, l)));
+        let inflection = inflection.filter(|_| lemma_entry.is_some());
         let mut entries = Vec::new();
         if !note_only || lemma_entry.is_none() {
-            entries.extend(direct);
+            let role = match &inflection {
+                Some(i) => EntryRole::FormOf(i.clone()),
+                None => EntryRole::Query,
+            };
+            entries.extend(direct.into_iter().map(|entry| FoundEntry {
+                entry,
+                role: role.clone(),
+            }));
         }
-        if let Some(l) = lemma_entry
-            && !entries.iter().any(|e| e.word.eq_ignore_ascii_case(&l.word))
-        {
-            entries.push(l);
+        if let Some(entry) = lemma_entry {
+            entries.push(FoundEntry {
+                entry,
+                role: EntryRole::Lemma,
+            });
         }
         if entries.is_empty() {
             return Ok(None);
         }
-        // A base form is only worth reporting when its entry is shown.
-        let inflection = inflection.filter(|i| {
-            entries
-                .iter()
-                .any(|e| e.word.eq_ignore_ascii_case(&i.lemma))
-        });
         Ok(Some(LookupResult {
             query,
             entries,
             inflection,
         }))
+    }
+
+    /// Like [`Dictionary::lookup`], but a hyphenated compound that is not in the dictionary
+    /// is split, and its parts are looked up (skipping function words such as `to`).
+    /// `None` when no part is found either.
+    pub fn lookup_with_parts(&self, text: &str) -> Result<Option<Found>, DictError> {
+        if let Some(whole) = self.lookup(text)? {
+            return Ok(Some(Found::Whole(whole)));
+        }
+        let query = normalize_query(text);
+        if !query.contains('-') {
+            return Ok(None);
+        }
+        let mut seen: Vec<String> = Vec::new();
+        let mut parts = Vec::new();
+        let mut not_found = Vec::new();
+        for part in query.split('-').map(str::trim).filter(|p| !p.is_empty()) {
+            let lower = part.to_lowercase();
+            if FUNCTION_WORDS.contains(&lower.as_str()) || seen.contains(&lower) {
+                continue;
+            }
+            seen.push(lower);
+            match self.lookup(part)? {
+                Some(r) => parts.push(r),
+                None => not_found.push(part.to_owned()),
+            }
+        }
+        if parts.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(Found::Parts(PartsResult {
+            query,
+            parts,
+            not_found,
+        })))
     }
 
     /// The best entry for `word`; see [`Dictionary::entries_for`].
@@ -322,6 +424,10 @@ fn is_adjective(entry: &Entry) -> bool {
     })
 }
 
+fn same_word(a: &Entry, b: &Entry) -> bool {
+    a.word.eq_ignore_ascii_case(&b.word)
+}
+
 /// `March`: an uppercase first letter and lowercase letters after it.
 fn is_capitalized(word: &str) -> bool {
     let mut chars = word.chars();
@@ -395,6 +501,22 @@ mod tests {
         ("give", Some("giv"), Some(90), &[("v.", "给")]),
         ("give up", None, None, &[("", "放弃")]),
         ("study", Some("'stʌdi"), Some(600), &[("v.", "学习")]),
+        ("English", Some("'iŋgliʃ"), Some(700), &[("n.", "英语")]),
+        ("German", Some("'dʒə:mən"), Some(900), &[("n.", "德语")]),
+        ("self", Some("self"), Some(800), &[("n.", "自我")]),
+        (
+            "attention",
+            Some("ə'tenʃən"),
+            Some(650),
+            &[("n.", "注意力")],
+        ),
+        (
+            "computation",
+            Some("ˌkɒmpju'teiʃən"),
+            Some(5000),
+            &[("n.", "计算")],
+        ),
+        ("to", Some("tu:"), Some(2), &[("prep.", "到")]),
         ("large", Some("lɑ:dʒ"), Some(200), &[("a.", "大的")]),
         ("optimize", Some("'ɒptimaiz"), None, &[("vt.", "使最优化")]),
     ];
@@ -450,7 +572,11 @@ mod tests {
     }
 
     fn words(result: &LookupResult) -> Vec<&str> {
-        result.entries.iter().map(|e| e.word.as_str()).collect()
+        result
+            .entries
+            .iter()
+            .map(|e| e.entry.word.as_str())
+            .collect()
     }
 
     #[test]
@@ -461,8 +587,9 @@ mod tests {
         assert_eq!(words(&r), ["launch"]);
         assert_eq!(r.inflection, None);
         assert_eq!(r.lemma(), "launch");
-        assert_eq!(r.entries[0].tags, ["cet4", "cet6"]);
-        assert_eq!(r.entries[0].senses[1].text, "发动");
+        assert_eq!(r.entries[0].entry.tags, ["cet4", "cet6"]);
+        assert_eq!(r.entries[0].entry.senses[1].text, "发动");
+        assert_eq!(r.entries[0].role, EntryRole::Query);
         // Capitalized: the lowercase entry first, then the capitalized one (a name).
         assert_eq!(words(&dict.lookup("The").unwrap().unwrap()), ["the", "The"]);
         assert_eq!(words(&dict.lookup("THE").unwrap().unwrap()), ["the"]);
@@ -488,6 +615,11 @@ mod tests {
             })
         );
         assert_eq!(r.lemma(), "launch");
+        assert_eq!(r.entries[0].role, EntryRole::Lemma);
+        assert_eq!(
+            r.inflection.unwrap().describe_zh(),
+            "launch 的过去式、过去分词"
+        );
     }
 
     #[test]
@@ -497,6 +629,12 @@ mod tests {
         let r = dict.lookup("better").unwrap().unwrap();
         assert_eq!(words(&r), ["better", "good"]);
         assert_eq!(r.lemma(), "good");
+        // "better（good 的比较级）", then "good".
+        match &r.entries[0].role {
+            EntryRole::FormOf(i) => assert_eq!(i.describe_zh(), "good 的比较级"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(r.entries[1].role, EntryRole::Lemma);
         assert_eq!(r.inflection.unwrap().kinds, [FormKind::Comparative]);
     }
 
@@ -557,6 +695,71 @@ mod tests {
         assert_eq!(dict.lookup("take up").unwrap(), None);
         // Not a comparative: `optimize` has no adjective sense.
         assert_eq!(dict.lookup("optimizer").unwrap(), None);
+    }
+
+    #[test]
+    fn whole_compounds_are_not_split() {
+        let dir = tempfile::tempdir().unwrap();
+        let dict = fixture(dir.path());
+        // A word found as a whole never goes through the parts path.
+        assert!(matches!(
+            dict.lookup_with_parts("launch").unwrap(),
+            Some(Found::Whole(_))
+        ));
+        assert_eq!(dict.lookup_with_parts("tokenizer").unwrap(), None);
+    }
+
+    #[test]
+    fn missing_compounds_are_split_into_parts() {
+        let dir = tempfile::tempdir().unwrap();
+        let dict = fixture(dir.path());
+        // Not in the dictionary as a whole...
+        assert_eq!(dict.lookup("English-to-German").unwrap(), None);
+        // ...so its parts, without the function word `to`.
+        let Some(Found::Parts(p)) = dict.lookup_with_parts("English-to-German").unwrap() else {
+            panic!("expected parts");
+        };
+        assert_eq!(p.query, "English-to-German");
+        let parts: Vec<&str> = p.parts.iter().map(|r| words(r)[0]).collect();
+        assert_eq!(parts, ["English", "German"]);
+        assert!(p.not_found.is_empty());
+
+        // Repeated parts once; parts are lemmatized; unknown parts are listed.
+        let Some(Found::Parts(p)) = dict.lookup_with_parts("models-of-models-qux").unwrap() else {
+            panic!("expected parts");
+        };
+        assert_eq!(p.parts.len(), 1);
+        assert_eq!(p.parts[0].lemma(), "model");
+        assert_eq!(p.not_found, ["qux"]);
+
+        // No part found: nothing.
+        assert_eq!(dict.lookup_with_parts("foo-to-bar").unwrap(), None);
+        // Only function words: nothing.
+        assert_eq!(dict.lookup_with_parts("to-the").unwrap(), None);
+    }
+
+    #[test]
+    fn line_end_hyphens_join_only_whole_words() {
+        use lextrail_core::text::{LINE_END_HYPHEN, resolve_line_end_hyphens};
+        let dir = tempfile::tempdir().unwrap();
+        let dict = fixture(dir.path());
+        // The desktop's check: whole-word lookup only.
+        let is_word = |w: &str| dict.lookup(w).unwrap().is_some();
+        let m = LINE_END_HYPHEN;
+        // A hyphenation break is joined...
+        assert_eq!(
+            resolve_line_end_hyphens(&format!("sequential compu{m}tation of"), is_word),
+            "sequential computation of"
+        );
+        // ...a compound's hyphen is kept, although its parts are in the dictionary.
+        let kept = format!("English{m}to-German");
+        assert_eq!(resolve_line_end_hyphens(&kept, is_word), kept);
+        let kept = format!("self{m}attention");
+        assert_eq!(resolve_line_end_hyphens(&kept, is_word), kept);
+        assert!(matches!(
+            dict.lookup_with_parts("self-attention").unwrap(),
+            Some(Found::Parts(_))
+        ));
     }
 
     #[test]

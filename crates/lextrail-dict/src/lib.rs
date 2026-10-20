@@ -14,7 +14,8 @@ mod senses;
 mod suffix;
 
 pub use dictionary::{
-    DictError, Dictionary, Entry, Inflection, InflectionSource, LookupResult, normalize_query,
+    DictError, Dictionary, Entry, EntryRole, Found, FoundEntry, Inflection, InflectionSource,
+    LookupResult, PartsResult, normalize_query,
 };
 pub use exchange::{Exchange, FormKind, parse_exchange};
 pub use senses::{Sense, split_translation};

@@ -15,4 +15,5 @@ thiserror = "2"
 workspace = true
 
 [dev-dependencies]
+lextrail-core = { path = "../lextrail-core" }
 tempfile = "3"
