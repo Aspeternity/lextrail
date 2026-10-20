@@ -64,7 +64,11 @@ public static class LtKeys {
 
 Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
 $log = Join-Path $OutDir "stuck-keys-app.log"
+# Scratch settings and history, never the user's own (debug builds only).
+$env:LEXTRAIL_DEBUG_CONFIG_DIR = Join-Path $OutDir ("config-" + [guid]::NewGuid())
+$env:LEXTRAIL_DEBUG_DATA_DIR = Join-Path $OutDir ("data-" + [guid]::NewGuid())
 Start-Process $App -RedirectStandardError $log -WindowStyle Hidden
+Remove-Item Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR -ErrorAction SilentlyContinue
 Start-Sleep 4
 $form = @'
 Add-Type -AssemblyName System.Windows.Forms

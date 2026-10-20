@@ -15,6 +15,7 @@ lextrail-capture = { path = "../../../crates/lextrail-capture" }
 lextrail-config = { path = "../../../crates/lextrail-config" }
 lextrail-core = { path = "../../../crates/lextrail-core" }
 lextrail-dict = { path = "../../../crates/lextrail-dict" }
+lextrail-store = { path = "../../../crates/lextrail-store" }
 serde = { version = "1", features = ["derive"] }
 tauri = { version = "2.12", features = ["tray-icon"] }
 tauri-plugin-dialog = "2.8"

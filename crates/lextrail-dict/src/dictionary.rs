@@ -1027,6 +1027,45 @@ mod tests {
     }
 
     #[test]
+    fn look_up_gives_kind_and_lemma_for_the_history() {
+        use crate::view::LookupView;
+        use lextrail_core::lookup::LookupKind;
+        let dir = tempfile::tempdir().unwrap();
+        let dict = fixture(dir.path());
+        let look = |text: &str| {
+            let l = dict.look_up(text, LookupOptions::default()).unwrap();
+            (l.kind, l.lemma, l.view)
+        };
+        let (kind, lemma, view) = look("launched");
+        assert_eq!(
+            (kind, lemma.as_deref()),
+            (Some(LookupKind::Word), Some("launch"))
+        );
+        assert!(matches!(view, LookupView::Entries { .. }));
+        let (kind, lemma, _) = look("gave up");
+        assert_eq!(
+            (kind, lemma.as_deref()),
+            (Some(LookupKind::Phrase), Some("give up"))
+        );
+        // Found only as parts, not found, a sentence: no base form.
+        let (kind, lemma, view) = look("English-to-German");
+        assert_eq!((kind, lemma), (Some(LookupKind::Word), None));
+        assert!(matches!(view, LookupView::Parts { .. }));
+        let (kind, lemma, view) = look("tokenizer");
+        assert_eq!(
+            (kind, lemma, view),
+            (Some(LookupKind::Word), None, LookupView::NotFound)
+        );
+        let (kind, lemma, view) = look("We give up.");
+        assert_eq!(
+            (kind, lemma, view),
+            (Some(LookupKind::Sentence), None, LookupView::Sentence)
+        );
+        // Not recorded at all (D045).
+        assert_eq!(look("注意力"), (None, None, LookupView::NotEnglish));
+    }
+
+    #[test]
     fn base_form_query_uses_the_index() {
         let dir = tempfile::tempdir().unwrap();
         let dict = fixture(dir.path());

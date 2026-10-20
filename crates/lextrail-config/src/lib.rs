@@ -12,4 +12,6 @@ pub use file::{ConfigError, LoadOutcome, SettingsFile};
 #[cfg(windows)]
 pub use secrets::WindowsCredentialStore;
 pub use secrets::{MemorySecretStore, SecretError, SecretKey, SecretStore};
-pub use settings::{HotkeySettings, PopupMode, PopupSettings, SCHEMA_VERSION, Settings};
+pub use settings::{
+    HistorySettings, HotkeySettings, PopupMode, PopupSettings, SCHEMA_VERSION, Settings,
+};

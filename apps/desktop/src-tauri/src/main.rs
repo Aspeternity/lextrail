@@ -2,11 +2,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod dictionary;
+mod history;
 mod hotkey;
 mod keyboard;
 mod main_window;
 mod memory;
 mod notice;
+mod paths;
 mod popup;
 mod settings;
 mod tray;
@@ -26,7 +28,7 @@ fn main() {
             let handle = app.handle();
             tray::create(handle)?;
             let settings = settings::load(handle);
-            popup::init(handle, settings.popup.mode);
+            popup::init(handle, settings.popup.mode, settings.history.record);
             memory::watch({
                 let handle = handle.clone();
                 move || popup::on_low_memory(&handle)
