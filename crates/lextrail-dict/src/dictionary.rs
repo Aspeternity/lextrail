@@ -91,7 +91,8 @@ pub struct LookupResult {
     /// The text as looked up, after normalization.
     pub query: String,
     /// The text's own entry (if it says more than "past tense of ..."), then its base
-    /// form's entry. A word with entries in two cases (`March` / `march`) gives both: the
+    /// form's entry; the base form first when the text's entry has no exam tag, Collins
+    /// stars or Oxford mark (`improving`). A word with entries in two cases (`March` / `march`) gives both: the
     /// one in the selected text's exact case first, or the lowercase one first when the
     /// word starts a sentence ([`LookupOptions::sentence_start`]), where capitalization
     /// says nothing. Ordering by meaning in context is left to the AI (M2, D019).
@@ -236,10 +237,21 @@ impl Dictionary {
             }));
         }
         if let Some(entry) = lemma_entry {
-            entries.push(FoundEntry {
-                entry,
-                role: EntryRole::Lemma,
-            });
+            // The form's own entry comes first (`better`, `left`) unless nothing marks it
+            // as a common word: `improving` ("有启发的", no exam tag, no Collins stars) is
+            // mostly "improve" in running text (D044 supplement).
+            let at = if entries.iter().any(|f| is_marked(&f.entry)) {
+                entries.len()
+            } else {
+                0
+            };
+            entries.insert(
+                at,
+                FoundEntry {
+                    entry,
+                    role: EntryRole::Lemma,
+                },
+            );
         }
         if entries.is_empty() {
             return Ok(None);
@@ -252,7 +264,8 @@ impl Dictionary {
     }
 
     /// Like [`Dictionary::lookup`], but a hyphenated compound that is not in the dictionary
-    /// is split, and its parts are looked up (skipping function words such as `to`).
+    /// is split at hyphens and spaces, and its parts are looked up (skipping function words
+    /// such as `to`). Text without a hyphen is never split.
     /// `None` when no part is found either.
     pub fn lookup_with_parts(
         &self,
@@ -269,7 +282,9 @@ impl Dictionary {
         let mut seen: Vec<String> = Vec::new();
         let mut parts = Vec::new();
         let mut not_found = Vec::new();
-        for part in query.split('-').map(str::trim).filter(|p| !p.is_empty()) {
+        // Spaces separate parts too once the text is split: Edge's PDF viewer gives
+        // `English to-German` for a compound broken after its first hyphen.
+        for part in query.split(['-', ' ']).filter(|p| !p.is_empty()) {
             let lower = part.to_lowercase();
             if FUNCTION_WORDS.contains(&lower.as_str()) || seen.contains(&lower) {
                 continue;
@@ -509,6 +524,11 @@ fn same_word(a: &Entry, b: &Entry) -> bool {
     a.word.eq_ignore_ascii_case(&b.word)
 }
 
+/// Has an exam tag, Collins stars or the Oxford 3000 mark.
+fn is_marked(entry: &Entry) -> bool {
+    !entry.tags.is_empty() || entry.collins.is_some_and(|c| c > 0) || entry.oxford
+}
+
 /// `March`: an uppercase first letter and lowercase letters after it.
 fn is_capitalized(word: &str) -> bool {
     let mut chars = word.chars();
@@ -600,6 +620,20 @@ mod tests {
         ("to", Some("tu:"), Some(2), &[("prep.", "到")]),
         ("large", Some("lɑ:dʒ"), Some(200), &[("a.", "大的")]),
         ("optimize", Some("'ɒptimaiz"), None, &[("vt.", "使最优化")]),
+        ("improve", Some("im'pru:v"), Some(400), &[("v.", "改善")]),
+        (
+            "improving",
+            Some("im'pru:viŋ"),
+            None,
+            &[("a.", "有启发的；有教育意义的")],
+        ),
+    ];
+
+    /// Exam tags; entries not listed have none.
+    const TAGS: &[(&str, &str)] = &[
+        ("launch", "cet4 cet6"),
+        ("better", "zk gk cet4"),
+        ("improve", "cet4"),
     ];
 
     /// Headwords of the full ECDICT that the compact dictionary lacks.
@@ -610,6 +644,7 @@ mod tests {
         ("launched", "launch", "p"),
         ("better", "good", "r"),
         ("gave", "give", "p"),
+        ("improving", "improve", "i"),
     ];
 
     fn fixture(dir: &Path) -> Dictionary {
@@ -630,7 +665,7 @@ mod tests {
                     word,
                     phonetic,
                     frq,
-                    (*word == "launch").then_some("cet4 cet6")
+                    TAGS.iter().find(|(w, _)| w == word).map(|(_, t)| *t)
                 ],
             )
             .unwrap();
@@ -740,6 +775,53 @@ mod tests {
     }
 
     #[test]
+    fn unmarked_form_entry_comes_after_the_base_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let dict = fixture(dir.path());
+        // `improving` has its own entry but no exam tag, Collins stars or Oxford mark:
+        // the base form first, then the form with its relation.
+        let r = dict.lookup("improving").unwrap().unwrap();
+        assert_eq!(words(&r), ["improve", "improving"]);
+        assert_eq!(r.entries[0].role, EntryRole::Lemma);
+        match &r.entries[1].role {
+            EntryRole::FormOf(i) => assert_eq!(i.describe_zh(), "improve 的现在分词"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(r.lemma(), "improve");
+    }
+
+    #[test]
+    fn any_mark_counts() {
+        let plain = Entry {
+            word: "x".into(),
+            phonetic: None,
+            tags: vec![],
+            collins: None,
+            oxford: false,
+            bnc: None,
+            frq: None,
+            senses: vec![],
+        };
+        assert!(!is_marked(&plain));
+        assert!(!is_marked(&Entry {
+            collins: Some(0),
+            ..plain.clone()
+        }));
+        assert!(is_marked(&Entry {
+            collins: Some(1),
+            ..plain.clone()
+        }));
+        assert!(is_marked(&Entry {
+            oxford: true,
+            ..plain.clone()
+        }));
+        assert!(is_marked(&Entry {
+            tags: vec!["gre".into()],
+            ..plain
+        }));
+    }
+
+    #[test]
     fn suffix_rules_cover_forms_exchange_misses() {
         let dir = tempfile::tempdir().unwrap();
         let dict = fixture(dir.path());
@@ -843,6 +925,24 @@ mod tests {
         assert_eq!(p.parts.len(), 1);
         assert_eq!(p.parts[0].lemma(), "model");
         assert_eq!(p.not_found, ["qux"]);
+
+        // Edge's PDF viewer: `English to-German`, the first hyphen lost at a line end.
+        // Once split, spaces separate parts too.
+        let Some(Found::Parts(p)) = dict
+            .lookup_with_parts("English to-German", LookupOptions::default())
+            .unwrap()
+        else {
+            panic!("expected parts");
+        };
+        let parts: Vec<&str> = p.parts.iter().map(|r| words(r)[0]).collect();
+        assert_eq!(parts, ["English", "German"]);
+        assert!(p.not_found.is_empty());
+        // Without a hyphen a phrase is never split.
+        assert_eq!(
+            dict.lookup_with_parts("English to German", LookupOptions::default())
+                .unwrap(),
+            None
+        );
 
         // No part found: nothing.
         assert_eq!(
