@@ -136,14 +136,28 @@ fn start_double_copy<R: Runtime>(app: &AppHandle<R>) {
     let handle = app.clone();
     let started = lextrail_capture::DoubleCopyListener::start(move |double| {
         let pressed = Instant::now();
-        // Without the text; tools/e2e/popup-e2e.ps1 counts these.
-        #[cfg(debug_assertions)]
-        eprintln!("double copy: lookup triggered");
         let app = handle.clone();
-        let _ = handle.run_on_main_thread(move || {
-            if let Err(e) = lookup(&app, pressed, Trigger::DoubleCopy(double)) {
-                eprintln!("cannot start lookup: {e}");
+        // Checking the word against the dictionary may open it: off the listener thread.
+        spawn("double-copy-check", move || {
+            if let DoubleCopy::Text(text) = &double {
+                let state = app.state::<PopupState>();
+                let wanted = content::double_copy_wanted(text, state.dictionary.get().as_ref());
+                if let Err(_why) = wanted {
+                    // Quietly ignored: no popup, no history; the reason only, never the text.
+                    #[cfg(debug_assertions)]
+                    eprintln!("double copy: ignored: {_why} @{}", debug_clock());
+                    return;
+                }
             }
+            // Without the text; tools/e2e/popup-e2e.ps1 counts these.
+            #[cfg(debug_assertions)]
+            eprintln!("double copy: lookup triggered @{}", debug_clock());
+            let main = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Err(e) = lookup(&main, pressed, Trigger::DoubleCopy(double)) {
+                    eprintln!("cannot start lookup: {e}");
+                }
+            });
         });
     });
     match started {
@@ -312,6 +326,7 @@ pub fn lookup<R: Runtime>(
         } else {
             Content::from_capture(result, false, None)
         };
+        let content = content.with_double_copy_on(state.double_copy.get().is_some());
         #[cfg(debug_assertions)]
         let content = content.with_source_app(source_app);
         // One line per capture, without the captured text: method, result, time and
@@ -430,7 +445,34 @@ pub fn popup_ready<R: Runtime>(app: AppHandle<R>, error: Option<String>) {
 /// Called by the popup page when the user presses Esc.
 #[tauri::command]
 pub fn hide_popup<R: Runtime>(app: AppHandle<R>) {
+    #[cfg(debug_assertions)]
+    eprintln!("popup: Esc @{}", debug_clock());
     hide(&app);
+}
+
+/// Debug builds: milliseconds since the first call, to line up popup, request and
+/// clipboard events in the log.
+#[cfg(debug_assertions)]
+fn debug_clock() -> String {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let start = *START.get_or_init(Instant::now);
+    format!("{:.1}ms", start.elapsed().as_secs_f64() * 1000.0)
+}
+
+/// Debug builds: the foreground window's process and class, for focus changes in the log.
+#[cfg(all(debug_assertions, windows))]
+fn debug_foreground<R: Runtime>(app: &AppHandle<R>) -> String {
+    match app.state::<PopupState>().capture.snapshot() {
+        Ok(target) => match target.window {
+            Some(w) => format!(
+                "{} {}",
+                w.process_name.as_deref().unwrap_or("?"),
+                w.class_name.as_deref().unwrap_or("?")
+            ),
+            None => "none".into(),
+        },
+        Err(e) => format!("unknown ({e})"),
+    }
 }
 
 fn dispatch<R: Runtime>(app: &AppHandle<R>, event: Event) {
@@ -438,7 +480,7 @@ fn dispatch<R: Runtime>(app: &AppHandle<R>, event: Event) {
     // Decide under the lock, act outside it: actions may call back into `dispatch`.
     let actions = lock(&state.lifecycle).handle(event, state.mode);
     #[cfg(debug_assertions)]
-    eprintln!("popup: {event:?} -> {actions:?}");
+    eprintln!("popup: {event:?} -> {actions:?} @{}", debug_clock());
     for action in actions {
         if let Err(e) = perform(app, action) {
             eprintln!("popup action {action:?} failed: {e}");
@@ -507,7 +549,7 @@ fn dispatch_request<R: Runtime>(app: &AppHandle<R>, event: request::Event) {
     let label = format!("{event:?}");
     let actions = lock(&state.request).handle(event);
     #[cfg(debug_assertions)]
-    eprintln!("request: {label} -> {actions:?}");
+    eprintln!("request: {label} -> {actions:?} @{}", debug_clock());
     for action in actions {
         if let Err(e) = perform_request(app, &action) {
             eprintln!("request action {action:?} failed: {e}");
@@ -570,6 +612,15 @@ fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         move |event| {
             // Clicking anywhere outside the focused popup moves focus away. WebView2 also
             // moves focus around while a hidden window initialises; ignore that.
+            #[cfg(all(debug_assertions, windows))]
+            if let WindowEvent::Focused(focused) = event {
+                eprintln!(
+                    "popup: focused = {focused}, visible = {}; foreground: {} @{}",
+                    window.is_visible().unwrap_or(false),
+                    debug_foreground(window.app_handle()),
+                    debug_clock()
+                );
+            }
             if let WindowEvent::Focused(false) = event
                 && window.is_visible().unwrap_or(false)
             {

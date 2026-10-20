@@ -36,6 +36,20 @@ pub enum LookupView {
     NotEnglish,
 }
 
+impl LookupView {
+    /// The kind of result, as serialized (`"entries"`, `"not_found"`, ...): for logs that
+    /// must not show the looked-up text.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Entries { .. } => "entries",
+            Self::Parts { .. } => "parts",
+            Self::NotFound => "not_found",
+            Self::Sentence => "sentence",
+            Self::NotEnglish => "not_english",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EntryView {
     pub word: String,
