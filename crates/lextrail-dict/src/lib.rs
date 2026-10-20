@@ -1,12 +1,21 @@
 //! LexTrail dictionary access, lemmatization and sense splitting.
 //!
+//! [`Dictionary`] reads the dictionary file and looks words and phrases up, reducing
+//! inflected forms to their base form (ECDICT `exchange` data, then suffix rules).
+//!
 //! The dictionary file is built from ECDICT by `tools/dict-builder` (D038); its format is
 //! in `docs/specs/m1-dict.md`. The parsing helpers here are shared with the builder so the
 //! rules exist only once.
 
+mod dictionary;
 mod exchange;
+pub mod schema;
 mod senses;
+mod suffix;
 
+pub use dictionary::{
+    DictError, Dictionary, Entry, Inflection, InflectionSource, LookupResult, normalize_query,
+};
 pub use exchange::{Exchange, FormKind, parse_exchange};
 pub use senses::{Sense, split_translation};
 

@@ -9,6 +9,7 @@ use std::io::Read;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use lextrail_dict::schema::{INDEXES, SCHEMA};
 use lextrail_dict::{FORMAT_VERSION, normalize_phonetic, parse_exchange, split_translation};
 use rusqlite::{Connection, params};
 
@@ -33,43 +34,6 @@ pub struct Stats {
     /// Selected rows whose translation split into no senses (dropped).
     pub empty: usize,
 }
-
-const SCHEMA: &str = "
-    CREATE TABLE meta (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-    ) STRICT, WITHOUT ROWID;
-    CREATE TABLE entries (
-        id INTEGER PRIMARY KEY,
-        word TEXT NOT NULL,
-        phonetic TEXT,
-        collins INTEGER,
-        oxford INTEGER,
-        bnc INTEGER,
-        frq INTEGER,
-        tags TEXT
-    ) STRICT;
-    CREATE TABLE senses (
-        entry_id INTEGER NOT NULL REFERENCES entries (id),
-        ord INTEGER NOT NULL,
-        pos TEXT,
-        domain TEXT,
-        text TEXT NOT NULL,
-        PRIMARY KEY (entry_id, ord)
-    ) STRICT, WITHOUT ROWID;
-    CREATE TABLE forms (
-        form TEXT NOT NULL,
-        lemma TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        PRIMARY KEY (form, lemma, kind)
-    ) STRICT, WITHOUT ROWID;
-";
-
-/// Created after the data is in, which is faster and gives a compact index.
-const INDEXES: &str = "
-    CREATE INDEX entries_word ON entries (word COLLATE NOCASE);
-    CREATE INDEX forms_form ON forms (form COLLATE NOCASE);
-";
 
 /// Reads ECDICT CSV from `csv` and writes the dictionary to `out`, replacing it. The file
 /// is written next to `out` first and renamed when complete.
