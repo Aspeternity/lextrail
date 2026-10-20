@@ -609,26 +609,85 @@ fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 
     window.on_window_event({
         let window = window.clone();
+        // When the webview was last given the focus (see below): at most once in a while,
+        // so two windows can never hand the focus back and forth.
+        let refocused = Mutex::new(None::<Instant>);
         move |event| {
-            // Clicking anywhere outside the focused popup moves focus away. WebView2 also
-            // moves focus around while a hidden window initialises; ignore that.
             #[cfg(all(debug_assertions, windows))]
             if let WindowEvent::Focused(focused) = event {
                 eprintln!(
-                    "popup: focused = {focused}, visible = {}; foreground: {} @{}",
+                    "popup: focused = {focused}, visible = {}; foreground: {}; focus inside: {} @{}",
                     window.is_visible().unwrap_or(false),
                     debug_foreground(window.app_handle()),
+                    focus_inside(&window),
                     debug_clock()
                 );
             }
+            // A click outside makes another window the foreground: hide. The window losing
+            // the focus alone is not enough: wry hands it on to the WebView2 page (so the
+            // page gets Esc), and undoing AttachThreadInput (activation's fallback) can
+            // leave it outside the popup although the popup stays in front. WebView2 also
+            // moves focus around while a hidden window initialises; ignore that.
             if let WindowEvent::Focused(false) = event
                 && window.is_visible().unwrap_or(false)
             {
-                hide(window.app_handle());
+                if !still_in_front(&window) {
+                    hide(window.app_handle());
+                } else if !focus_inside(&window) {
+                    let mut last = lock(&refocused);
+                    if last.is_none_or(|at| at.elapsed() > REFOCUS_INTERVAL) {
+                        *last = Some(Instant::now());
+                        #[cfg(debug_assertions)]
+                        eprintln!("popup: in front without the focus; focusing the page");
+                        let _ = AsRef::<tauri::Webview<R>>::as_ref(&window).set_focus();
+                    }
+                }
             }
         }
     });
     Ok(())
+}
+
+/// See the popup's focus handling in [`create`].
+const REFOCUS_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Whether the popup is still the foreground window.
+#[cfg(windows)]
+fn still_in_front<R: Runtime>(window: &WebviewWindow<R>) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    // SAFETY: plain Win32 call.
+    window
+        .hwnd()
+        .is_ok_and(|hwnd| unsafe { GetForegroundWindow() } == hwnd)
+}
+
+#[cfg(not(windows))]
+fn still_in_front<R: Runtime>(_window: &WebviewWindow<R>) -> bool {
+    false
+}
+
+/// Whether the foreground thread's keyboard focus is the popup or one of its child
+/// windows (the WebView2 page lives in child windows of another process).
+#[cfg(windows)]
+fn focus_inside<R: Runtime>(window: &WebviewWindow<R>) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GUITHREADINFO, GetGUIThreadInfo, IsChild};
+    let Ok(popup) = window.hwnd() else {
+        return false;
+    };
+    let mut info = GUITHREADINFO {
+        cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: plain Win32 calls; thread 0 is the foreground thread.
+    unsafe {
+        GetGUIThreadInfo(0, &mut info).is_ok()
+            && (info.hwndFocus == popup || IsChild(popup, info.hwndFocus).as_bool())
+    }
+}
+
+#[cfg(not(windows))]
+fn focus_inside<R: Runtime>(_window: &WebviewWindow<R>) -> bool {
+    true
 }
 
 /// Shows the popup without taking focus from the window being read.

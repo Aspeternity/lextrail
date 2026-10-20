@@ -27,9 +27,16 @@ pub fn bring_to_front(hwnd: windows::Win32::Foundation::HWND) -> Activation {
         GetForegroundWindow, GetWindowThreadProcessId, IsHungAppWindow, SetForegroundWindow,
     };
 
+    // Debug builds only: LEXTRAIL_DEBUG_FORCE_ATTACH=1 skips the plain call, so tests can
+    // check the fallback (it is what runs after a click outside closed the last popup).
+    #[cfg(debug_assertions)]
+    let force_attach = std::env::var_os("LEXTRAIL_DEBUG_FORCE_ATTACH").is_some();
+    #[cfg(not(debug_assertions))]
+    let force_attach = false;
+
     // SAFETY: plain Win32 calls; the attachment is always undone below.
     unsafe {
-        if SetForegroundWindow(hwnd).as_bool() {
+        if !force_attach && SetForegroundWindow(hwnd).as_bool() {
             return Activation::Direct;
         }
         let foreground = GetForegroundWindow();
