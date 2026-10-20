@@ -3,7 +3,7 @@
 > 每次开发结束前更新本文件（见 `AGENTS.md` 的"结束流程"）。
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
-**最后更新**：2026-10-20（取词部分验收、合并到 main；词典：dict-builder 和查询 / 词形还原完成）
+**最后更新**：2026-10-20（取词部分验收；词典 dict-builder、查询与词形还原完成；均已合并到 main）
 **当前阶段**：M1 · 取词与词典（进行中）。取词部分（UIA + 剪贴板兜底 + 悬浮窗焦点）已完成；R3 发现的问题 R3-P1 至 R3-P4 已修复（分支 `fix/r3-hotkey-and-clipboard`）。R4 中发现的悬浮窗挂起后卡死（R4-P1）已修复，重做的 R4 全部通过；又发现 VS Code 中按住快捷键超过 3 秒提示不对（R4-P2），已修复；R4-1 至 R4-12 全部通过，**取词部分验收**，分支合并到 `main`。词典：`tools/dict-builder` 已在分支 `feat/dict-builder` 完成（D044），等本分支合并后把 `main` 合进去，再做 `lextrail-dict`。
 
 ---
@@ -56,7 +56,7 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
   - **R4-P1**（挂起后查词卡死）：Tauri 在主线程上调用 `with_webview` 时，回调执行期间持有 webview 的 `window_id` 锁，回调里再 `emit_to` 就会主线程自己等自己（已用内存转储确认）。规则：`with_webview` 回调里不调用应用代码（`popup/webview.rs` 模块注释）。回归测试：`popup-e2e.ps1 -PauseMs 7000 -ResumeDelayMs 300`。
   - **R4-P2**：剪贴板确认没能完成时，不采用未经确认的"没有选中"（D043 补充）。
   - **CI**：2026-10-16 至 10-20 所有分支的 CI 都因 release 构建的"未使用"警告失败，已修复；`pnpm check` 现在包含 release 配置的 clippy；AGENTS.md 要求每次推送后查看 CI。
-- 分支 `feat/dict-builder`（已合入 `main`，还没有合并回 `main`）：`tools/dict-builder` 已完成（D044）；`lextrail-dict` 的查询和词形还原已完成（`Dictionary::lookup`，规则见 `docs/specs/m1-dict.md` 第 8 节）；Attention Is All You Need 覆盖率检查结果见第 9 节（查不到 219 个不同的词，大多是人名、缩写、公式变量；普通词汇缺口如 convolutional、softmax、hyperparameters）。按项目负责人的意见（D044 补充）：变形词条标出和原形的关系（"better（good 的比较级）"）；带连字符的复合词整体查不到时拆开查（`lookup_with_parts`），合并行末连字符只用整词查询。普通词汇缺口在完整版 ECDICT 中的情况见第 9 节，等项目负责人决定是否调整收录规则。
+- 词典（分支 `feat/dict-builder`，2026-10-20 已合并到 `main`，`main` 的 CI 通过）：`tools/dict-builder` 已完成（D044）；`lextrail-dict` 的查询和词形还原已完成（`Dictionary::lookup`，规则见 `docs/specs/m1-dict.md` 第 8 节）；Attention Is All You Need 覆盖率检查结果见第 9 节（查不到 219 个不同的词，大多是人名、缩写、公式变量；普通词汇缺口如 convolutional、softmax、hyperparameters）。按项目负责人的意见（D044 补充）：变形词条标出和原形的关系（"better（good 的比较级）"）；带连字符的复合词整体查不到时拆开查（`lookup_with_parts`），合并行末连字符只用整词查询。普通词汇缺口在完整版 ECDICT 中的情况见第 9 节，等项目负责人决定是否调整收录规则。
 
 ## 下一步
 
