@@ -44,6 +44,11 @@ body,
   overflow: visible;
 }
 
+/* While the window takes a new height after unfolding: no scrollbar for a moment. */
+.popup--resizing .popup__body {
+  overflow-y: hidden;
+}
+
 /* A thin scrollbar whose track starts below the close button. (No standard
    `scrollbar-width` here: it would disable these styles.) */
 .popup__body::-webkit-scrollbar {

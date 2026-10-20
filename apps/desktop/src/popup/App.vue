@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue';
 import { UNAVAILABLE_MESSAGES, type Content } from './content';
 import DictResult from './DictResult.vue';
-import { call, subscribe } from './ipc';
+import { call, callAndWait, subscribe } from './ipc';
 import { naturalHeight } from './measure';
 
 const content = ref<Content>({ kind: 'empty' });
@@ -17,10 +17,41 @@ const unavailable = computed(() =>
 
 // Once the new content is laid out (before it is painted), its height goes to Rust, which
 // sizes and places the window before showing it (D046 supplement).
-async function reportHeight(command: 'popup_measured' | 'popup_resize', seq?: number) {
+async function reportHeight(seq: number) {
   await nextTick();
   if (root.value) {
-    call(command, { seq, height: naturalHeight(root.value) });
+    call('popup_measured', { seq, height: naturalHeight(root.value) });
+  }
+}
+
+/** Resolves on the window's next resize, or after `ms` when it does not change size. */
+function nextResize(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      window.removeEventListener('resize', done);
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    window.addEventListener('resize', done);
+  });
+}
+
+// A section was unfolded or folded. Until the window has its new height the body shows
+// no scrollbar: otherwise the taller content overflows the old height for a moment, the
+// scrollbar narrows the text and it re-wraps, then all of it jumps back (seen in R8).
+async function onToggled() {
+  const el = root.value;
+  if (!el) {
+    return;
+  }
+  el.classList.add('popup--resizing');
+  try {
+    await nextTick();
+    await callAndWait('popup_resize', { height: naturalHeight(el) });
+    await nextResize(100);
+  } finally {
+    el.classList.remove('popup--resizing');
   }
 }
 
@@ -28,7 +59,7 @@ onMounted(() => {
   void subscribe((next, seq) => {
     content.value = next;
     lookupId.value += 1;
-    void reportHeight('popup_measured', seq);
+    void reportHeight(seq);
   });
 });
 </script>
@@ -58,7 +89,7 @@ onMounted(() => {
           :key="lookupId"
           :text="content.text"
           :view="content.lookup"
-          @toggled="reportHeight('popup_resize')"
+          @toggled="onToggled"
         />
       </div>
       <footer class="popup__footer">

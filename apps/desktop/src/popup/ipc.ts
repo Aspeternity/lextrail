@@ -9,6 +9,15 @@ export function call(command: string, args?: Record<string, unknown>): void {
   });
 }
 
+/** Calls a Rust command and waits for it to return; failures are logged. */
+export async function callAndWait(command: string, args?: Record<string, unknown>): Promise<void> {
+  try {
+    await invoke(command, args);
+  } catch (error: unknown) {
+    console.error(`[popup] invoke ${command} failed:`, error);
+  }
+}
+
 /**
  * Subscribes to content events, then tells Rust the page is ready so the window may be
  * shown. A failed subscription is reported to Rust (and logged), and the window is still
