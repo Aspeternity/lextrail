@@ -71,7 +71,7 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
   - **第三阶段进行中**：长度限制（`double_copy::check_text`，3 个新单元测试）；`popup-e2e.ps1` 加 `-Chrome`、`-ExpectIgnored`，并检查 debug 版悬浮窗显示"来自 msedge.exe"；管理员窗口提示加回连按用法（R1-9）；手动测试清单 R6 已写。模拟按键实测（项目负责人同意后运行）：Edge + 快捷键 2/2 通过，debug 版仍显示"来自 msedge.exe"；Chrome 无痕窗口连按 2/2 不触发（复制带 `CanIncludeInClipboardHistory` = 0）；Chrome 普通窗口连按 2/2 触发（对照）。设置说明已按实测写（spec 第四节）。
   - **R6（真实键盘，2026-10-21）**：14 项通过；R6-4 改预期；R6-10 发现密码管理器里可见的密码会被查词（R6-P1）；另发现悬浮窗闪退（R6-P2）。修复（都已提交）：连按只查词典里的单个词或带空格的文字（D012 补充，`content::double_copy_wanted`）；按前台窗口判断"点了外面"、焦点不在悬浮窗里时交给 WebView2 页面、Esc 后把前台交回原窗口（D042 补充，R6-P2 至 R6-P4）；钩子装好后就记录真实按键，修好快捷键后左 Ctrl 偶尔卡住（D014 补充，R6-P5）；开关打开时管理员窗口提示去掉"（需先在设置中打开）"；debug 日志不再打印取到的文字（`Content` 的 `Debug` 只打印长度和结果类型），`popup:` / `request:` 日志带时间戳和焦点变化时的前台窗口。
   - 自动检查（模拟按键）：`popup-e2e.ps1 -ForceAttach -CloseBy Esc|Click|ClickThenEsc` 全部通过；`stuck-keys.ps1` 120 次 0 卡住。R6 的测试数据目录（含项目负责人的真实密码）已删除、未读取；`%TEMP%\lextrail-r6-on.log` 里可能有取到的文字（旧版 debug 日志），已建议项目负责人删除。
-  - 下一步：项目负责人用真实键盘测 R7（`m1-capture-manual-tests.md`，由 AI 启动程序、读日志）；通过且 CI 通过后合并到 `main`。以后需要日志的真实键盘测试，由 AI 启动程序、读日志，项目负责人只按键、报现象。
+  - **R7 全部通过（2026-10-21）**，连按两次 Ctrl+C 验收；`%TEMP%\lextrail-r6-on.log` 和 R7 等测试临时目录已删除。CI 通过后合并到 `main`。以后需要日志的真实键盘测试，由 AI 启动程序、读日志，项目负责人只按键、报现象。
 
 ## 下一步
 
