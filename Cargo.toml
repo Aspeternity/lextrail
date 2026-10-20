@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/desktop/src-tauri", "tools/bench"]
+members = ["crates/*", "apps/desktop/src-tauri", "tools/bench", "tools/dict-builder"]
 
 [workspace.package]
 version = "0.0.0"
