@@ -3,8 +3,8 @@
 > 每次开发结束前更新本文件（见 `AGENTS.md` 的"结束流程"）。
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
-**最后更新**：2026-10-20（R4 除 R4-P2 外全部通过；R4-P2 已修复，等 R4-12 复测）
-**当前阶段**：M1 · 取词与词典（进行中）。取词部分（UIA + 剪贴板兜底 + 悬浮窗焦点）已完成；R3 发现的问题 R3-P1 至 R3-P4 已修复（分支 `fix/r3-hotkey-and-clipboard`）。R4 中发现的悬浮窗挂起后卡死（R4-P1）已修复，重做的 R4 全部通过；又发现 VS Code 中按住快捷键超过 3 秒提示不对（R4-P2），已修复，**等项目负责人复测 R4-12**，通过后合并到 `main`。词典：`tools/dict-builder` 已在分支 `feat/dict-builder` 完成（D044），等本分支合并后把 `main` 合进去，再做 `lextrail-dict`。
+**最后更新**：2026-10-20（R4 全部通过，取词部分验收；合并到 main）
+**当前阶段**：M1 · 取词与词典（进行中）。取词部分（UIA + 剪贴板兜底 + 悬浮窗焦点）已完成；R3 发现的问题 R3-P1 至 R3-P4 已修复（分支 `fix/r3-hotkey-and-clipboard`）。R4 中发现的悬浮窗挂起后卡死（R4-P1）已修复，重做的 R4 全部通过；又发现 VS Code 中按住快捷键超过 3 秒提示不对（R4-P2），已修复；R4-1 至 R4-12 全部通过，**取词部分验收**，分支合并到 `main`。词典：`tools/dict-builder` 已在分支 `feat/dict-builder` 完成（D044），等本分支合并后把 `main` 合进去，再做 `lextrail-dict`。
 
 ---
 
@@ -52,17 +52,16 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
 
 ## 正在进行
 
-- 分支 `fix/r3-hotkey-and-clipboard`：R3-P1 至 R3-P4、R4-P1、R4-P2 已修复并推送，**还没有合并到 `main`**：等 R4-12 通过、CI 通过后合并。R4-1 至 R4-11 已全部通过（项目负责人 + AI 模拟按键，2026-10-20）。
-  - **R4-P2**：UIA 的"没有选中"需要剪贴板确认时，确认步骤因按着键得到 `keys_held`，却按优先级采用了未经确认的 `no_selection`。修复：确认没有完成（`KeysHeld`、`TimedOut`、出错）时采用确认步骤的结果；确认主动不运行（`Unsupported`）时仍报"没有选中文字"（D043 补充，`TimedOut` / 出错 / `Unsupported` 的取舍待项目负责人确认）。
-  - **R4-P1**（详见 `docs/specs/m1-capture-manual-tests.md` 第四轮问题）：Tauri 在主线程上调用 `with_webview` 时，回调执行期间持有 webview 的 `window_id` 锁；`resume_then` 在回调里调用了 `then()`，`emit_to` 再拿这把锁，主线程自己等自己。修复：`with_webview` 回调里不再调用应用代码，后续动作都在新线程上执行（规则写在 `popup/webview.rs` 模块注释里）。用 `popup-e2e.ps1 -PauseMs 7000 -ResumeDelayMs 300` 修复前稳定复现、修复后通过。
-  - 卡死内存转储已用 WinDbg（cdb）确认：主线程在 `with_webview` 中持有 webview 的 `window_id` 锁，又在 `emit_to` → `eval_script` 中等待同一把锁（同一个 `Arc`，锁状态"已持有且有等待者"）。分析方法：在同一路径检出出问题的提交、构建 debug 版取得 pdb，cdb 加 `.symopt+ 0x40` 加载。
-  - **CI 修复**：从 2026-10-16 的 `38771443044` 起，所有分支的 CI 都在 Windows 的 `tauri build` 步骤失败：release 构建里 `result_label`、`pressed` 只在 debug 日志中使用，CI 的 `RUSTFLAGS=-D warnings` 把"未使用"当作错误。本地 `pnpm check` 只跑 debug 版 clippy，所以没发现。已修复（`2b129fe`），并在 `pnpm lint` 中加入 release 配置的 clippy。`main` 和 `feat/dict-builder` 在本分支合并前仍会失败。
-- 分支 `feat/dict-builder`：`tools/dict-builder` 已完成并推送（D044），等上面的分支合并后再把 `main` 合进去。
+- 取词部分已验收（R1 至 R4 全部通过，2026-10-20），分支 `fix/r3-hotkey-and-clipboard` 合并到 `main`。这一轮修复的要点（详见 `docs/specs/m1-capture-manual-tests.md` 第三、四轮问题）：
+  - **R4-P1**（挂起后查词卡死）：Tauri 在主线程上调用 `with_webview` 时，回调执行期间持有 webview 的 `window_id` 锁，回调里再 `emit_to` 就会主线程自己等自己（已用内存转储确认）。规则：`with_webview` 回调里不调用应用代码（`popup/webview.rs` 模块注释）。回归测试：`popup-e2e.ps1 -PauseMs 7000 -ResumeDelayMs 300`。
+  - **R4-P2**：剪贴板确认没能完成时，不采用未经确认的"没有选中"（D043 补充）。
+  - **CI**：2026-10-16 至 10-20 所有分支的 CI 都因 release 构建的"未使用"警告失败，已修复；`pnpm check` 现在包含 release 配置的 clippy；AGENTS.md 要求每次推送后查看 CI。
+- 分支 `feat/dict-builder`：`tools/dict-builder` 已完成（D044）；下一步把 `main` 合进去，继续 `lextrail-dict`。
 
 ## 下一步
 
-1. **项目负责人复测 R4-12**（VS Code 编辑器、Chrome 刚打开 PDF 时按住快捷键超过 3 秒），用分支 `fix/r3-hotkey-and-clipboard` 的构建；通过后确认 CI 通过、合并到 `main`，再确认 `main` 的 CI 通过，取词部分验收。
-2. 然后把 `main` 合进 `feat/dict-builder`，继续 `lextrail-dict`（查询、词形还原、输入分类）；词形还原完成后用 1706.03762v7（Attention Is All You Need）全文做覆盖率检查，把查不到的词列给项目负责人（项目负责人的要求）。
+1. 把 `main` 合进 `feat/dict-builder`，确认 CI 通过后继续 `lextrail-dict`（查询、词形还原）；词形还原完成后用 1706.03762v7（Attention Is All You Need）全文做覆盖率检查，把查不到的词列给项目负责人（项目负责人的要求）。
+2. `lextrail-dict` 的输入分类（单词 / 短语 / 句子）。
 3. 之后按 `ROADMAP.md` 继续 M1：连按两次 Ctrl+C（实现 `capture_context`，完成后把这个用法加回提示文字，R1-9）→ 悬浮窗显示词典结果 → 行末连字符接入词典（用 `transduc-tion` 验证）→ 查询历史接入桌面端 → 快捷键设置界面。
 4. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。
 5. 悬浮窗加入词典结果后重测性能预算（M1 任务）。
