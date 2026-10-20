@@ -10,6 +10,7 @@
 //! explains to the user; [`CaptureError`] means something is broken and is logged.
 
 mod clipboard_rules;
+mod double_copy;
 mod pipeline;
 mod text_offsets;
 #[cfg(windows)]
@@ -19,6 +20,9 @@ use std::fmt;
 use std::ops::Range;
 use std::time::Duration;
 
+pub use double_copy::{
+    CopiedContent, DoubleCopy, DoubleCopyDetector, MAX_GAP, OWN_COPY_GRACE, OWN_COPY_MAX, SAME_COPY,
+};
 pub use lextrail_core::lookup::CaptureMethod;
 pub use pipeline::{CaptureStep, Pipeline};
 pub use text_offsets::utf16_range_to_utf8;

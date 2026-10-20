@@ -3,7 +3,7 @@
 > 每次开发结束前更新本文件（见 `AGENTS.md` 的"结束流程"）。
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
-**最后更新**：2026-10-20（`feat/lookup-history` CI 通过，已合并到 `main`；文档修正；下一步在新分支做连按两次 Ctrl+C）
+**最后更新**：2026-10-21（连按两次 Ctrl+C 第一阶段完成，分支 `feat/double-copy`）
 **当前阶段**：M1 · 取词与词典（进行中）。取词（UIA + 剪贴板兜底 + 悬浮窗焦点）经 R1–R4 手动测试验收；词典（`tools/dict-builder`、`lextrail-dict`、悬浮窗词典结果）完成，R5 通过；查询历史已接入桌面端。都已合并到 `main`。M1 剩下：连按两次 Ctrl+C、快捷键设置界面、前端测试等（见 `ROADMAP.md`）。
 
 ---
@@ -29,7 +29,7 @@ M0 全部完成（路线 A 已确认，D036）。M1 已完成：
 
 代码现状（详见各文件）：
 - `crates/lextrail-core`：HLC（`Hlc`、`HlcClock`、可注入的 `Clock`）；`lookup`（`LookupKind`、`CaptureMethod`、`normalize_text`、30 秒去重）；`text`（见上，另有 `join_unmarked_line_breaks`、`starts_sentence`）。48 个测试
-- `crates/lextrail-capture`（D041、D043）：`TextCapture`（`snapshot` / `capture` / `capture_traced` / `capture_context`，最后一个目前返回 `None`，做连按两次 Ctrl+C 时实现）；`Pipeline` 按顺序运行各步骤，步骤间用 `StepContext` 传递信息，UIA 的"没有选中"默认就是最终结果；`clipboard_rules.rs`（剪贴板兜底的规则，与平台无关）；`windows/`：`window.rs`（快照）、`uia.rs`（UIA 步骤）、`clipboard.rs`（剪贴板步骤）。33 个测试，其中 `clipboard_round_trip` 默认忽略（会改动真实剪贴板，需要时用 `cargo test -p lextrail-capture -- --ignored clipboard_round_trip`）。`examples/capture_probe.rs`（手动测试真实窗口）、`examples/uia_dump.rs`（打印原始 UIA 数据）。`capture_traced` 接收进度回调（`CaptureProgress`：等松开快捷键 / 已松开），步骤结果带 `key_wait`
+- `crates/lextrail-capture`（D041、D043）：`TextCapture`（`snapshot` / `capture` / `capture_traced` / `capture_context`，最后一个目前返回 `None`，第二阶段实现）；`Pipeline` 按顺序运行各步骤，步骤间用 `StepContext` 传递信息，UIA 的"没有选中"默认就是最终结果；`clipboard_rules.rs`（剪贴板兜底的规则，与平台无关）；`double_copy.rs`（连按两次 Ctrl+C 的判定，与平台无关）；`windows/`：`window.rs`（快照）、`uia.rs`（UIA 步骤）、`clipboard.rs`（剪贴板步骤）。45 个测试，其中 `clipboard_round_trip` 默认忽略（会改动真实剪贴板，需要时用 `cargo test -p lextrail-capture -- --ignored clipboard_round_trip`）。`examples/capture_probe.rs`（手动测试真实窗口）、`examples/uia_dump.rs`（打印原始 UIA 数据）。`capture_traced` 接收进度回调（`CaptureProgress`：等松开快捷键 / 已松开），步骤结果带 `key_wait`
 - `crates/lextrail-store`（D037、D040）：SQLite、`user_version` 迁移、`meta` / `lookups` 表、`record_lookup` 等。20 个测试
 - `crates/lextrail-config`（D035）：设置文件与凭据管理器；`[history] record`（"不记录查询历史"开关）。17 个测试
 - `apps/desktop/src-tauri`：托盘、单实例、主窗口（占位）、设置、全局快捷键（`hotkey.rs` + `keyboard.rs` 屏蔽键与防卡键钩子，10 个测试）、悬浮窗（`popup/`：`lifecycle.rs` 窗口生命周期 20 个测试，`request.rs` 一次查词 15 个测试，`activation.rs` 获取焦点，`foreground.rs` 前台窗口监视，`content.rs` 内容事件，`placement.rs` 位置，`timing.rs` bench 计时）。悬浮窗页面先订阅内容事件再调用 `popup_ready`，之后才显示；权限在 `capabilities/popup.json`（只有 `core:event:allow-listen`）。共 77 个测试
@@ -58,11 +58,15 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
 
 ## 正在进行
 
-- 无。下一步在新分支上做连按两次 Ctrl+C。
+- **连按两次 Ctrl+C**（分支 `feat/double-copy`，spec `docs/specs/m1-double-copy.md`，D012 补充）：
+  - 第一阶段完成：spec；`lextrail-capture::double_copy`（`DoubleCopyDetector`：50 ms 内算同一次复制、50–500 ms 算连按、两次必须是相同文字、VS Code 整行复制算"没有选中"、自己取词期间到写回后 300 ms 的更新忽略），11 个单元测试。
+  - 终端实测（spec 第四节）：Windows Terminal、VS Code 终端里第一次 Ctrl+C 复制并清除选区，第二次中断 `ping -t`，剪贴板没有第二次更新——终端里永远不会触发，还会中断程序。
+  - spec 里两条"待确认"：带 `ExcludeClipboardContentFromMonitorProcessing` 标记（密码管理器）的更新忽略；LexTrail 自己的窗口在前台时忽略。开关位置 `[hotkeys] double_ctrl_c`。
+  - 下一步：第二阶段（Windows 剪贴板监听、`capture_context`、桌面端接入）。
 
 ## 下一步
 
-1. 连按两次 Ctrl+C（D012，默认关闭），新分支，分三个阶段提交，每个阶段更新本文件：① spec + 连按判定逻辑和单元测试；② Windows 剪贴板监听和 `capture_context`；③ e2e 和文档。完成后把这个用法加回提示文字（R1-9）。之后做快捷键设置界面。
+1. 连按两次 Ctrl+C（D012，默认关闭），分支 `feat/double-copy`，分三个阶段提交，每个阶段更新本文件：① spec + 连按判定逻辑和单元测试（已完成）；② Windows 剪贴板监听和 `capture_context`；③ e2e 和文档。完成后把这个用法加回提示文字（R1-9）。之后做快捷键设置界面。
 2. 查询历史的界面（列表、删除）不在 M1；"不记录查询历史"的界面开关随快捷键设置界面一起做。
 
 待跟进（已在 ROADMAP 中，或在此记录）：
