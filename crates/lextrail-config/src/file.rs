@@ -3,6 +3,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::settings::{SCHEMA_VERSION, Settings};
 
@@ -11,7 +12,8 @@ const CORRUPT_SUFFIX: &str = "corrupt";
 const TMP_SUFFIX: &str = "tmp";
 
 const HEADER: &str = "\
-# LexTrail settings. Restart LexTrail after editing this file by hand.
+# LexTrail settings. LexTrail rewrites this file when you change a setting in its
+# settings window; comments are not kept. Restart LexTrail after editing it by hand.
 # API keys and sync tokens are NOT stored here; they live in the system credential manager.
 
 ";
@@ -26,6 +28,8 @@ pub enum ConfigError {
     },
     #[error("failed to serialize settings: {0}")]
     Serialize(#[from] toml::ser::Error),
+    #[error("settings file {path} was changed outside LexTrail since it was last read")]
+    ChangedOnDisk { path: PathBuf },
     #[error(
         "settings file was written by a newer LexTrail (schema {found}, this build supports \
          {SCHEMA_VERSION}); refusing to overwrite it"
@@ -57,6 +61,11 @@ impl LoadOutcome {
         }
     }
 }
+
+/// The file's last-modified time and length, used to notice hand edits made while the app
+/// runs. `None`: the file does not exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileStamp(Option<(SystemTime, u64)>);
 
 /// The settings file inside the app's config directory.
 #[derive(Debug, Clone)]
@@ -97,6 +106,35 @@ impl SettingsFile {
                 Ok(LoadOutcome::Recovered { settings, backup })
             }
         }
+    }
+
+    /// The file's current stamp. Take it right after [`load`](Self::load) or a save.
+    pub fn stamp(&self) -> Result<FileStamp, ConfigError> {
+        match fs::metadata(&self.path) {
+            Ok(meta) => {
+                let modified = meta.modified().map_err(|e| self.io_error(e))?;
+                Ok(FileStamp(Some((modified, meta.len()))))
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(FileStamp(None)),
+            Err(e) => Err(self.io_error(e)),
+        }
+    }
+
+    /// Saves only if the file still has the stamp `expected` (nobody edited or deleted it
+    /// since); returns the new stamp. Otherwise nothing is written and the error is
+    /// [`ConfigError::ChangedOnDisk`].
+    pub fn save_if_unchanged(
+        &self,
+        settings: &Settings,
+        expected: FileStamp,
+    ) -> Result<FileStamp, ConfigError> {
+        if self.stamp()? != expected {
+            return Err(ConfigError::ChangedOnDisk {
+                path: self.path.clone(),
+            });
+        }
+        self.save(settings)?;
+        self.stamp()
     }
 
     /// Writes the settings atomically (temp file + rename), creating the directory if needed.
@@ -141,6 +179,60 @@ mod tests {
         // A nested directory checks that missing parents are created.
         let file = SettingsFile::in_dir(dir.path().join("app"));
         (dir, file)
+    }
+
+    #[test]
+    fn save_if_unchanged_writes_when_untouched() {
+        let (_dir, file) = temp_file();
+        file.load().unwrap();
+        let stamp = file.stamp().unwrap();
+        let mut settings = Settings::default();
+        settings.history.record = false;
+        let new_stamp = file.save_if_unchanged(&settings, stamp).unwrap();
+        assert_eq!(new_stamp, file.stamp().unwrap());
+        assert_eq!(file.load().unwrap().into_settings(), settings);
+        // The returned stamp allows the next save.
+        settings.history.record = true;
+        file.save_if_unchanged(&settings, new_stamp).unwrap();
+    }
+
+    #[test]
+    fn save_if_unchanged_refuses_after_a_hand_edit() {
+        let (_dir, file) = temp_file();
+        file.load().unwrap();
+        let stamp = file.stamp().unwrap();
+        let edited = "version = 1
+[hotkeys]
+lookup = \"F8\"
+";
+        fs::write(file.path(), edited).unwrap();
+        // Same second on coarse clocks: the length differs anyway, but make sure.
+        let later = SystemTime::now() + std::time::Duration::from_secs(5);
+        fs::File::options()
+            .write(true)
+            .open(file.path())
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        let err = file
+            .save_if_unchanged(&Settings::default(), stamp)
+            .unwrap_err();
+        assert!(matches!(err, ConfigError::ChangedOnDisk { .. }), "{err}");
+        assert_eq!(fs::read_to_string(file.path()).unwrap(), edited);
+    }
+
+    #[test]
+    fn save_if_unchanged_refuses_after_deletion() {
+        let (_dir, file) = temp_file();
+        file.load().unwrap();
+        let stamp = file.stamp().unwrap();
+        fs::remove_file(file.path()).unwrap();
+        let err = file
+            .save_if_unchanged(&Settings::default(), stamp)
+            .unwrap_err();
+        assert!(matches!(err, ConfigError::ChangedOnDisk { .. }), "{err}");
+        assert!(!file.path().exists());
+        assert_eq!(file.stamp().unwrap(), FileStamp(None));
     }
 
     #[test]
