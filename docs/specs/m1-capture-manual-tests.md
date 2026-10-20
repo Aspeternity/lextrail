@@ -185,6 +185,9 @@
 | R4-8 | D014 补充 | 在记事本里**快速连按快捷键 20 次**（每次看到悬浮窗就按 Esc），然后在记事本里打几个字母 | 打出来的是字母（Ctrl 没有卡住，没有触发 Ctrl+字母的快捷键）；日志中如有 `released first`，记下次数 | |
 | R4-9 | R3-7 | VS Code 集成终端中运行 `ping -t 127.0.0.1`，什么都不选，按快捷键 | 显示"没有选中文字"；ping 继续运行，没有被中断 | ✅（AI 模拟按键，2026-10-20，debug 版，单独的 VS Code 测试配置）悬浮窗显示"没有选中文字"（截图 + UIA 读回）；`uia=no_selection 54.9ms x2; clipboard=no_selection 511.2ms keys=101.2ms [clipboard_unchanged]`；前后截图对比 ping 持续输出，没有统计行或 `^C`，ping 进程仍在；剪贴板保持 |
 | R4-10 | 回归 | Edge 网页（1.1）、Word（3.1）、conhost 选词（R3-8）各查一次 | 与之前相同 | ✅（AI 模拟按键，2026-10-20，debug 版，真实鼠标双击选词）Edge 网页：launch + 句子，`uia=captured 56.3ms x2`；Word：arrived + 句子，`uia=captured 21.2ms`，查词后选区保留、没有 KeyTips；conhost：address，`clipboard=captured 155.7ms keys=138.0ms [ctrl_insert]`，命令行没有多余字符，剪贴板保持。三项都截图核对，日志里没有 `released first` |
+| R4-11 | R4-P1 | 悬浮窗挂起后查词：每次查完按 Esc，**等 6 秒以上**（悬浮窗挂起，debug 日志 `SuspendFinished { suspended: true }`）再查下一次；Word、记事本各 5 次 | 每次都显示结果并获得焦点；之后快捷键、托盘仍有响应（R4-P1 中第 3 次查词后程序卡死） | |
+
+AI 用模拟按键做的 R4-P1 回归检查（2026-10-20，debug 版，修复后）：`popup-e2e.ps1 -Lookups 3 -PauseMs 7000 -ResumeDelayMs 300`（挂起后恢复，并用 `LEXTRAIL_DEBUG_RESUME_DELAY_MS` 让 Resume 变慢，使取词结果先于 `WindowReady` 到达）——**修复前第 2 次查词卡死**（`responds=False`，日志停在 `WindowReady -> [SetContent, ShowInactive, Activate]`，与 R4-P1 相同），修复后 3 次全部通过；另外 `-PauseMs 7000`（网页）、`-Pdf -HoldMs 200 -PauseMs 7000`、默认连续 3 次，以及 Word 中挂起后连查 3 次，全部通过，悬浮窗内容用 UIA 读回、截图核对。
 
 AI 已用模拟按键做过的自动检查（2026-10-17，debug 版）：`popup-e2e.ps1` 网页、`-Pdf`、`-Pdf -HoldMs 200`（3 次，均未出现"正在取词…"）、`-Pdf -HoldMs 2000`（按住期间显示"松开快捷键后取词…"，截图核对）、`-Pdf -HoldMs 3600`（显示"请松开快捷键后再试"，截图核对）全部通过；`stuck-keys.ps1` 120 次按键没有修饰键卡住，其中 1 次触发了"先松开后补发"的竞争并已补发松开。模拟按键不能代替 R4-1 至 R4-4、R4-8 的真实键盘测试。
 
@@ -220,6 +223,12 @@ AI 已用模拟按键做过的自动检查（2026-10-17，debug 版）：`popup-
 | R3-P2（中） | 走剪贴板的程序（Edge PDF、VS Code）中按住 Ctrl+Alt 超过约 0.6 秒：`clipboard=timed_out 604ms [modifiers_held]`，提示"取词超时 / 程序响应较慢"，原因不对，松手后也不补取（走 UIA 的程序按住也能取词） | 已修复：等待改为最多 3 秒，超过时结果为 `keys_held`，提示"请松开快捷键后再试"（D043 补充）。待 R4-6 复测 |
 | R3-P3（待查） | 两轮 debug 测试中，启动后第一次取词的剪贴板步骤只用约 10 ms（如 `uia=unsupported 12.4ms; clipboard=captured 12.5ms; total 25.0ms`），之后每次 150–210 ms（在等松开修饰键，已用实验确认）。怀疑第一次没等修饰键 | 原因：第一次查词时创建悬浮窗在快捷键线程上同步阻塞，取词线程在那之后才启动，用户已经松手，所以几乎不用等（复制本身是正确的 Ctrl+C，否则 Edge PDF 不会复制成功）。已改为先启动取词线程（D042 补充）；日志加了 `start +N ms` 和 `keys=N ms`。待 R4-4、R4-5 复测 |
 | R3-P4（观察） | 走剪贴板时每次都要等松开修饰键（约 150–200 ms），所以都会先闪一下"正在取词…"再出结果（release 版确认） | 已修复：约 100 ms 的计时在松开快捷键时重新开始；按住超过约 1 秒显示"松开快捷键后取词…"（D042 补充）。待 R4-6、R4-7 复测 |
+
+### 第四轮发现的问题
+
+| 编号 | 问题 | 处理 |
+|---|---|---|
+| R4-P1（严重） | debug 版 `b4ba367`：悬浮窗挂起后在 Word 中查词，悬浮窗没有出现，之后快捷键、托盘都无响应（其他程序正常）。日志停在 `request: WindowReady -> [SetContent(...), ShowInactive, Activate]`。原因：R3-P3 改为先启动取词后，恢复路径上第一次出现"取词结果先于 `WindowReady`"的顺序（UIA 7.9 ms 比 Resume 快）。`webview::resume_then` 在 `window.with_webview` 的回调里同步调用 `then()`，于是 `WindowReady` 返回的动作都在回调里执行；Tauri 在主线程上调用 `with_webview` 时，回调执行期间一直持有该 webview 的 `window_id` 锁，而第一个动作 `SetContent`（`emit_to` → `eval_script`）要再拿同一把锁，主线程自己等自己。用临时日志确认卡在 `SetContent` 内部；锁的位置见 `tauri-runtime-wry` 2.12.2 `with_webview` / `eval_script` | 已修复：`with_webview` 回调里不再调用任何应用代码，`resume_then` 的 `then` 和 `suspend` 的完成通知都改到新线程上、回调返回之后执行（`popup/webview.rs` 模块注释写明了这条规则）。新增 debug 开关 `LEXTRAIL_DEBUG_RESUME_DELAY_MS` 和 `popup-e2e.ps1 -PauseMs / -ResumeDelayMs`（每次查词后检查 UI 线程是否响应），修复前稳定复现、修复后通过。待 R4-11 及重做的 R4 复测 |
 
 记录，暂不处理：
 - Word 中什么都不选时偶发一次 `uia=timed_out 193.7ms`，随后剪贴板兜底给出 `no_selection [clipboard_unchanged]`，共 598 ms；之后重测 3 次都是 3.6–5.5 ms，未复现。

@@ -3,8 +3,8 @@
 > 每次开发结束前更新本文件（见 `AGENTS.md` 的"结束流程"）。
 > 只保留**当前**状态；已完成的历史以 `ROADMAP.md` 的勾选和 `git log` 为准。
 
-**最后更新**：2026-10-17（R3 问题已修复，等 R4）
-**当前阶段**：M1 · 取词与词典（进行中）。取词部分（UIA + 剪贴板兜底 + 悬浮窗焦点）已完成；R3 发现的问题 R3-P1 至 R3-P4 已修复（分支 `fix/r3-hotkey-and-clipboard`），**等项目负责人做第四轮复测（R4）**；词典部分尚未开始。
+**最后更新**：2026-10-20（R4 中发现卡死 R4-P1，已修复，等重做 R4）
+**当前阶段**：M1 · 取词与词典（进行中）。取词部分（UIA + 剪贴板兜底 + 悬浮窗焦点）已完成；R3 发现的问题 R3-P1 至 R3-P4 已修复（分支 `fix/r3-hotkey-and-clipboard`）。R4 中发现**悬浮窗挂起后查词会卡死（R4-P1，严重）**，已在同一分支修复，**等项目负责人从头重做 R4 的手动部分**。词典：`tools/dict-builder` 已在分支 `feat/dict-builder` 完成（D044），等本分支合并后把 `main` 合进去，再做 `lextrail-dict`。
 
 ---
 
@@ -52,14 +52,18 @@ debug 版开关（只在 debug 构建中有效，用法见手动测试清单第 
 
 ## 正在进行
 
-- 无。R3-P1 至 R3-P4 已在分支 `fix/r3-hotkey-and-clipboard` 上完成并推送，**还没有合并到 `main`**：等 R4 通过后合并。
+- 分支 `fix/r3-hotkey-and-clipboard`：R3-P1 至 R3-P4 和 R4-P1 已修复并推送，**还没有合并到 `main`**：等 R4 通过后合并。
+  - **R4-P1**（详见 `docs/specs/m1-capture-manual-tests.md` 第四轮问题）：Tauri 在主线程上调用 `with_webview` 时，回调执行期间持有 webview 的 `window_id` 锁；`resume_then` 在回调里调用了 `then()`，`emit_to` 再拿这把锁，主线程自己等自己。修复：`with_webview` 回调里不再调用应用代码，后续动作都在新线程上执行（规则写在 `popup/webview.rs` 模块注释里）。用 `popup-e2e.ps1 -PauseMs 7000 -ResumeDelayMs 300` 修复前稳定复现、修复后通过。
+  - 项目负责人提供的卡死内存转储还没有用调试器看过（本机没有 cdb / WinDbg）；结论来自临时日志（卡在 `SetContent` 内部）和 Tauri 源码。
+- 分支 `feat/dict-builder`：`tools/dict-builder` 已完成并推送（D044），等上面的分支合并后再把 `main` 合进去。
 
 ## 下一步
 
-1. **项目负责人做第四轮复测（R4-1 至 R4-10）**，用分支 `fix/r3-hotkey-and-clipboard` 的构建；通过后合并到 `main`，取词部分验收。
-2. 然后按 `ROADMAP.md` 继续 M1：连按两次 Ctrl+C（实现 `capture_context`，完成后把这个用法加回提示文字，R1-9）→ `tools/dict-builder`（D038）→ `lextrail-dict` → 悬浮窗显示词典结果 → 行末连字符接入词典（用 `transduc-tion` 验证）→ 查询历史接入桌面端 → 快捷键设置界面。
-3. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。
-4. 悬浮窗加入词典结果后重测性能预算（M1 任务）。
+1. **项目负责人从头重做 R4 的手动部分（R4-1、R4-2、R4-3、R4-4、R4-6、R4-7、R4-8）和新增的 R4-11**，用分支 `fix/r3-hotkey-and-clipboard` 的构建；通过后合并到 `main`，取词部分验收。
+2. 然后把 `main` 合进 `feat/dict-builder`，继续 `lextrail-dict`（查询、词形还原、输入分类）；词形还原完成后用 1706.03762v7（Attention Is All You Need）全文做覆盖率检查，把查不到的词列给项目负责人（项目负责人的要求）。
+3. 之后按 `ROADMAP.md` 继续 M1：连按两次 Ctrl+C（实现 `capture_context`，完成后把这个用法加回提示文字，R1-9）→ 悬浮窗显示词典结果 → 行末连字符接入词典（用 `transduc-tion` 验证）→ 查询历史接入桌面端 → 快捷键设置界面。
+4. 桌面端接入查询历史时注意（项目负责人的要求）：第一次查询时用 `app_local_data_dir()` 按需打开 `Store`；`Store` 放进 `Mutex`，在后台线程读写；打开失败时用 `notice::warn` 提示，之后不记录历史、照常查词；加上"不记录查询历史"开关。
+5. 悬浮窗加入词典结果后重测性能预算（M1 任务）。
 
 待跟进（已在 ROADMAP 中，或在此记录）：
 - **B3 没有结论**：VS Code 编辑器里 UIA 报告"没有选中"的原因未确认。把 `editor.accessibilitySupport` 设为 `on` 后，我用模拟按键没能做出选区（屏幕阅读器模式下 Ctrl+Shift+→ 的行为不同），这次测试不成立。剪贴板兜底已覆盖 VS Code，且不改用户设置，所以暂不继续；如需要，可在 `on` 模式下手动选词，用 `capture_probe` 看 UIA 是否取到。
