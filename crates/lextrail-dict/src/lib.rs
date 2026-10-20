@@ -13,18 +13,19 @@ mod exchange;
 pub mod schema;
 mod senses;
 mod suffix;
+pub mod view;
 
 pub use classify::{Classification, MAX_PHRASE_WORDS, classify};
 pub use dictionary::{
     DictError, Dictionary, Entry, EntryRole, Found, FoundEntry, Inflection, InflectionSource,
-    LookupResult, PartsResult, normalize_query,
+    LookupOptions, LookupResult, PartsResult, normalize_query,
 };
 pub use exchange::{Exchange, FormKind, parse_exchange};
 pub use senses::{Sense, split_translation};
 
 /// Version of the dictionary file format (`meta.format_version`). A reader refuses files
 /// with a version it does not know.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 /// File name of the built-in compact dictionary.
 pub const CORE_DICT_FILE_NAME: &str = "lextrail-dict-core.db";

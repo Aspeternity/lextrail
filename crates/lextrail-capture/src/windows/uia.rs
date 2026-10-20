@@ -385,7 +385,7 @@ fn read_selection(
             // Chrome's PDF viewer reports correct ranges and does not match this check
             // (its document root has no name), so it keeps using UIA (R1-6).
             *used = Some(source);
-            *note = Some("chromium_pdf");
+            *note = Some(crate::NOTE_CHROMIUM_PDF);
             return Ok(CaptureOutcome::Unavailable(Unavailable::Unsupported));
         }
         if !found_pattern {

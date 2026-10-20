@@ -33,6 +33,8 @@ pub struct Stats {
     pub forms: usize,
     /// Selected rows whose translation split into no senses (dropped).
     pub empty: usize,
+    /// Headwords of the whole source that are not entries (`extra_words`).
+    pub extra_words: usize,
 }
 
 /// Reads ECDICT CSV from `csv` and writes the dictionary to `out`, replacing it. The file
@@ -139,6 +141,15 @@ fn write(csv: impl Read, path: &Path, provenance: &Provenance) -> Result<Stats> 
         }
     }
     stats.forms = forms.len();
+
+    let extra = collect_extra_words(&rows, &included);
+    {
+        let mut insert = tx.prepare("INSERT INTO extra_words (word) VALUES (?1)")?;
+        for word in &extra {
+            insert.execute([word])?;
+        }
+    }
+    stats.extra_words = extra.len();
     tx.commit()?;
 
     conn.execute_batch(INDEXES)?;
@@ -169,6 +180,18 @@ fn collect_forms(rows: &[Row], included: &HashSet<String>) -> BTreeSet<(String, 
         }
     }
     forms
+}
+
+/// Words of every row (not only selected ones) that are plain ASCII letters, at least two
+/// of them, and not an entry in any case; lowercase, sorted. Only used to decide whether
+/// to join a word broken across lines (D044 supplement, `m1-dict.md` 10.2).
+fn collect_extra_words(rows: &[Row], included: &HashSet<String>) -> BTreeSet<String> {
+    let included: HashSet<String> = included.iter().map(|w| w.to_lowercase()).collect();
+    rows.iter()
+        .map(|r| r.word.trim().to_ascii_lowercase())
+        .filter(|w| w.len() >= 2 && w.bytes().all(|b| b.is_ascii_lowercase()))
+        .filter(|w| !included.contains(w))
+        .collect()
 }
 
 fn nonzero(n: u32) -> Option<u32> {
@@ -214,6 +237,7 @@ gamy,ɡeimi,,[医] ,,,,,0,0,s:gamies,,
                 senses: 5 + 1 + 5 + 2,
                 forms: 4 + 1,
                 empty: 1,
+                extra_words: 2,
             }
         );
         let words: Vec<String> = conn
@@ -333,6 +357,22 @@ gamy,ɡeimi,,[医] ,,,,,0,0,s:gamies,,
             )
             .unwrap();
         assert_eq!(hit, "launch");
+    }
+
+    #[test]
+    fn extra_words_are_the_other_plain_words() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_, conn) = build_fixture(dir.path());
+        let words: Vec<String> = conn
+            .prepare("SELECT word FROM extra_words ORDER BY word")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        // Not entries: `butylbenzene` (not selected) and `gamy` (no senses). Phrases and
+        // entries are not listed.
+        assert_eq!(words, ["butylbenzene", "gamy"]);
     }
 
     #[test]
