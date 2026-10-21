@@ -534,7 +534,8 @@ pub fn check(hotkey: &Hotkey) -> Verdict {
     }
     if m.alt && !m.ctrl && !m.shift {
         // D014 supplement: only Alt held, so the Alt mask falls back to 0xE8.
-        warnings.push("只有 Alt 的组合在 Windows Terminal 中查不到词（按下时选区会被清除）".to_owned());
+        warnings
+            .push("只有 Alt 的组合在 Windows Terminal 中查不到词（按下时选区会被清除）".to_owned());
     }
     for (program, _, function) in CONFLICTS
         .iter()

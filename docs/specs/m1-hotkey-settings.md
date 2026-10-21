@@ -209,6 +209,14 @@
   每类再跑一次 `stuck-keys.ps1`（120 次，0 卡住）。真实键盘的同样测试放进手动测试清单 R9。
 - 启动时注册失败：先用脚本占住默认组合再启动应用，核对提示框写着"右键托盘图标 → 设置…"。
 
+**结果（2026-10-21，项目负责人同意后运行，debug 版，临时目录）**：
+
+- `settings-e2e.ps1 -Keys`：46 项全部通过。第一次运行发现**悬浮窗里按 F5 会重新加载页面**（违反 D010）：给悬浮窗关掉 WebView2 的浏览器快捷键（`popup/webview.rs` 的 `disable_browser_keys`，`AreBrowserAcceleratorKeysEnabled = false`），复测通过。设置窗口录制时的 F5 / Ctrl+R / Ctrl+P / Ctrl+F 靠页面 `preventDefault` 已拦住，不需要关。
+- `hotkey-classes-e2e.ps1`：五类全部通过（Windows Terminal 选词、VS Code Esc 后菜单栏、各 120 次防卡键 0 卡住）。"只有 Alt"一类用 **Alt+J**：本机 Alt+X 被 Asterun（启动器）占用，LexTrail 注册失败。只有 Alt 时屏蔽键退回 `0xE8`，终端选区在取词之前就被清除，悬浮窗显示"没有选中文字"（与 R3-9 一致），所以 3.2 的提示改为"只有 Alt 的组合在 Windows Terminal 中查不到词（按下时选区会被清除）"。
+- `popup-e2e.ps1`：默认、`-Hotkey` Shift+Alt+X / Alt+J / Ctrl+Shift+F1 / F8 各两次查词，全部通过。
+- 启动时注册失败：本进程占住 Ctrl+Alt+X 后启动，提示框标题"LexTrail 快捷键注册失败"，内容含"请右键托盘图标 → 设置… 更换快捷键"（UI Automation 读出）。
+- 脚本修复：`settings-e2e.ps1` 运算符优先级；Windows Terminal 不支持 `FindText`，改为在全文中定位，并按类名 `TermControl` 找正文（第一个文本控件是标签页标题）；`stuck-keys.ps1` 的结果按最后一行判断；三个脚本在快捷键没注册上时（被别的程序占用）停止、不发按键——第一次运行时没有这个检查，Alt+X 被按到 Asterun，打开了它的启动窗口（没有输入其他内容）。
+
 ### 8.3 性能
 
 `lextrail-bench quick` 重测，结果追加到 `m0-benchmark.md` 的"历次重测"；新增一项"**设置窗口打开又关闭后**"的挂起内存（bench 用 `--settings` 打开设置窗口、等页面加载完、发 `WM_CLOSE` 关掉，再查一次词、等挂起后测）。设置窗口和悬浮窗同源（同一个 WebView2 环境），可能共用渲染进程，关掉设置窗口后进程不一定退出。**挂起内存以实测为准**，不预先假定回到约 83 MiB；没有回到时先把数据交给项目负责人，再决定怎么处理。
