@@ -272,7 +272,7 @@ gamy,ɡeimi,,[医] ,,,,,0,0,s:gamies,,
         assert_eq!(
             launch,
             (
-                Some("lɔ:ntʃ".into()),
+                Some("lɔːntʃ".into()),
                 Some(4),
                 Some(1),
                 Some(2236),
@@ -286,7 +286,7 @@ gamy,ɡeimi,,[医] ,,,,,0,0,s:gamies,,
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap();
-        assert_eq!(real, ("'ri\u{0259}l".into(), None, Some("zk gk".into())));
+        assert_eq!(real, ("ˈrɪəl".into(), None, Some("zk gk".into())));
         let give_up: Option<String> = conn
             .query_row(
                 "SELECT phonetic FROM entries WHERE word = 'give up'",

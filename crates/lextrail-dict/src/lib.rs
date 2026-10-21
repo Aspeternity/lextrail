@@ -10,6 +10,8 @@
 mod classify;
 mod dictionary;
 mod exchange;
+pub mod ext;
+mod phonetic;
 pub mod schema;
 mod senses;
 mod suffix;
@@ -21,6 +23,7 @@ pub use dictionary::{
     LookupOptions, LookupResult, PartsResult, normalize_query,
 };
 pub use exchange::{Exchange, FormKind, parse_exchange};
+pub use phonetic::normalize_phonetic;
 pub use senses::{Sense, split_translation};
 
 /// Version of the dictionary file format (`meta.format_version`). A reader refuses files
@@ -29,20 +32,3 @@ pub const FORMAT_VERSION: u32 = 2;
 
 /// File name of the built-in compact dictionary.
 pub const CORE_DICT_FILE_NAME: &str = "lextrail-dict-core.db";
-
-/// Normalizes an ECDICT phonetic: the Cyrillic `ә` (U+04D9) used in about 100,000 entries
-/// becomes the IPA schwa `ə` (U+0259). Everything else is kept as is.
-pub fn normalize_phonetic(raw: &str) -> String {
-    raw.trim().replace('\u{04D9}', "\u{0259}")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn phonetic_schwa_is_normalized() {
-        assert_eq!(normalize_phonetic(" 'riәl "), "'riəl");
-        assert_eq!(normalize_phonetic("ˈmju:zikəl"), "ˈmju:zikəl");
-    }
-}
