@@ -22,8 +22,8 @@ Whether LexTrail holds a hotkey is checked by trying to register it here
   - Ctrl+C is refused; Esc cancels and the old hotkey comes back;
   - a combination this script holds shows "no reaction, maybe taken by another program";
   - "restore default" while this script holds the default keeps the current hotkey;
-  - closing the window, or switching to another window, while recording brings the old
-    hotkey back;
+  - closing the window, switching to another window, or a click elsewhere in the window
+    while recording brings the old hotkey back;
   - F5 in the popup does not reload its page (D010).
 
 Screenshots cover only LexTrail's windows. Exits with 1 if any check fails.
@@ -339,6 +339,20 @@ try {
     [void][LtSet]::UnregisterHotKey([IntPtr]::Zero, 0x4C56)
     Click-Id $win "hotkey-default"
     Check (-not (Is-Free @defaultKey)) "default again once it is free"
+
+    # A click elsewhere in the window (plain text, not a control) cancels too, like other
+    # shortcut recorders: the recorder lost the focus.
+    Click-Id $win "hotkey-recorder"
+    Check (Is-Free @defaultKey) "recording before a click elsewhere"
+    # The blank right end of the recorder's row: no control there.
+    $rec = (Find-Id $win "hotkey-recorder").Current.BoundingRectangle
+    $wr = [LtSet]::Visible($win)
+    if (-not [LtSet]::ClickAt($win, [int]($wr.Ri - 60), [int]($rec.Y + $rec.Height / 2))) {
+      throw "the settings window is covered; not clicking"
+    }
+    Start-Sleep -Milliseconds 600
+    Check (-not (Is-Free @defaultKey)) "a click elsewhere in the window cancels: Alt+Space is back"
+    Check (-not ((Text-Of (Find-Id $win "hotkey-recorder")) -match "Esc")) "a click elsewhere: no longer recording"
 
     # A window of this script, to switch to.
     $form = New-Object System.Windows.Forms.Form

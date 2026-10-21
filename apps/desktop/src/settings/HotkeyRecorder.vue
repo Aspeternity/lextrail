@@ -191,9 +191,13 @@ function onKeyUp(event: KeyboardEvent): void {
   sawMainKey = false;
 }
 
-/** Switching to another program while recording cancels (spec 4.5). */
+/**
+ * The recorder losing focus cancels, like other shortcut recorders (VS Code, PowerToys):
+ * a click anywhere else in the window, or switching to another program (spec 4.5). Not
+ * while a recorded combination is being saved.
+ */
 function onBlur(): void {
-  if (state.value.kind !== 'idle') void cancel();
+  if (state.value.kind !== 'idle' && !busy) void cancel();
 }
 
 function listen(on: boolean): void {
@@ -235,6 +239,7 @@ async function turnOff(): Promise<void> {
         :disabled="!!settings.readOnly"
         title="点击后按下新的快捷键，Esc 取消"
         @click="startRecording"
+        @blur="onBlur"
       >
         {{ recorderText }}
       </button>
