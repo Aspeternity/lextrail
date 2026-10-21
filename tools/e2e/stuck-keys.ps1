@@ -42,6 +42,7 @@ param(
 $ErrorActionPreference = "Stop"
 $App = (Resolve-Path $App).Path
 . (Join-Path $PSScriptRoot "hotkey-keys.ps1")
+. (Join-Path $PSScriptRoot "run-dirs.ps1")
 $hotkeyVks = Get-HotkeyVks $Hotkey
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 
@@ -130,15 +131,18 @@ public static class LtKeys {
 Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
 $log = Join-Path $OutDir "stuck-keys-app.log"
 # Scratch settings and history, never the user's own (debug builds only).
-$env:LEXTRAIL_DEBUG_CONFIG_DIR = Join-Path $OutDir ("config-" + [guid]::NewGuid())
-Write-HotkeySettings $env:LEXTRAIL_DEBUG_CONFIG_DIR $Hotkey
-$env:LEXTRAIL_DEBUG_DATA_DIR = Join-Path $OutDir ("data-" + [guid]::NewGuid())
+$configDir = Join-Path $OutDir ("config-" + [guid]::NewGuid())
+$dataDir = Join-Path $OutDir ("data-" + [guid]::NewGuid())
+Write-HotkeySettings $configDir $Hotkey
+$env:LEXTRAIL_DEBUG_CONFIG_DIR = $configDir
+$env:LEXTRAIL_DEBUG_DATA_DIR = $dataDir
 Start-Process $App -RedirectStandardError $log -WindowStyle Hidden
 Remove-Item Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR -ErrorAction SilentlyContinue
 Start-Sleep 4
 # A hotkey another program holds did not register: pressing it would reach that program.
 if (Select-String -Path $log -Pattern "did not register" -SimpleMatch -Quiet) {
   Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
+  Remove-RunDirs $configDir, $dataDir
   throw "the hotkey did not register (taken by another program?); not sending keys. Log: $log"
 }
 $form = @'
@@ -211,6 +215,7 @@ try {
   Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
   Stop-Process -Id $target.Id -Force -ErrorAction SilentlyContinue
   if ($observer) { Stop-Process -Id $observer.Id -Force -ErrorAction SilentlyContinue; "key events: $keysLog" }
+  Remove-RunDirs $configDir, $dataDir
 }
 "app log: $log"
 if ($stuck) { "FAILED: a modifier stayed down after $stuck of $n presses"; exit 1 }

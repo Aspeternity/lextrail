@@ -110,6 +110,7 @@ param(
 $ErrorActionPreference = "Stop"
 $here = $PSScriptRoot
 . (Join-Path $here "hotkey-keys.ps1")
+. (Join-Path $here "run-dirs.ps1")
 $hotkeyVks = Get-HotkeyVks $Hotkey
 if ($Hotkey -ne "Ctrl+Alt+X" -and ($HoldMs -gt 0 -or $PressTwiceMs -gt 0)) { throw "-Hotkey is not for -HoldMs / -PressTwiceMs" }
 $App = (Resolve-Path $App).Path
@@ -313,6 +314,7 @@ Start-Sleep 4
 # A hotkey another program holds did not register: pressing it would reach that program.
 if (Select-String -Path $log -Pattern "did not register" -SimpleMatch -Quiet) {
   Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
+  Remove-RunDirs $configDir, $dataDir
   throw "the hotkey did not register (taken by another program?); not sending keys. Log: $log"
 }
 
@@ -329,6 +331,8 @@ if ($Pdf) {
   $printProfile = Join-Path $env:TEMP ("lextrail-e2e-print-" + [guid]::NewGuid())
   Start-Process $edge -ArgumentList "--headless", "--disable-gpu", "--user-data-dir=$printProfile",
     "--print-to-pdf=$pdfPath", "--no-pdf-header-footer", $url -Wait
+  Stop-DirUsers "$browserProc.exe" $printProfile
+  Remove-RunDirs $printProfile
   if (-not (Test-Path $pdfPath)) { throw "could not print the test page to PDF" }
   $pdfUrl = "file:///" + $pdfPath.Replace([char]92, [char]47)
   Start-Process $edge -ArgumentList (@("--user-data-dir=$profileDir", "--no-first-run") + $private + @("--new-window", $pdfUrl)) | Out-Null
@@ -447,9 +451,10 @@ try {
   $held = [LtE2e]::ReleaseHeld()
   if ($held) { "modifier keys were still down at the end (released): $held"; $failures++ }
   Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
-  Get-CimInstance Win32_Process -Filter "Name='$browserProc.exe'" |
-    Where-Object { $_.CommandLine -like "*$profileDir*" } |
-    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  # Checked here: the scratch folders go now, whatever happened above.
+  $historyDb = Test-Path (Join-Path $dataDir "lextrail.db")
+  Stop-DirUsers "$browserProc.exe" $profileDir
+  Remove-RunDirs $profileDir, $configDir, $dataDir
 }
 "app log: $log"
 Get-Content $log | Select-String "capture #|bring to front|WindowReady|resume delayed|Captured|activated|double copy" | ForEach-Object { "  " + $_.Line }
@@ -484,8 +489,8 @@ if ($ExpectIgnored) {
   $history = @(Get-Content $log | Select-String "capture #\d+: history (\w+)" | ForEach-Object { $_.Matches[0].Groups[1].Value })
   $historyOk = $history.Count -gt 0 -and $history[0] -eq "recorded" -and
     @($history | Select-Object -Skip 1 | Where-Object { $_ -ne "repeat" }).Count -eq 0 -and
-    (Test-Path (Join-Path $dataDir "lextrail.db"))
-  "history: " + ($history -join ", ") + " in $dataDir" + $(if ($historyOk) { "" } else { "  (FAIL)" })
+    $historyDb
+  "history: " + ($history -join ", ") + $(if ($historyDb) { "" } else { " (no history database)" }) + $(if ($historyOk) { "" } else { "  (FAIL)" })
   if (-not $historyOk) { $failures++ }
 }
 if ($failures) { "FAILED: $failures lookup(s)"; exit 1 }

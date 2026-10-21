@@ -48,6 +48,7 @@ $App = (Resolve-Path $App).Path
 if ($App -like "*\release\*") { throw "use a debug build: release builds would use the real settings" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 . (Join-Path $PSScriptRoot "hotkey-keys.ps1")
+. (Join-Path $PSScriptRoot "run-dirs.ps1")
 
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing
 Add-Type @"
@@ -238,7 +239,7 @@ function Test-VsCode([string]$Hotkey, [string]$Tag) {
     "--skip-release-notes", "`"$file`""
   $code = Wait-Window { [LtCls]::WindowTitled("lextrail-e2e-sample.txt") } 20
   Check ($code -ne [IntPtr]::Zero) "$Tag VS Code: window opened"
-  if ($code -eq [IntPtr]::Zero) { return }
+  if ($code -eq [IntPtr]::Zero) { Stop-DirUsers "Code.exe" $dir; Remove-RunDirs $dir; return }
   try {
     Start-Sleep 3
     $r = [LtCls]::Visible($code)
@@ -265,9 +266,8 @@ function Test-VsCode([string]$Hotkey, [string]$Tag) {
     [void][LtCls]::PostMessage($code, 0x10, [IntPtr]::Zero, [IntPtr]::Zero)
     Start-Sleep 2
     # Only the instance with this scratch profile.
-    Get-CimInstance Win32_Process -Filter "Name = 'Code.exe'" |
-      Where-Object { $_.CommandLine -like "*$dir*" } |
-      ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Stop-DirUsers "Code.exe" $dir
+    Remove-RunDirs $dir
   }
 }
 
@@ -280,7 +280,8 @@ try {
     Write-HotkeySettings $configDir $hotkey
     $env:LEXTRAIL_DEBUG_CONFIG_DIR = $configDir
     if ($PointerRing) { $env:LEXTRAIL_DEBUG_POINTER_RING = "1" }
-    $env:LEXTRAIL_DEBUG_DATA_DIR = Join-Path $OutDir ("data-" + [guid]::NewGuid())
+    $dataDir = Join-Path $OutDir ("data-" + [guid]::NewGuid())
+    $env:LEXTRAIL_DEBUG_DATA_DIR = $dataDir
     $log = Join-Path $OutDir "$tag-app.log"
     $lt = Start-Process $App -RedirectStandardError $log -PassThru
     Remove-Item Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR
@@ -290,6 +291,7 @@ try {
     # program, so nothing is sent for this hotkey.
     if (Select-String -Path $log -Pattern "did not register" -SimpleMatch -Quiet) {
       Stop-Process -Id $lt.Id -Force -ErrorAction SilentlyContinue
+      Remove-RunDirs $configDir, $dataDir
       Check $false "$hotkey registers (taken by another program?); its tests skipped"
       continue
     }
@@ -298,6 +300,7 @@ try {
       if (-not $NoVsCode) { Test-VsCode $hotkey $tag }
     } finally {
       Stop-Process -Id $lt.Id -Force -ErrorAction SilentlyContinue
+      Remove-RunDirs $configDir, $dataDir
     }
     if (-not $NoStuckKeys) {
       # Judged by its last line: a script run with & leaves $LASTEXITCODE alone unless it
