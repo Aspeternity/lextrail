@@ -3,7 +3,7 @@
 > 每次开发结束前更新本文件（见 `AGENTS.md` 的"结束流程"）。
 > **只保留当前状态，控制在 100 行以内。** 已完成任务的过程记录写进对应的 `docs/specs/` 文件，完成情况以 `ROADMAP.md` 的勾选和 `git log` 为准；命令、debug 开关、测试规则见 `DEVELOPMENT.md`。
 
-**最后更新**：2026-10-21（模拟按键测试全部通过；bench 因锁屏未跑完）
+**最后更新**：2026-10-21（R9 通过；按项目负责人要求简化快捷键规则、修好只有 Alt 的组合、加"不使用快捷键"）
 **当前阶段**：M1 · 取词与词典（进行中）
 
 ---
@@ -23,18 +23,19 @@ M0 全部完成（路线 A，D036）。M1 已完成并合并到 `main`：
 
 ## 正在进行
 
-- **设置窗口与快捷键设置**（分支 `feat/hotkey-settings`，spec `docs/specs/m1-hotkey-settings.md`，已审阅）：
-  - 代码完成：`lextrail-config::hotkey`（解析、规则、已核对的冲突表）、设置文件手改检查；桌面端 `hotkey.rs` 状态机、`settings.rs`、`settings_window.rs`、托盘"设置…"、`--settings`、每个窗口只能调用自己的命令；前端 `src/settings/`。单元测试和 `pnpm check` 通过，CI 通过。
-  - 快捷键清单已核对（spec 第七节），建议保留 Ctrl+Alt+X，**待项目负责人在本机确认 Acrobat、福昕阅读器、国产软件后决定 D014**。
-  - 模拟按键测试（项目负责人同意，2026-10-21）全部通过，结果见 spec 8.2：`settings-e2e.ps1 -Keys` 46 项、五类修饰键（"只有 Alt"用 Alt+J，本机 Alt+X 被 Asterun 占用）、`popup-e2e.ps1 -Hotkey`、启动时注册失败的提示框。发现并修复：**悬浮窗按 F5 会重新加载**（关掉悬浮窗的 WebView2 浏览器快捷键）；"只有 Alt"的提示改为"在 Windows Terminal 中查不到词"。
-  - R9 手动测试清单已写好（`m1-capture-manual-tests.md`）。
-  - bench 7.6 已完成（含不关浏览器快捷键的对照）。
-  - 剩下：R9 真实键盘验收（进行中）、ROADMAP 勾选、合并到 `main`。
+- **设置窗口与快捷键设置**（分支 `feat/hotkey-settings`，spec `docs/specs/m1-hotkey-settings.md`）：
+  - 代码、模拟按键测试、bench 7.6、R9 真实键盘验收（17 项）都已完成。
+  - R9 后项目负责人要求重新考虑快捷键规则，已做完（自动检查全部通过）：
+    - **D048**：只禁止不能用的组合（LexTrail 自己用的、Windows 保留的、不带 Ctrl / Alt 的、带 Win 的），其他一律允许，不提示也不确认；删除软件快捷键清单和"提示但允许"。
+    - **不使用快捷键**：设置窗口"不使用"，设置文件 `lookup = ""`。
+    - **D014 补充**：只有 Alt 时屏蔽键改为补发一次 Ctrl，Windows Terminal 里也能取词；开了"按 Ctrl 键时显示指针位置"时改为取词后再补发 `0xE8`。
+  - 剩下：**默认快捷键待项目负责人决定**（Alt+Space 或 Ctrl+Alt+某个字母，D014）；新规则和"不使用"的真实键盘复测；合并到 `main`。
 
 ## 下一步
 
-1. R9 真实键盘验收（AI 启动程序、读日志）；通过后合并到 `main`。
-2. 前端测试框架（Vitest）还没引入（M1 任务）。
+1. 项目负责人定默认快捷键（D014），改默认值和相关测试。
+2. 真实键盘复测：新的禁止规则、"不使用"、只有 Alt 的组合在 Windows Terminal 里取词；通过后合并到 `main`。
+3. 前端测试框架（Vitest）还没引入（M1 任务）。
 
 ## 待跟进（不在 ROADMAP 中的观察项）
 
@@ -45,7 +46,7 @@ M0 全部完成（路线 A，D036）。M1 已完成并合并到 `main`：
 
 ## 遇到的问题 / 需要项目负责人决定
 
-- 默认快捷键 D014 待决定（spec 第七节 7.3）。服务端许可证写法和 `apps/server` 是否加入 Cargo workspace 推迟到 M4（见 `DECISIONS.md` 待确认事项）。
+- 默认快捷键 D014 待决定：Alt+Space（会盖掉 Windows 的窗口菜单，可能和 PowerToys Run 冲突）或 Ctrl+Alt+某个字母。服务端许可证写法和 `apps/server` 是否加入 Cargo workspace 推迟到 M4（见 `DECISIONS.md` 待确认事项）。
 
 ## 备注
 

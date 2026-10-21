@@ -17,7 +17,8 @@ while the window they are meant for is in the foreground; otherwise the script s
 Whether LexTrail holds a hotkey is checked by trying to register it here
 (RegisterHotKey fails while another program holds it):
   - recording turns the hotkey off; F5 is recorded as a hotkey without reloading the page;
-    Ctrl+R, Ctrl+P and Ctrl+F ask for confirmation without reloading, printing or finding;
+    Ctrl+R, Ctrl+P and Ctrl+F are saved at once without reloading, printing or finding;
+  - "no hotkey" saves an empty value and lets the hotkey go;
   - Ctrl+C is refused; Esc cancels and the old hotkey comes back;
   - a combination this script holds shows "no reaction, maybe taken by another program";
   - "restore default" while this script holds the default keeps the current hotkey;
@@ -274,25 +275,34 @@ try {
     Check (Is-Free @ctrlAltX) "Ctrl+Alt+X is let go"
     Check ((Lookup-Setting) -eq "F5") "F5 is saved"
 
-    # Browser shortcuts while recording: confirmation asked, no reload / print / find.
-    Click-Id $win "hotkey-change"
+    # Browser shortcuts while recording: recorded at once (other programs' shortcuts are
+    # the user's choice, D048), no reload / print / find.
     foreach ($k in @(@(0x52, "Ctrl+R"), @(0x50, "Ctrl+P"), @(0x46, "Ctrl+F"))) {
+      Click-Id $win "hotkey-change"
       Send-Combo $win "settings window" @($CTRL) $k[0]
-      $confirm = Find-Id $win "hotkey-confirm" 10
-      Check ($null -ne $confirm) "$($k[1]) asks for confirmation (page not reloaded)"
+      Check ((Lookup-Setting) -eq $k[1]) "$($k[1]) is recorded and saved without a question"
+      Check ((Text-Of (Find-Id $win "hotkey-notice")) -match [regex]::Escape($k[1].Replace("+", " + "))) "$($k[1]): the page did not reload"
       Save-Screenshot $win ("recording-" + $k[1].Replace("+", ""))
       Check ([LtSet]::Windows([uint32]$appProc.Id, $settingsTitle).Count -eq 1) "$($k[1]) opened no other window"
-      Click-Id $win "hotkey-rerecord"
     }
+    Click-Id $win "hotkey-change"
     Click-Id $win "hotkey-cancel-recording"
-    Check (-not (Is-Free 0 0x74)) "cancel brings F5 back"
+    Check (-not (Is-Free $MOD_CONTROL 0x46)) "cancel brings Ctrl+F back"
 
-    # Restore the default: it has a warning (Visual Studio), so it is confirmed first.
+    # Restore the default: no question either.
     Click-Id $win "hotkey-default"
-    Click-Id $win "hotkey-confirm-use"
     Check (-not (Is-Free @ctrlAltX)) "restore default: LexTrail holds Ctrl+Alt+X"
-    Check (Is-Free 0 0x74) "F5 is let go"
+    Check (Is-Free $MOD_CONTROL 0x46) "Ctrl+F is let go"
     Check ((Lookup-Setting) -eq "Ctrl+Alt+X") "Ctrl+Alt+X is saved"
+
+    # No lookup hotkey (spec 5.4): saved as an empty value, nothing held, not a failure.
+    Click-Id $win "hotkey-off"
+    Check ((Lookup-Setting) -eq "") "no hotkey is saved as an empty value"
+    Check (Is-Free @ctrlAltX) "no hotkey: Ctrl+Alt+X is let go"
+    Check ((Text-Of (Find-Id $win "hotkey-recorder")) -match "\S") "no hotkey: the recorder says so"
+    Save-Screenshot $win "hotkey-off"
+    Click-Id $win "hotkey-default"
+    Check (-not (Is-Free @ctrlAltX)) "default again after no hotkey"
 
     # Ctrl+C is refused; Esc cancels.
     Click-Id $win "hotkey-change"
@@ -321,14 +331,12 @@ try {
     $held = [LtSet]::RegisterHotKey([IntPtr]::Zero, 0x4C56, ($MOD_CONTROL -bor $MOD_ALT -bor 0x4000), 0x58)
     Check $held "this script holds Ctrl+Alt+X"
     Click-Id $win "hotkey-default"
-    Click-Id $win "hotkey-confirm-use"
     Check ($null -ne (Find-Id $win "hotkey-notice")) "registering a taken default reports the failure"
     Check (-not (Is-Free ($MOD_CONTROL -bor $MOD_SHIFT) 0x71)) "Ctrl+Shift+F2 still works"
     Check ((Lookup-Setting) -eq "Ctrl+Shift+F2") "the file still says Ctrl+Shift+F2"
     Save-Screenshot $win "default-taken"
     [void][LtSet]::UnregisterHotKey([IntPtr]::Zero, 0x4C56)
     Click-Id $win "hotkey-default"
-    Click-Id $win "hotkey-confirm-use"
     Check (-not (Is-Free @ctrlAltX)) "default again once it is free"
 
     # A window of this script, to switch to.

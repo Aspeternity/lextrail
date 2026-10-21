@@ -37,7 +37,7 @@
 - `LEXTRAIL_DEBUG_CAPTURE_DELAY_MS`：让取词变慢
 - `LEXTRAIL_DEBUG_SKIP_ACTIVATION`：不获取焦点
 - `LEXTRAIL_DEBUG_FORCE_ATTACH`：强制走获取焦点的后备路径（`popup-e2e.ps1 -ForceAttach`）
-- `LEXTRAIL_DEBUG_NO_ALT_MASK`：关掉屏蔽键；`LEXTRAIL_DEBUG_ALT_MASK_E8`：屏蔽键总用旧的 `0xE8`（对比用）
+- `LEXTRAIL_DEBUG_NO_ALT_MASK`：关掉屏蔽键；`LEXTRAIL_DEBUG_ALT_MASK_E8`：屏蔽键总用旧的 `0xE8`（对比用）；`LEXTRAIL_DEBUG_POINTER_RING`：当作开了"按 Ctrl 键时显示指针位置"，只有 Alt 时走"取词后再补发 `0xE8`"（`hotkey-classes-e2e.ps1 -PointerRing`）
 - `LEXTRAIL_DEBUG_CLIPBOARD_ONLY`：跳过 UIA，只走剪贴板
 - `LEXTRAIL_DEBUG_CONFIG_DIR` / `LEXTRAIL_DEBUG_DATA_DIR`：设置文件、数据库改用指定目录（`popup-e2e.ps1`、`stuck-keys.ps1` 已默认用临时目录）
 

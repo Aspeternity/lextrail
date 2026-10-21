@@ -31,8 +31,6 @@ pub enum Applied {
     Unchanged,
     /// Cannot be used (spec 3.1); the old one is back.
     Blocked(String),
-    /// Has warnings the user has not confirmed yet (spec 3.2); still recording.
-    NeedsConfirmation(Vec<String>),
     /// The OS refused the new one; the old one is back.
     RegisterFailed(String),
     /// Saving failed; the new one was dropped and the old one is back.
@@ -42,8 +40,11 @@ pub enum Applied {
 /// The lookup hotkey: what the settings say, and whether it is registered right now.
 #[derive(Debug)]
 pub struct LookupHotkey {
-    /// From the settings file; `None` when the file's value cannot be used.
+    /// From the settings file; `None` when the file's value cannot be used, or when the
+    /// user chose to have no lookup hotkey (`off`).
     configured: Option<Hotkey>,
+    /// The user chose no lookup hotkey (an empty value in the settings file, spec 5.4).
+    off: bool,
     /// `configured` is registered with the OS.
     active: bool,
     /// Why it is not active (shown in the settings window and the startup notice).
@@ -57,15 +58,20 @@ impl LookupHotkey {
     pub fn startup(text: &str, registrar: &mut impl Registrar) -> Self {
         let mut this = Self {
             configured: None,
+            off: false,
             active: false,
             error: None,
             recording: false,
         };
+        if text.trim().is_empty() {
+            this.off = true;
+            return this;
+        }
         match Hotkey::parse(text) {
             Err(_) => this.error = Some(format!("设置文件中的快捷键 {text} 格式无效")),
             Ok(hotkey) => match hotkey::check(&hotkey) {
                 Verdict::Blocked(why) => this.error = Some(why),
-                Verdict::Allowed(_) => {
+                Verdict::Allowed => {
                     this.configured = Some(hotkey);
                     this.restore(registrar);
                 }
@@ -80,6 +86,11 @@ impl LookupHotkey {
 
     pub fn is_active(&self) -> bool {
         self.active
+    }
+
+    /// The user chose no lookup hotkey.
+    pub fn is_off(&self) -> bool {
+        self.off
     }
 
     pub fn error(&self) -> Option<&str> {
@@ -115,33 +126,29 @@ impl LookupHotkey {
 
     /// Changes the hotkey to `new` (spec 5.1): register the new one first, save only
     /// once it works, and keep the old one whenever something fails. `save` writes the
-    /// new canonical form to the settings file.
+    /// new canonical form to the settings file. `None` turns the hotkey off (spec 5.4).
     pub fn apply(
         &mut self,
         registrar: &mut impl Registrar,
-        new: Hotkey,
-        confirmed: bool,
-        save: impl FnOnce(&Hotkey) -> Result<(), String>,
+        new: Option<Hotkey>,
+        save: impl FnOnce(Option<&Hotkey>) -> Result<(), String>,
     ) -> Applied {
-        let warnings = match hotkey::check(&new) {
-            Verdict::Blocked(why) => {
-                self.finish_recording(registrar);
-                return Applied::Blocked(why);
-            }
-            Verdict::Allowed(warnings) => warnings,
+        let Some(new) = new else {
+            return self.turn_off(registrar, save);
         };
+        if let Verdict::Blocked(why) = hotkey::check(&new) {
+            self.finish_recording(registrar);
+            return Applied::Blocked(why);
+        }
         if self.configured.as_ref() == Some(&new) {
             self.finish_recording(registrar);
             return Applied::Unchanged;
-        }
-        if !warnings.is_empty() && !confirmed {
-            return Applied::NeedsConfirmation(warnings);
         }
         if let Err(why) = registrar.register(&new) {
             self.finish_recording(registrar);
             return Applied::RegisterFailed(why);
         }
-        if let Err(why) = save(&new) {
+        if let Err(why) = save(Some(&new)) {
             registrar.unregister(&new);
             self.finish_recording(registrar);
             return Applied::SaveFailed(why);
@@ -152,7 +159,35 @@ impl LookupHotkey {
             registrar.unregister(old);
         }
         self.configured = Some(new);
+        self.off = false;
         self.active = true;
+        self.error = None;
+        self.recording = false;
+        Applied::Changed
+    }
+
+    /// No lookup hotkey: saved first, then the old one is let go; a failed save keeps it.
+    fn turn_off(
+        &mut self,
+        registrar: &mut impl Registrar,
+        save: impl FnOnce(Option<&Hotkey>) -> Result<(), String>,
+    ) -> Applied {
+        if self.off {
+            self.recording = false;
+            return Applied::Unchanged;
+        }
+        if let Err(why) = save(None) {
+            self.finish_recording(registrar);
+            return Applied::SaveFailed(why);
+        }
+        if self.active
+            && let Some(old) = &self.configured
+        {
+            registrar.unregister(old);
+        }
+        self.configured = None;
+        self.off = true;
+        self.active = false;
         self.error = None;
         self.recording = false;
         Applied::Changed
@@ -181,9 +216,10 @@ impl LookupHotkey {
         }
     }
 
-    /// The startup notice when the hotkey did not register, or `None` when it did.
+    /// The startup notice when the hotkey did not register, or `None` when it did (or
+    /// the user chose none).
     pub fn failure_message(&self) -> Option<String> {
-        if self.active {
+        if self.active || self.off {
             return None;
         }
         let shown = self
@@ -275,7 +311,7 @@ fn sync_tray<R: Runtime>(app: &AppHandle<R>) {
     let failed = {
         let state = app.state::<HotkeyState>();
         let hotkey = state.0.lock().unwrap();
-        !hotkey.is_active() && !hotkey.is_recording()
+        !hotkey.is_active() && !hotkey.is_recording() && !hotkey.is_off()
     };
     if let Some(tray) = app.tray_by_id(crate::tray::TRAY_ID) {
         let tooltip = if failed {
@@ -344,7 +380,7 @@ mod tests {
         Hotkey::parse(text).unwrap()
     }
 
-    fn ok_save(_: &Hotkey) -> Result<(), String> {
+    fn ok_save(_: Option<&Hotkey>) -> Result<(), String> {
         Ok(())
     }
 
@@ -445,8 +481,8 @@ mod tests {
         let mut state = started(&mut reg);
         state.start_recording(&mut reg);
         let mut saved = None;
-        let applied = state.apply(&mut reg, hk("Ctrl+Shift+F1"), false, |h| {
-            saved = Some(h.canonical());
+        let applied = state.apply(&mut reg, Some(hk("Ctrl+Shift+F1")), |h| {
+            saved = h.map(Hotkey::canonical);
             Ok(())
         });
         assert_eq!(applied, Applied::Changed);
@@ -462,7 +498,7 @@ mod tests {
         // one works.
         let mut reg = FakeRegistrar::default();
         let mut state = started(&mut reg);
-        state.apply(&mut reg, hk("F9"), false, ok_save);
+        state.apply(&mut reg, Some(hk("F9")), ok_save);
         assert_eq!(reg.calls, ["+Ctrl+Alt+X", "+F9", "-Ctrl+Alt+X"]);
         assert_eq!(reg.registered, ["F9"]);
     }
@@ -472,7 +508,7 @@ mod tests {
         let mut reg = FakeRegistrar::default();
         let mut state = started(&mut reg);
         state.start_recording(&mut reg);
-        let applied = state.apply(&mut reg, hk("Ctrl+Alt+X"), false, |_| {
+        let applied = state.apply(&mut reg, Some(hk("Ctrl+Alt+X")), |_| {
             panic!("nothing to save")
         });
         assert_eq!(applied, Applied::Unchanged);
@@ -485,30 +521,84 @@ mod tests {
         let mut reg = FakeRegistrar::default();
         let mut state = started(&mut reg);
         state.start_recording(&mut reg);
-        let applied = state.apply(&mut reg, hk("Ctrl+C"), true, |_| panic!("not saved"));
+        let applied = state.apply(&mut reg, Some(hk("Ctrl+C")), |_| panic!("not saved"));
         assert!(matches!(applied, Applied::Blocked(_)));
         assert_eq!(reg.registered, ["Ctrl+Alt+X"]);
         assert!(state.is_active());
     }
 
     #[test]
-    fn warnings_need_confirmation_first() {
+    fn common_shortcuts_need_no_confirmation() {
+        // What other programs do with a combination is the user's choice (D048).
         let mut reg = FakeRegistrar::default();
         let mut state = started(&mut reg);
         state.start_recording(&mut reg);
-        let applied = state.apply(&mut reg, hk("Ctrl+V"), false, |_| panic!("not yet"));
-        let Applied::NeedsConfirmation(warnings) = applied else {
-            panic!("{applied:?}");
-        };
-        assert!(warnings[0].contains("粘贴"));
-        // Still recording, nothing registered.
-        assert!(state.is_recording());
-        assert!(reg.registered.is_empty());
         assert_eq!(
-            state.apply(&mut reg, hk("Ctrl+V"), true, ok_save),
+            state.apply(&mut reg, Some(hk("Ctrl+V")), ok_save),
             Applied::Changed
         );
         assert_eq!(reg.registered, ["Ctrl+V"]);
+    }
+
+    #[test]
+    fn turning_off_saves_then_lets_go() {
+        let mut reg = FakeRegistrar::default();
+        let mut state = started(&mut reg);
+        let mut saved = Some(String::from("unset"));
+        let applied = state.apply(&mut reg, None, |h| {
+            saved = h.map(Hotkey::canonical);
+            Ok(())
+        });
+        assert_eq!(applied, Applied::Changed);
+        assert_eq!(saved, None);
+        assert!(reg.registered.is_empty());
+        assert!(state.is_off() && !state.is_active() && state.configured().is_none());
+        // No failure: nothing to warn about at startup or in the tray.
+        assert!(state.failure_message().is_none());
+        // Off again: nothing to do.
+        assert_eq!(
+            state.apply(&mut reg, None, |_| panic!("nothing to save")),
+            Applied::Unchanged
+        );
+    }
+
+    #[test]
+    fn turning_off_while_recording() {
+        let mut reg = FakeRegistrar::default();
+        let mut state = started(&mut reg);
+        state.start_recording(&mut reg);
+        assert_eq!(state.apply(&mut reg, None, ok_save), Applied::Changed);
+        assert!(state.is_off() && !state.is_recording());
+        assert_eq!(reg.calls, ["+Ctrl+Alt+X", "-Ctrl+Alt+X"]);
+    }
+
+    #[test]
+    fn turning_off_keeps_the_hotkey_when_saving_fails() {
+        let mut reg = FakeRegistrar::default();
+        let mut state = started(&mut reg);
+        let applied = state.apply(&mut reg, None, |_| Err("只读".into()));
+        assert_eq!(applied, Applied::SaveFailed("只读".into()));
+        assert!(!state.is_off() && state.is_active());
+        assert_eq!(reg.registered, ["Ctrl+Alt+X"]);
+    }
+
+    #[test]
+    fn startup_with_no_hotkey() {
+        let mut reg = FakeRegistrar::default();
+        let mut state = LookupHotkey::startup("", &mut reg);
+        assert!(state.is_off() && state.failure_message().is_none());
+        assert!(reg.calls.is_empty());
+        // Recording and cancelling registers nothing.
+        state.start_recording(&mut reg);
+        state.cancel_recording(&mut reg);
+        assert!(reg.calls.is_empty());
+        // A new one turns it back on.
+        assert_eq!(
+            state.apply(&mut reg, Some(hk("F9")), ok_save),
+            Applied::Changed
+        );
+        assert!(!state.is_off() && state.is_active());
+        assert_eq!(reg.registered, ["F9"]);
     }
 
     #[test]
@@ -516,7 +606,7 @@ mod tests {
         let mut reg = FakeRegistrar::taking(&["Ctrl+Alt+Y"]);
         let mut state = started(&mut reg);
         state.start_recording(&mut reg);
-        let applied = state.apply(&mut reg, hk("Ctrl+Alt+Y"), false, |_| panic!("not saved"));
+        let applied = state.apply(&mut reg, Some(hk("Ctrl+Alt+Y")), |_| panic!("not saved"));
         assert_eq!(applied, Applied::RegisterFailed("占用".into()));
         assert_eq!(reg.registered, ["Ctrl+Alt+X"]);
         assert!(state.is_active() && state.error().is_none());
@@ -527,7 +617,7 @@ mod tests {
         let mut reg = FakeRegistrar::default();
         let mut state = started(&mut reg);
         state.start_recording(&mut reg);
-        let applied = state.apply(&mut reg, hk("F9"), false, |_| Err("只读".into()));
+        let applied = state.apply(&mut reg, Some(hk("F9")), |_| Err("只读".into()));
         assert_eq!(applied, Applied::SaveFailed("只读".into()));
         assert_eq!(reg.registered, ["Ctrl+Alt+X"]);
         assert_eq!(state.configured(), Some(&hk("Ctrl+Alt+X")));
@@ -555,7 +645,7 @@ mod tests {
     fn restore_failure_after_register_failure_is_reported() {
         let (mut reg, mut state) = taken_while_recording();
         reg.taken.push("F9".into());
-        let applied = state.apply(&mut reg, hk("F9"), false, |_| panic!("not saved"));
+        let applied = state.apply(&mut reg, Some(hk("F9")), |_| panic!("not saved"));
         assert!(matches!(applied, Applied::RegisterFailed(_)));
         assert!(!state.is_active());
         assert_eq!(state.error(), Some("占用"));
@@ -564,7 +654,7 @@ mod tests {
     #[test]
     fn restore_failure_after_save_failure_is_reported() {
         let (mut reg, mut state) = taken_while_recording();
-        let applied = state.apply(&mut reg, hk("F9"), false, |_| Err("只读".into()));
+        let applied = state.apply(&mut reg, Some(hk("F9")), |_| Err("只读".into()));
         assert!(matches!(applied, Applied::SaveFailed(_)));
         assert!(reg.registered.is_empty());
         assert!(!state.is_active());
@@ -579,7 +669,7 @@ mod tests {
         state.cancel_recording(&mut reg);
         assert!(!state.is_active());
         assert_eq!(
-            state.apply(&mut reg, hk("Ctrl+Shift+F2"), false, ok_save),
+            state.apply(&mut reg, Some(hk("Ctrl+Shift+F2")), ok_save),
             Applied::Changed
         );
         assert!(state.is_active() && state.error().is_none());
@@ -592,7 +682,7 @@ mod tests {
         let mut state = LookupHotkey::startup("nonsense", &mut reg);
         assert_eq!(state.configured(), None);
         assert_eq!(
-            state.apply(&mut reg, hk("Ctrl+Alt+Y"), false, ok_save),
+            state.apply(&mut reg, Some(hk("Ctrl+Alt+Y")), ok_save),
             Applied::Changed
         );
         assert_eq!(reg.registered, ["Ctrl+Alt+Y"]);

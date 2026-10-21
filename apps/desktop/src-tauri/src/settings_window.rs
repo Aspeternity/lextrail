@@ -95,6 +95,8 @@ impl From<&Hotkey> for HotkeyView {
 pub struct SettingsView {
     /// `None` when the settings file's value cannot be used.
     lookup: Option<HotkeyView>,
+    /// The user chose no lookup hotkey (spec 5.4).
+    lookup_off: bool,
     lookup_active: bool,
     /// Why the lookup hotkey is not working.
     lookup_error: Option<String>,
@@ -109,6 +111,7 @@ fn view(settings: &Settings, lookup: &LookupHotkey, read_only: Option<String>) -
     let default = Hotkey::parse(&HotkeySettings::default().lookup).expect("valid default");
     SettingsView {
         lookup: lookup.configured().map(HotkeyView::from),
+        lookup_off: lookup.is_off(),
         lookup_active: lookup.is_active(),
         lookup_error: if lookup.is_active() {
             None
@@ -163,8 +166,6 @@ pub struct CheckView {
     hotkey: HotkeyView,
     /// Cannot be used, and why.
     blocked: Option<String>,
-    /// Must be confirmed before saving.
-    warnings: Vec<String>,
 }
 
 fn check_key(code: &str, keys: KeyPress) -> Option<CheckView> {
@@ -175,14 +176,13 @@ fn check_key(code: &str, keys: KeyPress) -> Option<CheckView> {
         win: keys.meta,
     };
     let hotkey = Hotkey::from_key_event(code, modifiers)?;
-    let (blocked, warnings) = match hotkey::check(&hotkey) {
-        Verdict::Blocked(why) => (Some(why), Vec::new()),
-        Verdict::Allowed(warnings) => (None, warnings),
+    let blocked = match hotkey::check(&hotkey) {
+        Verdict::Blocked(why) => Some(why),
+        Verdict::Allowed => None,
     };
     Some(CheckView {
         hotkey: HotkeyView::from(&hotkey),
         blocked,
-        warnings,
     })
 }
 
@@ -196,41 +196,42 @@ pub fn hotkey_check(code: String, keys: KeyPress) -> Option<CheckView> {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyView {
-    /// `changed`, `unchanged`, `blocked`, `needs_confirmation`, `register_failed`,
-    /// `save_failed`.
+    /// `changed`, `unchanged`, `blocked`, `register_failed`, `save_failed`.
     outcome: &'static str,
     message: Option<String>,
-    warnings: Vec<String>,
     settings: SettingsView,
 }
 
+/// Changes the lookup hotkey; an empty `accelerator` turns it off (spec 5.4).
 #[tauri::command]
 pub fn hotkey_apply<R: Runtime>(
     app: AppHandle<R>,
     accelerator: String,
-    confirmed: bool,
 ) -> Result<ApplyView, String> {
-    let new = Hotkey::parse(&accelerator).map_err(|e| e.to_string())?;
+    let new = if accelerator.is_empty() {
+        None
+    } else {
+        Some(Hotkey::parse(&accelerator).map_err(|e| e.to_string())?)
+    };
     let service = app.state::<SettingsService>();
     let applied = crate::hotkey::with_state(&app, |state, registrar| {
-        state.apply(registrar, new, confirmed, |hotkey| {
-            service.update(|s| s.hotkeys.lookup = hotkey.canonical())
+        state.apply(registrar, new, |hotkey| {
+            let text = hotkey.map(Hotkey::canonical).unwrap_or_default();
+            service.update(|s| s.hotkeys.lookup = text)
         })
     });
     #[cfg(debug_assertions)]
     eprintln!("settings: hotkey {accelerator}: {applied:?}");
-    let (outcome, message, warnings) = match applied {
-        Applied::Changed => ("changed", None, Vec::new()),
-        Applied::Unchanged => ("unchanged", None, Vec::new()),
-        Applied::Blocked(why) => ("blocked", Some(why), Vec::new()),
-        Applied::NeedsConfirmation(warnings) => ("needs_confirmation", None, warnings),
-        Applied::RegisterFailed(why) => ("register_failed", Some(why), Vec::new()),
-        Applied::SaveFailed(why) => ("save_failed", Some(why), Vec::new()),
+    let (outcome, message) = match applied {
+        Applied::Changed => ("changed", None),
+        Applied::Unchanged => ("unchanged", None),
+        Applied::Blocked(why) => ("blocked", Some(why)),
+        Applied::RegisterFailed(why) => ("register_failed", Some(why)),
+        Applied::SaveFailed(why) => ("save_failed", Some(why)),
     };
     Ok(ApplyView {
         outcome,
         message,
-        warnings,
         settings: current_view(&app),
     })
 }
@@ -291,14 +292,15 @@ mod tests {
         let checked = check_key("KeyY", CTRL_ALT).unwrap();
         assert_eq!(checked.hotkey.accelerator, "Ctrl+Alt+Y");
         assert_eq!(checked.hotkey.display, "Ctrl + Alt + Y");
-        assert_eq!((checked.blocked, checked.warnings.len()), (None, 0));
+        assert_eq!(checked.blocked, None);
 
         let ctrl = KeyPress {
             alt: false,
             ..CTRL_ALT
         };
         assert!(check_key("KeyC", ctrl).unwrap().blocked.is_some());
-        assert!(!check_key("KeyV", ctrl).unwrap().warnings.is_empty());
+        // Other programs' shortcuts are the user's choice (D048).
+        assert_eq!(check_key("KeyV", ctrl).unwrap().blocked, None);
         let win = KeyPress {
             meta: true,
             ..CTRL_ALT
@@ -328,5 +330,21 @@ mod tests {
         assert_eq!(v.lookup_error.as_deref(), Some("占用"));
         assert_eq!(v.default_lookup.accelerator, "Ctrl+Alt+X");
         assert!(v.record_history && !v.double_ctrl_c);
+        assert!(!v.lookup_off);
+    }
+
+    #[test]
+    fn view_reports_no_hotkey() {
+        let state = LookupHotkey::startup("", &mut NeverCalled);
+        let v = view(&Settings::default(), &state, None);
+        assert!(v.lookup_off && v.lookup.is_none() && v.lookup_error.is_none());
+    }
+
+    struct NeverCalled;
+    impl crate::hotkey::Registrar for NeverCalled {
+        fn register(&mut self, _: &Hotkey) -> Result<(), String> {
+            panic!("nothing to register")
+        }
+        fn unregister(&mut self, _: &Hotkey) {}
     }
 }

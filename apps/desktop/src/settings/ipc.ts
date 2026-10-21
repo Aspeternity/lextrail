@@ -9,6 +9,8 @@ export interface HotkeyView {
 /** Everything the settings page shows (`SettingsView` in settings_window.rs). */
 export interface SettingsView {
   lookup: HotkeyView | null;
+  /** The user chose no lookup hotkey. */
+  lookupOff: boolean;
   lookupActive: boolean;
   lookupError: string | null;
   defaultLookup: HotkeyView;
@@ -21,16 +23,13 @@ export interface SettingsView {
 export interface CheckView {
   hotkey: HotkeyView;
   blocked: string | null;
-  warnings: string[];
 }
 
-export type ApplyOutcome =
-  'changed' | 'unchanged' | 'blocked' | 'needs_confirmation' | 'register_failed' | 'save_failed';
+export type ApplyOutcome = 'changed' | 'unchanged' | 'blocked' | 'register_failed' | 'save_failed';
 
 export interface ApplyView {
   outcome: ApplyOutcome;
   message: string | null;
-  warnings: string[];
   settings: SettingsView;
 }
 
@@ -60,8 +59,9 @@ export const setRecording = (active: boolean): Promise<SettingsView> =>
 export const checkKey = (code: string, keys: Modifiers): Promise<CheckView | null> =>
   invoke('hotkey_check', { code, keys });
 
-export const applyHotkey = (accelerator: string, confirmed: boolean): Promise<ApplyView> =>
-  invoke('hotkey_apply', { accelerator, confirmed });
+/** An empty `accelerator` turns the lookup hotkey off. */
+export const applyHotkey = (accelerator: string): Promise<ApplyView> =>
+  invoke('hotkey_apply', { accelerator });
 
 export const setDoubleCtrlC = (on: boolean): Promise<SettingsView> =>
   invoke('settings_set_double_ctrl_c', { on });

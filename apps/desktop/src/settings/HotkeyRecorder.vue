@@ -2,7 +2,7 @@
 /**
  * Records the lookup hotkey (spec section 4). The recorder is a button, not an <input>:
  * an editable element would let the Chinese IME take the keys. Everything about the
- * keys (names, rules, warnings) comes from Rust; this only collects key presses.
+ * keys (names, rules) comes from Rust; this only collects key presses.
  */
 import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
 import {
@@ -20,11 +20,7 @@ import {
 const props = defineProps<{ settings: SettingsView }>();
 const emit = defineEmits<{ update: [settings: SettingsView] }>();
 
-type State =
-  | { kind: 'idle' }
-  | { kind: 'recording' }
-  /** Waiting for "仍要使用" / "重新录制" (spec 3.2). */
-  | { kind: 'confirm'; hotkey: HotkeyView; warnings: string[] };
+type State = { kind: 'idle' } | { kind: 'recording' };
 
 const state = ref<State>({ kind: 'idle' });
 /** A line under the recorder: the result of the last action, or a recording hint. */
@@ -49,15 +45,24 @@ const recorderText = computed(() => {
     const names = MODIFIER_NAMES.filter(([key]) => held.value?.[key]).map(([, name]) => name);
     return names.length > 0 ? `${names.join(' + ')} + …` : '请按下新的快捷键（Esc 取消）';
   }
-  if (current.kind === 'confirm') return current.hotkey.display;
+  if (props.settings.lookupOff) return '不使用';
   return props.settings.lookup?.display ?? '未设置';
 });
 
 const status = computed(() => {
   if (state.value.kind !== 'idle') return '录制期间快捷键暂停使用';
+  if (props.settings.lookupOff) {
+    return props.settings.doubleCtrlC
+      ? '不使用快捷键，可以连按两次 Ctrl+C 查词'
+      : '不使用快捷键。要查词，请设置快捷键或打开下面的"连按两次 Ctrl+C"';
+  }
   if (props.settings.lookupActive) return '已生效';
   return `未生效：${props.settings.lookupError ?? '原因未知'}`;
 });
+
+const failed = computed(
+  () => state.value.kind === 'idle' && !props.settings.lookupActive && !props.settings.lookupOff,
+);
 
 const isDefault = computed(
   () => props.settings.lookup?.accelerator === props.settings.defaultLookup.accelerator,
@@ -95,18 +100,19 @@ async function cancel(): Promise<void> {
   }
 }
 
-async function apply(hotkey: HotkeyView, confirmed: boolean): Promise<void> {
+/** `null` turns the lookup hotkey off. */
+async function apply(hotkey: HotkeyView | null): Promise<void> {
   listen(false);
   busy.value = true;
   try {
-    const result = await applyHotkey(hotkey.accelerator, confirmed);
+    const result = await applyHotkey(hotkey?.accelerator ?? '');
     emit('update', result.settings);
     switch (result.outcome) {
-      case 'needs_confirmation':
-        state.value = { kind: 'confirm', hotkey, warnings: result.warnings };
-        return;
       case 'changed':
-        notice.value = { text: `已改为 ${hotkey.display}`, error: false };
+        notice.value = {
+          text: hotkey ? `已改为 ${hotkey.display}` : '已关闭快捷键',
+          error: false,
+        };
         break;
       case 'unchanged':
         notice.value = null;
@@ -116,7 +122,7 @@ async function apply(hotkey: HotkeyView, confirmed: boolean): Promise<void> {
         break;
       case 'register_failed':
         notice.value = {
-          text: `${hotkey.display} 注册失败：${result.message ?? ''}。已保留原来的快捷键`,
+          text: `${hotkey?.display ?? ''} 注册失败：${result.message ?? ''}。已保留原来的快捷键`,
           error: true,
         };
         break;
@@ -130,11 +136,6 @@ async function apply(hotkey: HotkeyView, confirmed: boolean): Promise<void> {
     busy.value = false;
   }
   state.value = { kind: 'idle' };
-}
-
-function rerecord(): void {
-  notice.value = null;
-  enterRecording();
 }
 
 async function onKeyDown(event: KeyboardEvent): Promise<void> {
@@ -167,7 +168,7 @@ async function onKeyDown(event: KeyboardEvent): Promise<void> {
     return;
   }
   notice.value = null;
-  void apply(checked.hotkey, false);
+  void apply(checked.hotkey);
 }
 
 function onKeyUp(event: KeyboardEvent): void {
@@ -185,7 +186,7 @@ function onKeyUp(event: KeyboardEvent): void {
   sawMainKey = false;
 }
 
-/** Switching to another program while recording or confirming cancels (spec 4.5). */
+/** Switching to another program while recording cancels (spec 4.5). */
 function onBlur(): void {
   if (state.value.kind !== 'idle') void cancel();
 }
@@ -208,7 +209,12 @@ onBeforeUnmount(() => {
 
 async function restoreDefault(): Promise<void> {
   notice.value = null;
-  await apply(props.settings.defaultLookup, false);
+  await apply(props.settings.defaultLookup);
+}
+
+async function turnOff(): Promise<void> {
+  notice.value = null;
+  await apply(null);
 }
 </script>
 
@@ -241,9 +247,19 @@ async function restoreDefault(): Promise<void> {
           type="button"
           class="button"
           :disabled="!!settings.readOnly || busy || isDefault"
+          :title="`默认：${settings.defaultLookup.display}`"
           @click="restoreDefault"
         >
-          恢复默认（{{ settings.defaultLookup.display }}）
+          恢复默认
+        </button>
+        <button
+          id="hotkey-off"
+          type="button"
+          class="button"
+          :disabled="!!settings.readOnly || busy || settings.lookupOff"
+          @click="turnOff"
+        >
+          不使用
         </button>
       </template>
       <button
@@ -260,38 +276,10 @@ async function restoreDefault(): Promise<void> {
       id="hotkey-status"
       role="status"
       class="hotkey__status"
-      :class="{ 'hotkey__status--failed': state.kind === 'idle' && !settings.lookupActive }"
+      :class="{ 'hotkey__status--failed': failed }"
     >
       {{ status }}
     </p>
-    <div
-      v-if="state.kind === 'confirm'"
-      id="hotkey-confirm"
-      class="confirm"
-      role="alertdialog"
-      aria-label="确认快捷键"
-    >
-      <p class="confirm__title">{{ state.hotkey.display }} 会影响：</p>
-      <ul class="confirm__list">
-        <li v-for="warning in state.warnings" :key="warning">{{ warning }}</li>
-      </ul>
-      <div class="confirm__actions">
-        <button
-          id="hotkey-confirm-use"
-          type="button"
-          class="button button--primary"
-          @click="apply(state.hotkey, true)"
-        >
-          仍要使用
-        </button>
-        <button id="hotkey-rerecord" type="button" class="button" @click="rerecord">
-          重新录制
-        </button>
-        <button id="hotkey-confirm-cancel" type="button" class="button" @click="cancel">
-          取消
-        </button>
-      </div>
-    </div>
     <p
       v-if="notice"
       id="hotkey-notice"

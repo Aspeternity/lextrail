@@ -1,8 +1,8 @@
 # M1 设置窗口与快捷键设置
 
-> 状态：**已审阅，实现中**（2026-10-21，分支 `feat/hotkey-settings`；项目负责人 2026-10-21 审阅，第九节的问题已确认）。相关决定：D009、D010、D012、D014、D042、D043、D047（新）。
+> 状态：**已审阅，实现中**（2026-10-21，分支 `feat/hotkey-settings`；项目负责人 2026-10-21 审阅，第九节的问题已确认）。相关决定：D009、D010、D012、D014、D042、D043、D047、D048（新）。
 > 范围：托盘"设置…"打开的单独设置窗口，本次只做"快捷键"和"隐私"两类；整理常用软件快捷键清单，确定默认快捷键。
-> 不在本次：首次启动确认快捷键（M2 首次启动引导）；截图 OCR、输入翻译的快捷键（只在第七节清单里给建议，不注册、不进界面）；查询历史的列表和删除。
+> 不在本次：首次启动确认快捷键（M2 首次启动引导）；截图 OCR、输入翻译的快捷键（M5 做这两个功能时再定）；查询历史的列表和删除。
 
 ---
 
@@ -27,7 +27,7 @@
   - **隐私**：不记录查询历史开关。
   - 以后的分类（悬浮窗、AI、同步、数据包、通用，见 `ARCHITECTURE.md` 第 12 节）直接加在列表里。选中的分类只在页面内存里，不需要路由。
 - **录制框用按钮等不可编辑的元素，不用 `<input>`**：可编辑元素获得焦点时中文输入法会处理按键（组字、截走字母键），录不到真实的组合。
-- 前端只负责收集按键、显示 Rust 返回的结果；快捷键的解析、显示文字、限制和提示全部在 Rust（第三节），前端不重复实现。
+- 前端只负责收集按键、显示 Rust 返回的结果；快捷键的解析、显示文字和限制全部在 Rust（第三节），前端不重复实现。
 
 ### 1.3 权限（Tauri 2 ACL）
 
@@ -50,37 +50,24 @@
 
 ---
 
-## 三、快捷键的限制与提示
+## 三、快捷键的限制（D048，2026-10-21 改）
 
-### 3.1 禁止（会让 LexTrail 自己失灵）
+只拦"不能用"的组合，**不按具体软件提示冲突、也不要求确认**：几乎所有好按的组合都有某个软件在用，真正的冲突以系统注册结果为准（第四节第 4 条、5.1）。原来的"允许但提示"（通用编辑键、按软件列出的冲突）已删除，理由见 D048。
+
+### 3.1 禁止（录到时显示原因、不能保存）
 
 | 组合 | 原因（界面上显示） |
 |---|---|
 | Ctrl+C | 剪贴板兜底要模拟它复制选中文字（D043），连按两次 Ctrl+C 也会失效 |
 | Ctrl+Insert | 终端里的剪贴板兜底要模拟它复制（D043） |
 | Esc | 悬浮窗靠它关闭 |
+| Alt+Tab、Alt+F4、Alt+Esc、Ctrl+Esc、Ctrl+Shift+Esc、Ctrl+Alt+Delete、Ctrl+Space、单独的 F12 | 这是 Windows 保留的组合（切换 / 关闭窗口、开始菜单、任务管理器、输入法切换；F12 留给调试器） |
+| 不带 Ctrl、Alt 的组合（单独的按键、只加 Shift），功能键 F1–F24 和 Pause 除外 | 单独的按键会影响正常输入 / 只按 Shift 的组合会影响输入大写字母、符号或选择文字，请加上 Ctrl 或 Alt |
+| 带 Win 键的组合 | 暂不支持（项目负责人确认）：Win+字母大多被系统保留，录制时很多组合被资源管理器先拿走 |
 
-- 只禁止这三个**完全相同**的组合（`RegisterHotKey` 按修饰键精确匹配，Ctrl+Shift+C 不影响模拟的 Ctrl+C）。
-- 录到禁止的组合时直接显示原因、不能保存。录制中按 Esc 是"取消录制"，所以 Esc 本来也录不进去。
-
-### 3.2 允许，但保存前提示会影响什么
-
-系统查不出软件内部的快捷键，所以下面这些都允许，保存前在设置窗口内显示提示，用户点"仍要使用"后照常注册（点"重新录制"则不保存）：
-
-| 情况 | 提示（示例） |
-|---|---|
-| Ctrl+V / X / Z / Y / A / S / F / P / N / W / T 等常用快捷键 | "所有软件里的粘贴都会失效"（按组合给出具体功能名） |
-| 不带修饰键的单个字母、数字、空格、回车、退格、Tab、方向键等 | "所有软件里都无法再输入 X" |
-| 只有 Shift 加字母或数字 | "所有软件里都无法再输入大写 X / 符号 !" |
-| 常用软件冲突清单（第七节）里的组合 | "在 Visual Studio 中是'工具箱'，在那里会失效"（列出清单里的软件和功能） |
-| 只有 Alt 的组合（没有 Ctrl / Shift，主键不限于字母） | "只有 Alt 的组合在 Windows Terminal 中查不到词（按下时选区会被清除）"（2026-10-21 自动检查后改：原写"选区消失"，实际选区在取词之前就被清除，R3-9；D014 补充：只按着 Alt 时屏蔽键只能退回 `0xE8`，与主键无关） |
-
-- 规则和提示文字是一张表（`lextrail-config::hotkey` 里的数据，单元测试逐条覆盖），以后补充清单只改表。
-- 一个组合可能有几条提示，全部列出。
-- 不带修饰键的功能键（F1–F24）、Pause 等不提示；但清单里有冲突的照样提示（例如 F1 是很多软件的帮助、Snipaste 的截图）。
-- 带 Win 键的组合：**本次不支持**，录到时提示"暂不支持带 Win 键的组合"（项目负责人确认）。理由：Win+字母大多被系统保留，注册会失败；录制时很多组合被资源管理器先拿走；按住 Win 时弹出悬浮窗的行为没有测过。
-
----
+- 只按**完全相同**的组合判断（`RegisterHotKey` 按修饰键精确匹配，Ctrl+Shift+C 不影响模拟的 Ctrl+C；Ctrl+F12 可以用）。
+- 规则是 `lextrail-config::hotkey` 里的两张表加一条规则，单元测试逐条覆盖。
+- 只有 Alt 的组合（如 Alt+Space）不再有限制：屏蔽键改为补发一次 Ctrl，终端里也能取词（D014 补充，2026-10-21）。
 
 ## 四、录制快捷键
 
@@ -101,7 +88,7 @@
 
 1. 新组合与当前组合相同：什么都不做（录制时停用的旧组合照常恢复）。
 2. 被禁止：不保存，恢复旧的。
-3. 有提示：等用户确认；用户放弃就恢复旧的。
+3. （已取消：原来的"有提示等用户确认"，D048。）
 4. **先注册新的**。失败：恢复旧的，显示原因（"可能已被其他程序占用"或"系统不允许注册这个组合"），设置文件不变。
 5. 注册成功后**再写回设置文件**。写回失败：注销新的、恢复旧的，显示"无法保存设置文件：…"。保证设置文件和实际生效的快捷键一致。
 6. 成功：注销旧的（录制时已注销，这里只更新状态），托盘提示恢复为"LexTrail"（如果启动时注册失败改过它），界面显示"已生效"。
@@ -125,6 +112,13 @@
 - **保存前检查文件有没有被手动改过**（项目负责人补充）：记下上次读或写之后文件的修改时间；保存前再看一次，不同（或文件被删掉）就不覆盖，提示"设置文件被手动修改过，请重启 LexTrail 后再修改"，这次修改不生效（开关退回、快捷键恢复旧的）。`lextrail-config` 提供带修改时间的读写，单元测试覆盖"没改过""改过""被删掉"。
 - 启动时读到的设置文件来自更新版本（`NewerVersion`）时：设置窗口只读，显示"设置文件来自更新版本的 LexTrail，不能在这里修改"。
 
+### 5.4 不使用快捷键（D048）
+
+- 设置窗口"不使用"按钮：设置文件写 `lookup = ""`，注销当前快捷键。先写文件、再注销；写文件失败时快捷键不变。
+- 不算注册失败：启动时不弹提示框，托盘提示不显示"快捷键注册失败"，设置窗口显示"不使用快捷键"，连按两次 Ctrl+C 关着时提示可以打开它或设置快捷键。
+- 再录一个组合或点"恢复默认"就重新启用。
+- 前端用 `hotkey_apply` 传空字符串表示"不使用"，不另加命令。
+
 ---
 
 ## 六、Rust 端命令（只授予设置窗口）
@@ -133,8 +127,8 @@
 |---|---|
 | `settings_get` | 当前设置和快捷键状态（规范写法、显示文字、是否已生效及原因、是否只读） |
 | `hotkey_recording(active)` | 开始录制（停用当前快捷键）/ 取消录制（恢复） |
-| `hotkey_check(keys)` | 检查一次按键（`code` + 修饰键）：规范写法、显示文字、禁止原因或提示列表 |
-| `hotkey_apply(accelerator, confirmed)` | 按 5.1 换快捷键；有提示而 `confirmed` 为 false 时只返回提示 |
+| `hotkey_check(keys)` | 检查一次按键（`code` + 修饰键）：规范写法、显示文字、禁止原因 |
+| `hotkey_apply(accelerator)` | 按 5.1 换快捷键；空字符串表示不使用快捷键（5.4） |
 | `settings_set_double_ctrl_c(on)` | 5.2 |
 | `settings_set_record_history(on)` | 5.2 |
 
@@ -142,44 +136,9 @@
 
 ---
 
-## 七、常用软件快捷键清单（2026-10-21 核对）
+## 七、常用软件快捷键清单（已取消，D048）
 
-用途：确定默认快捷键（D014），以及 3.2 的冲突提示表。**只有对照软件官方资料核对过的条目才进提示表**（`lextrail-config::hotkey` 的 `CONFLICTS`，单元测试检查写法）；只有第三方资料或没找到资料的条目列在 7.2，不进提示表。单个 Ctrl+字母的常用快捷键由 3.2 第一行统一处理。
-
-### 7.1 已核对（进提示表）
-
-| 软件 | 组合 | 功能 | 来源 |
-|---|---|---|---|
-| Visual Studio | Ctrl+Alt+A、B、C、D、E、F、G、H、I、J、K、L、N、O、P、Q、R、S、T、U、X、Z | 命令窗口、断点、调用堆栈、反汇编、异常设置、F# Interactive、寄存器、线程、即时窗口、对象浏览器、调用层次结构、解决方案资源管理器、克隆查询、输出、附加到进程、快速监视、Web 浏览器、服务器资源管理器、文档大纲、模块、**工具箱（X）**、进程 | [Microsoft Learn：Visual Studio 键盘快捷方式](https://learn.microsoft.com/en-us/visualstudio/ide/default-keyboard-shortcuts-in-visual-studio) |
-| IntelliJ IDEA | Ctrl+Alt+A、B、F、I、L、M、N、P、R、S、T、V、Z；Alt+Shift+C、G、J；Alt+J | 接受右侧、转到实现、引入字段、自动缩进、格式化代码、提取方法、内联、引入参数、接受左侧、设置、包围、引入变量、回滚等 | [JetBrains：Windows 默认键位](https://www.jetbrains.com/help/idea/reference-keymap-win-default.html) |
-| Word | Ctrl+Alt+1、2、3、C、D、F、I、K、L、M、N、O、P、R、S、T、V、Z | 标题、复制 / 粘贴格式、尾注、脚注、打印预览、批注、各种视图、®、™ 等 | [Microsoft Support：Word 键盘快捷方式](https://support.microsoft.com/en-us/office/keyboard-shortcuts-in-word-95ef89dd-7142-4b50-afb2-f762f663ceb2) |
-| VS Code | Ctrl+Alt+↑ / ↓；Alt+Shift+F、A、I、0、方向键；Alt+Z；Ctrl+Shift+P、N、K、L、O、M、E、F、G、D、X、H、U、V、T；F8 | 多光标、格式化、块注释、复制行、选区、自动换行、各面板；F8 是"下一个问题" | [VS Code 键盘快捷方式（Windows，PDF）](https://code.visualstudio.com/shortcuts/keyboard-shortcuts-windows.pdf) |
-| Chrome / Edge | Alt+D、E、F；Ctrl+Shift+N、T、W、O、B、J、R、D | 地址栏、菜单、无痕窗口、恢复标签页、书签、开发者工具、强制刷新 | [Chrome 帮助：键盘快捷键](https://support.google.com/chrome/answer/157179) |
-| Windows Terminal | Ctrl+Alt+1–8、Ctrl+Alt+←；Alt+Shift+D、-、方向键；Alt+Enter | 切换标签页、焦点、拆分窗格、调整窗格、全屏 | [Microsoft Learn：Windows Terminal 操作](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/actions) |
-| 福昕 PDF 编辑器 | Ctrl+Alt+V、D（另有大量 Ctrl+Shift+字母） | 原位粘贴、复制页面 | [Foxit：PDF Editor Windows 键盘快捷键](https://resource-cms.foxit.com/foxit-pdf-editor-for-windows/keyboard-shortcuts) |
-| SumatraPDF | Ctrl+Shift+L、N、S；没有 Ctrl+Alt 组合 | 全屏、新窗口打开、保存批注 | [SumatraPDF：Keyboard shortcuts](https://www.sumatrapdfreader.org/docs/Keyboard-shortcuts) |
-| DeepL 桌面版 | 连按两次 Ctrl+C | 翻译选中文字（和连按两次 Ctrl+C 同时打开时会一起弹出） | [DeepL 支持：桌面应用快捷键](https://support.deepl.com/hc/en-us/articles/360020613059-Use-DeepL-shortcuts-for-desktop-apps) |
-
-福昕的 Ctrl+Shift+字母只记录在本节，不进提示表（编辑器专用功能多，清单太长）。
-
-### 7.2 未能核对（不进提示表）
-
-| 软件 | 情况 |
-|---|---|
-| Adobe Acrobat / Reader | 官方快捷键页面拒绝自动访问（HTTP 403）；第三方资料提到 Ctrl+Alt+F、Ctrl+Alt+S，未确认。**请项目负责人在本机 Acrobat 里看一眼**（帮助 → 键盘快捷键，或直接按 Ctrl+Alt+X 看有没有反应） |
-| 福昕 PDF 阅读器 | 只找到编辑器（7.1）和 Mac 版的官方页面；阅读器在"帮助 → 键盘映射"里能看到 |
-| GoldenDict | 第三方资料说默认是连按两次 Ctrl+C（Ctrl+C+C），没找到官方文档 |
-| 网易云音乐 | 第三方资料（CSDN）说默认全局快捷键 Ctrl+Alt+L 是"喜欢当前歌曲"，和 IntelliJ 的"格式化代码"冲突；未核对 |
-| QQ 音乐、微信、QQ、有道词典 | 没找到官方说明。微信截图 Alt+A、QQ 截图 Ctrl+Alt+A 是常见说法（D014 已据此排除）；有第三方资料说微信截图键可以改成 Ctrl+Alt+X（用户自定义，不是默认） |
-
-### 7.3 默认快捷键的结论（交项目负责人决定）
-
-- **建议保留 Ctrl+Alt+X，D014 由 🟡 改为 ✅。** 已核对的软件里，只有 Visual Studio 用它打开"工具箱"（窗体设计器用，写代码时很少用到）；IntelliJ、Word、VS Code、Chrome / Edge、Windows Terminal、福昕编辑器、SumatraPDF 都不用它。
-- Visual Studio 几乎占用了全部 Ctrl+Alt+字母，换成别的 Ctrl+Alt 组合也避不开它；而 IntelliJ 和 Word 合起来又占了 Ctrl+Alt 的大部分字母，左手区域剩下的只有 Q、W、E、X（还有 G、H、J、U、Y 在右手区域）。
-- 7.2 中 Acrobat、福昕阅读器、几个常用国产软件没能核对，请项目负责人在本机上确认 Ctrl+Alt+X 没有冲突后再定。
-- 另：在波兰语等键盘布局下 AltGr+X 用来输入字母（ź），中文、英文用户不受影响。
-
-**截图 OCR、输入翻译的建议**（不注册、不进界面，M5 做这两个功能时再定）：从左手区域剩下的 Q、W、E 里选，**截图 OCR：Ctrl+Alt+E**，**输入翻译：Ctrl+Alt+Q**（都只和 Visual Studio 冲突：异常设置、快速监视）。W 留作备选（有第三方说法称微信用 Ctrl+Alt+W，未核对）。注意德语布局下 AltGr+Q / E 是 @ / €。
+2026-10-21 核对过的清单（Visual Studio、IntelliJ、Word、VS Code、Chrome / Edge、Windows Terminal、福昕、SumatraPDF 等）不再用于提示，已从代码删除；需要时查 git 历史（提交 88dec0d）。默认快捷键改为按"好按、不吃打字键、不是系统保留"来选，由项目负责人在 Alt+Space 和 Ctrl+Alt+某个字母之间决定（D014）。
 
 ---
 
@@ -187,8 +146,8 @@
 
 ### 8.1 单元测试
 
-- `lextrail-config::hotkey`：解析（大小写、`KeyX` / `X`、空白、重复修饰键、只有修饰键、两个主键）、规范写法、显示文字、`code` 到主键、禁止表、提示表逐条。
-- `hotkey.rs`：换快捷键状态机（假注册器）：相同组合、禁止、提示未确认、新的注册失败、写回失败、成功、录制中窗口销毁、启动时就失败后再换。
+- `lextrail-config::hotkey`：解析（大小写、`KeyX` / `X`、空白、重复修饰键、只有修饰键、两个主键）、规范写法、显示文字、`code` 到主键、禁止规则逐条。
+- `hotkey.rs`：换快捷键状态机（假注册器）：相同组合、禁止、常用快捷键不需确认、不使用快捷键（保存失败、录制中、启动时为空）、新的注册失败、写回失败、成功、录制中窗口销毁、启动时就失败后再换。
 - 开关：连按监听启停（假的启动函数）、历史开关取反。
 - `tray.rs`：菜单顺序和 id。
 - 权限：capability 文件与命令列表对应（1.3）。
@@ -203,7 +162,7 @@
 - **按修饰键分类复测**（D014、R2-1、R2-2）：分别把查词快捷键设成下面五类，每类都测 Windows Terminal 选词（取到单词、选区保留，手动测试清单 5.1）和 VS Code 查词后按 Esc 再按 ↓（不框住"文件(F)"、不弹出菜单）：
   1. Ctrl+Alt（默认 Ctrl+Alt+X）
   2. Shift+Alt（如 Shift+Alt+X）
-  3. 只有 Alt（如 Alt+X；预期 Windows Terminal 查不到词、显示"没有选中文字"，和 3.2 的提示一致）
+  3. 只有 Alt（如 Alt+J、Alt+Space；补发 Ctrl 后预期和其他类一样取到词、选区保留，D014 补充）
   4. Ctrl+Shift（如 Ctrl+Shift+F1，不需要屏蔽键）
   5. 不带修饰键的功能键（如 F8）
   每类再跑一次 `stuck-keys.ps1`（120 次，0 卡住）。真实键盘的同样测试放进手动测试清单 R9。

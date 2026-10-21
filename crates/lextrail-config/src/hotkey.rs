@@ -294,17 +294,19 @@ impl fmt::Display for Hotkey {
     }
 }
 
-/// Whether a combination can be used, and what the user should be told first.
+/// Whether a combination can be used. Like other tools with global hotkeys (D048),
+/// LexTrail only refuses combinations that cannot work; what other programs do with a
+/// combination is not checked: a combination another program has registered fails to
+/// register, and the user is told so then.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verdict {
     /// Cannot be used; the reason is shown in the settings window.
     Blocked(String),
-    /// Can be used. Non-empty warnings are shown and must be confirmed before saving.
-    Allowed(Vec<String>),
+    Allowed,
 }
 
 /// Combinations LexTrail itself depends on (spec 3.1).
-const BLOCKED: [(Modifiers, &str, &str); 3] = [
+const OWN: [(Modifiers, &str, &str); 3] = [
     (
         Modifiers::of(true, false, false),
         "C",
@@ -318,232 +320,49 @@ const BLOCKED: [(Modifiers, &str, &str); 3] = [
     (Modifiers::NONE, "Escape", "悬浮窗靠 Esc 关闭"),
 ];
 
-/// Shortcuts used by (nearly) every program or by Windows itself (spec 3.2, first row).
-const COMMON: [(Modifiers, &str, &str); 27] = {
+/// Combinations Windows keeps for itself (spec 3.1): they switch or close windows, open
+/// the Start menu or Task Manager, or switch the input method. F12 alone is reserved
+/// for debuggers (`RegisterHotKey` documentation).
+const SYSTEM: [(Modifiers, &str); 8] = {
     const CTRL: Modifiers = Modifiers::of(true, false, false);
     const ALT: Modifiers = Modifiers::of(false, true, false);
-    const SHIFT: Modifiers = Modifiers::of(false, false, true);
-    const CTRL_SHIFT: Modifiers = Modifiers::of(true, false, true);
     [
-        (CTRL, "A", "全选"),
-        (CTRL, "V", "粘贴"),
-        (CTRL, "X", "剪切"),
-        (CTRL, "Z", "撤销"),
-        (CTRL, "Y", "重做"),
-        (CTRL, "S", "保存"),
-        (CTRL, "F", "查找"),
-        (CTRL, "H", "替换"),
-        (CTRL, "P", "打印"),
-        (CTRL, "N", "新建"),
-        (CTRL, "O", "打开"),
-        (CTRL, "W", "关闭标签页或窗口"),
-        (CTRL, "T", "新建标签页"),
-        (CTRL, "R", "刷新"),
-        (CTRL, "Tab", "切换标签页"),
-        (CTRL, "Space", "中文输入法的中英文切换"),
-        (CTRL, "Period", "中文输入法的中英文标点切换"),
-        (CTRL, "Escape", "打开开始菜单"),
-        (CTRL, "Backspace", "删除前一个词"),
-        (CTRL, "Delete", "删除后一个词"),
-        (CTRL_SHIFT, "Z", "重做"),
-        (CTRL_SHIFT, "Tab", "切换到上一个标签页"),
-        (CTRL_SHIFT, "Escape", "打开任务管理器"),
-        (ALT, "F4", "关闭窗口"),
-        (ALT, "Tab", "切换窗口"),
-        (ALT, "Space", "窗口菜单"),
-        (SHIFT, "Space", "中文输入法的全角 / 半角切换"),
+        (ALT, "Tab"),
+        (ALT, "F4"),
+        (ALT, "Escape"),
+        (CTRL, "Escape"),
+        (Modifiers::of(true, false, true), "Escape"),
+        (Modifiers::of(true, true, false), "Delete"),
+        (CTRL, "Space"),
+        (Modifiers::NONE, "F12"),
     ]
 };
 
-/// Combinations well-known programs use (spec section 7): `(program, combination,
-/// function)`. Only entries checked against the program's own documentation belong here;
-/// the sources are listed in the spec.
-const CONFLICTS: &[(&str, &str, &str)] = &[
-    // Visual Studio (Microsoft Learn, default keyboard shortcuts): nearly every
-    // Ctrl+Alt+letter opens a tool window.
-    ("Visual Studio", "Ctrl+Alt+A", "命令窗口"),
-    ("Visual Studio", "Ctrl+Alt+B", "断点"),
-    ("Visual Studio", "Ctrl+Alt+C", "调用堆栈"),
-    ("Visual Studio", "Ctrl+Alt+D", "反汇编"),
-    ("Visual Studio", "Ctrl+Alt+E", "异常设置"),
-    ("Visual Studio", "Ctrl+Alt+F", "F# Interactive"),
-    ("Visual Studio", "Ctrl+Alt+G", "寄存器"),
-    ("Visual Studio", "Ctrl+Alt+H", "线程"),
-    ("Visual Studio", "Ctrl+Alt+I", "即时窗口"),
-    ("Visual Studio", "Ctrl+Alt+J", "对象浏览器"),
-    ("Visual Studio", "Ctrl+Alt+K", "调用层次结构"),
-    ("Visual Studio", "Ctrl+Alt+L", "解决方案资源管理器"),
-    ("Visual Studio", "Ctrl+Alt+N", "克隆查询"),
-    ("Visual Studio", "Ctrl+Alt+O", "输出"),
-    ("Visual Studio", "Ctrl+Alt+P", "附加到进程"),
-    ("Visual Studio", "Ctrl+Alt+Q", "快速监视"),
-    ("Visual Studio", "Ctrl+Alt+R", "Web 浏览器"),
-    ("Visual Studio", "Ctrl+Alt+S", "服务器资源管理器"),
-    ("Visual Studio", "Ctrl+Alt+T", "文档大纲"),
-    ("Visual Studio", "Ctrl+Alt+U", "模块"),
-    ("Visual Studio", "Ctrl+Alt+X", "工具箱"),
-    ("Visual Studio", "Ctrl+Alt+Z", "进程"),
-    // IntelliJ IDEA (JetBrains, Windows default keymap).
-    ("IntelliJ IDEA", "Ctrl+Alt+A", "接受右侧"),
-    ("IntelliJ IDEA", "Ctrl+Alt+B", "转到实现"),
-    ("IntelliJ IDEA", "Ctrl+Alt+F", "引入字段"),
-    ("IntelliJ IDEA", "Ctrl+Alt+I", "自动缩进"),
-    ("IntelliJ IDEA", "Ctrl+Alt+L", "格式化代码"),
-    ("IntelliJ IDEA", "Ctrl+Alt+M", "提取方法"),
-    ("IntelliJ IDEA", "Ctrl+Alt+N", "内联"),
-    ("IntelliJ IDEA", "Ctrl+Alt+P", "引入参数"),
-    ("IntelliJ IDEA", "Ctrl+Alt+R", "接受左侧"),
-    ("IntelliJ IDEA", "Ctrl+Alt+S", "设置"),
-    ("IntelliJ IDEA", "Ctrl+Alt+T", "包围"),
-    ("IntelliJ IDEA", "Ctrl+Alt+V", "引入变量"),
-    ("IntelliJ IDEA", "Ctrl+Alt+Z", "回滚"),
-    ("IntelliJ IDEA", "Alt+Shift+C", "最近更改"),
-    ("IntelliJ IDEA", "Alt+Shift+G", "在选中的每行添加光标"),
-    ("IntelliJ IDEA", "Alt+Shift+J", "取消最后一个选中项"),
-    ("IntelliJ IDEA", "Alt+J", "选中下一个相同项"),
-    // Word (Microsoft Support, keyboard shortcuts in Word).
-    ("Word", "Ctrl+Alt+1", "标题 1"),
-    ("Word", "Ctrl+Alt+2", "标题 2"),
-    ("Word", "Ctrl+Alt+3", "标题 3"),
-    ("Word", "Ctrl+Alt+C", "复制格式"),
-    ("Word", "Ctrl+Alt+D", "插入尾注"),
-    ("Word", "Ctrl+Alt+F", "插入脚注"),
-    ("Word", "Ctrl+Alt+I", "打印预览"),
-    ("Word", "Ctrl+Alt+K", "自动套用格式"),
-    ("Word", "Ctrl+Alt+L", "插入 LISTNUM 域"),
-    ("Word", "Ctrl+Alt+M", "插入批注"),
-    ("Word", "Ctrl+Alt+N", "草稿视图"),
-    ("Word", "Ctrl+Alt+O", "大纲视图"),
-    ("Word", "Ctrl+Alt+P", "页面视图"),
-    ("Word", "Ctrl+Alt+R", "插入 ® 符号"),
-    ("Word", "Ctrl+Alt+S", "拆分窗口"),
-    ("Word", "Ctrl+Alt+T", "插入 ™ 符号"),
-    ("Word", "Ctrl+Alt+V", "粘贴格式"),
-    ("Word", "Ctrl+Alt+Z", "返回上次修改的位置"),
-    // VS Code (keyboard shortcuts for Windows).
-    ("VS Code", "Ctrl+Alt+Up", "在上方添加光标"),
-    ("VS Code", "Ctrl+Alt+Down", "在下方添加光标"),
-    ("VS Code", "Alt+Shift+F", "格式化文档"),
-    ("VS Code", "Alt+Shift+A", "切换块注释"),
-    ("VS Code", "Alt+Shift+I", "在每行末尾添加光标"),
-    ("VS Code", "Alt+Shift+0", "切换编辑器布局"),
-    ("VS Code", "Alt+Shift+Up", "向上复制行"),
-    ("VS Code", "Alt+Shift+Down", "向下复制行"),
-    ("VS Code", "Alt+Shift+Left", "缩小选区"),
-    ("VS Code", "Alt+Shift+Right", "扩大选区"),
-    ("VS Code", "Alt+Z", "自动换行"),
-    ("VS Code", "Ctrl+Shift+P", "命令面板"),
-    ("VS Code", "Ctrl+Shift+N", "新窗口"),
-    ("VS Code", "Ctrl+Shift+K", "删除行"),
-    ("VS Code", "Ctrl+Shift+L", "选中所有相同项"),
-    ("VS Code", "Ctrl+Shift+O", "转到符号"),
-    ("VS Code", "Ctrl+Shift+M", "问题面板"),
-    ("VS Code", "Ctrl+Shift+E", "资源管理器"),
-    ("VS Code", "Ctrl+Shift+F", "全局搜索"),
-    ("VS Code", "Ctrl+Shift+G", "源代码管理"),
-    ("VS Code", "Ctrl+Shift+D", "调试"),
-    ("VS Code", "Ctrl+Shift+X", "扩展"),
-    ("VS Code", "Ctrl+Shift+H", "全局替换"),
-    ("VS Code", "Ctrl+Shift+U", "输出面板"),
-    ("VS Code", "Ctrl+Shift+V", "Markdown 预览"),
-    ("VS Code", "Ctrl+Shift+T", "重新打开关闭的编辑器"),
-    ("VS Code", "F8", "转到下一个问题"),
-    // Chrome (Google Chrome Help, Windows); Edge uses the same ones.
-    ("浏览器", "Alt+D", "选中地址栏"),
-    ("浏览器", "Alt+E", "打开菜单"),
-    ("浏览器", "Alt+F", "打开菜单"),
-    ("浏览器", "Ctrl+Shift+N", "新建无痕窗口"),
-    ("浏览器", "Ctrl+Shift+T", "重新打开关闭的标签页"),
-    ("浏览器", "Ctrl+Shift+W", "关闭窗口"),
-    ("浏览器", "Ctrl+Shift+O", "书签管理器"),
-    ("浏览器", "Ctrl+Shift+B", "显示书签栏"),
-    ("浏览器", "Ctrl+Shift+J", "开发者工具"),
-    ("浏览器", "Ctrl+Shift+R", "强制刷新"),
-    ("浏览器", "Ctrl+Shift+D", "把所有标签页存为书签"),
-    // Windows Terminal (Microsoft Learn, actions).
-    ("Windows Terminal", "Ctrl+Alt+1", "切换到第 1 个标签页"),
-    ("Windows Terminal", "Ctrl+Alt+2", "切换到第 2 个标签页"),
-    ("Windows Terminal", "Ctrl+Alt+3", "切换到第 3 个标签页"),
-    ("Windows Terminal", "Ctrl+Alt+4", "切换到第 4 个标签页"),
-    ("Windows Terminal", "Ctrl+Alt+5", "切换到第 5 个标签页"),
-    ("Windows Terminal", "Ctrl+Alt+6", "切换到第 6 个标签页"),
-    ("Windows Terminal", "Ctrl+Alt+7", "切换到第 7 个标签页"),
-    ("Windows Terminal", "Ctrl+Alt+8", "切换到第 8 个标签页"),
-    ("Windows Terminal", "Ctrl+Alt+Left", "焦点移到上一个窗格"),
-    ("Windows Terminal", "Alt+Shift+D", "拆分窗格"),
-    ("Windows Terminal", "Alt+Shift+Minus", "向下拆分窗格"),
-    ("Windows Terminal", "Alt+Shift+Up", "调整窗格大小"),
-    ("Windows Terminal", "Alt+Shift+Down", "调整窗格大小"),
-    ("Windows Terminal", "Alt+Shift+Left", "调整窗格大小"),
-    ("Windows Terminal", "Alt+Shift+Right", "调整窗格大小"),
-    ("Windows Terminal", "Alt+Enter", "全屏"),
-    // Foxit PDF Editor (Foxit, keyboard shortcuts for Windows).
-    ("福昕 PDF 编辑器", "Ctrl+Alt+V", "原位粘贴"),
-    ("福昕 PDF 编辑器", "Ctrl+Alt+D", "复制页面"),
-    // SumatraPDF (keyboard shortcuts).
-    ("SumatraPDF", "Ctrl+Shift+L", "全屏"),
-    ("SumatraPDF", "Ctrl+Shift+N", "在新窗口中打开"),
-    ("SumatraPDF", "Ctrl+Shift+S", "把批注保存到 PDF"),
-];
-
 /// Decides whether `hotkey` may be used (spec section 3).
 pub fn check(hotkey: &Hotkey) -> Verdict {
+    let shown = hotkey.display();
     if hotkey.modifiers.win {
         return Verdict::Blocked("暂不支持带 Win 键的组合".to_owned());
     }
-    if let Some((_, _, why)) = BLOCKED.iter().find(|(m, k, _)| hotkey.is(*m, k)) {
-        return Verdict::Blocked(format!("不能使用 {}：{why}", hotkey.display()));
+    if let Some((_, _, why)) = OWN.iter().find(|(m, k, _)| hotkey.is(*m, k)) {
+        return Verdict::Blocked(format!("不能使用 {shown}：{why}"));
     }
-    let mut warnings = Vec::new();
-    let shown = hotkey.display();
-    if let Some((_, _, function)) = COMMON.iter().find(|(m, k, _)| hotkey.is(*m, k)) {
-        warnings.push(format!("所有软件里的「{function}」（{shown}）都会失效"));
+    if SYSTEM.iter().any(|(m, k)| hotkey.is(*m, k)) {
+        return Verdict::Blocked(format!("不能使用 {shown}：这是 Windows 保留的组合"));
     }
+    // Without Ctrl or Alt only function keys and Pause: anything else is typed, or
+    // moves the cursor or the selection, in every program.
     let m = hotkey.modifiers;
-    let kind = hotkey.key.kind;
-    let types_text = matches!(kind, Kind::Letter | Kind::Digit | Kind::Punctuation)
-        || (kind == Kind::Numpad && hotkey.key.name != "NumEnter");
-    if m.is_empty() {
-        match kind {
-            _ if types_text => warnings.push(format!("所有软件里都无法再输入「{shown}」")),
-            Kind::Typing | Kind::Navigation | Kind::Numpad => {
-                warnings.push(format!("所有软件里的 {shown} 键都会失效"));
-            }
-            Kind::Lock => warnings.push(format!("{shown} 键会失效")),
-            Kind::PrintScreen => warnings.push("系统的截图键会失效".to_owned()),
-            Kind::Function
-            | Kind::Escape
-            | Kind::Pause
-            | Kind::Letter
-            | Kind::Digit
-            | Kind::Punctuation => {}
-        }
-    } else if m == Modifiers::of(false, false, true) {
-        if kind == Kind::Letter {
-            warnings.push(format!(
-                "所有软件里都无法再输入大写的 {}",
-                hotkey.key.display
-            ));
-        } else if types_text {
-            warnings.push(format!("所有软件里都无法再用 {shown} 输入符号"));
-        } else if matches!(kind, Kind::Typing | Kind::Navigation) && warnings.is_empty() {
-            warnings.push(format!(
-                "所有软件里的 {shown}（如扩展选区、反向切换）都会失效"
-            ));
-        }
+    let free_key = matches!(hotkey.key.kind, Kind::Function | Kind::Pause);
+    if !m.ctrl && !m.alt && !free_key {
+        let why = if m.shift {
+            "只按 Shift 的组合会影响输入大写字母、符号或选择文字，请加上 Ctrl 或 Alt"
+        } else {
+            "单独的按键会影响正常输入，请加上 Ctrl 或 Alt"
+        };
+        return Verdict::Blocked(format!("不能使用 {shown}：{why}"));
     }
-    if m.alt && !m.ctrl && !m.shift {
-        // D014 supplement: only Alt held, so the Alt mask falls back to 0xE8.
-        warnings
-            .push("只有 Alt 的组合在 Windows Terminal 中查不到词（按下时选区会被清除）".to_owned());
-    }
-    for (program, _, function) in CONFLICTS
-        .iter()
-        .filter(|(_, combination, _)| Hotkey::parse(combination).as_ref() == Ok(hotkey))
-    {
-        warnings.push(format!("在 {program} 中是「{function}」，在那里会失效"));
-    }
-    Verdict::Allowed(warnings)
+    Verdict::Allowed
 }
 
 #[cfg(test)]
@@ -554,17 +373,14 @@ mod tests {
         Hotkey::parse(text).unwrap()
     }
 
-    fn warnings(text: &str) -> Vec<String> {
-        match check(&hk(text)) {
-            Verdict::Allowed(w) => w,
-            Verdict::Blocked(why) => panic!("{text} blocked: {why}"),
-        }
+    fn allowed(text: &str) -> bool {
+        check(&hk(text)) == Verdict::Allowed
     }
 
     fn blocked(text: &str) -> String {
         match check(&hk(text)) {
             Verdict::Blocked(why) => why,
-            Verdict::Allowed(w) => panic!("{text} allowed: {w:?}"),
+            Verdict::Allowed => panic!("{text} allowed"),
         }
     }
 
@@ -667,147 +483,98 @@ mod tests {
     }
 
     #[test]
-    fn blocked_combinations() {
+    fn own_combinations_are_blocked() {
         assert!(blocked("Ctrl+C").contains("Ctrl+C"));
         assert!(blocked("Ctrl+C").contains("连按两次"));
         assert!(blocked("Ctrl+Insert").contains("终端"));
         assert!(blocked("Escape").contains("Esc 关闭"));
+        // Only the exact combinations: the simulated keys carry no other modifier.
+        assert!(allowed("Ctrl+Shift+C"));
+        assert!(allowed("Ctrl+Alt+C"));
+        assert!(allowed("Ctrl+Alt+Insert"));
+    }
+
+    #[test]
+    fn win_is_not_supported() {
         assert!(blocked("Win+E").contains("Win"));
         assert!(blocked("Ctrl+Alt+Win+X").contains("Win"));
-        // Only the exact combinations: the simulated keys carry no other modifier.
-        assert!(warnings("Ctrl+Shift+C").is_empty());
-        assert!(!warnings("Ctrl+Alt+C").iter().any(|w| w.contains("Ctrl+C")));
-        assert!(warnings("Shift+Insert").iter().any(|w| w.contains("Shift")));
-        assert!(warnings("Shift+Escape").is_empty());
     }
 
     #[test]
-    fn default_and_typical_choices_have_no_warnings() {
+    fn system_combinations_are_blocked() {
         for text in [
+            "Alt+Tab",
+            "Alt+F4",
+            "Alt+Escape",
+            "Ctrl+Escape",
+            "Ctrl+Shift+Escape",
+            "Ctrl+Alt+Delete",
+            "Ctrl+Space",
+            "F12",
+        ] {
+            assert!(blocked(text).contains("Windows 保留"), "{text}");
+        }
+        // With other modifiers they are ordinary combinations.
+        assert!(allowed("Ctrl+F12"));
+        assert!(allowed("Ctrl+Alt+Tab"));
+        assert!(allowed("Ctrl+Alt+Space"));
+    }
+
+    #[test]
+    fn keys_without_ctrl_or_alt_are_blocked() {
+        for text in [
+            "X",
+            "7",
+            "Slash",
+            "Num3",
+            "Space",
+            "Enter",
+            "Up",
+            "CapsLock",
+            "PrintScreen",
+        ] {
+            assert!(blocked(text).contains("单独的按键"), "{text}");
+        }
+        for text in [
+            "Shift+X",
+            "Shift+1",
+            "Shift+Up",
+            "Shift+Space",
+            "Shift+Insert",
+        ] {
+            assert!(blocked(text).contains("只按 Shift"), "{text}");
+        }
+        for text in ["F1", "F8", "F24", "Pause", "Shift+F8", "Shift+Pause"] {
+            assert!(allowed(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn everything_else_is_allowed_without_comment() {
+        // Common shortcuts of other programs are the user's choice (D048).
+        for text in [
+            "Ctrl+Alt+X",
+            "Alt+Space",
+            "Alt+X",
+            "Ctrl+V",
             "Ctrl+Shift+F1",
-            "F9",
-            "Ctrl+Alt+Y",
-            "Pause",
+            "Ctrl+Alt+L",
             "Ctrl+Alt+Shift+L",
+            "Alt+Shift+X",
         ] {
-            assert_eq!(warnings(text), Vec::<String>::new(), "{text}");
+            assert!(allowed(text), "{text}");
         }
     }
 
     #[test]
-    fn common_shortcuts_warn_with_their_function() {
-        let w = warnings("Ctrl+V");
-        assert_eq!(
-            w,
-            vec!["所有软件里的「粘贴」（Ctrl + V）都会失效".to_owned()]
-        );
-        for (text, function) in [
-            ("Ctrl+X", "剪切"),
-            ("Ctrl+Z", "撤销"),
-            ("Ctrl+A", "全选"),
-            ("Ctrl+S", "保存"),
-            ("Ctrl+Shift+Z", "重做"),
-            ("Alt+F4", "关闭窗口"),
-            ("Ctrl+Space", "中英文切换"),
-        ] {
-            assert!(
-                warnings(text).iter().any(|w| w.contains(function)),
-                "{text}"
-            );
-        }
-    }
-
-    #[test]
-    fn keys_without_modifiers_warn() {
-        assert_eq!(
-            warnings("X"),
-            vec!["所有软件里都无法再输入「X」".to_owned()]
-        );
-        assert_eq!(
-            warnings("7"),
-            vec!["所有软件里都无法再输入「7」".to_owned()]
-        );
-        assert_eq!(
-            warnings("Slash"),
-            vec!["所有软件里都无法再输入「/」".to_owned()]
-        );
-        assert_eq!(
-            warnings("Num3"),
-            vec!["所有软件里都无法再输入「小键盘 3」".to_owned()]
-        );
-        assert!(warnings("Space")[0].contains("Space 键都会失效"));
-        assert!(warnings("Up")[0].contains("↑ 键都会失效"));
-        assert!(warnings("CapsLock")[0].contains("CapsLock"));
-        assert!(warnings("PrintScreen")[0].contains("截图"));
-        assert!(warnings("F1").is_empty());
-        assert!(warnings("F24").is_empty());
-    }
-
-    #[test]
-    fn shift_only_warns() {
-        assert_eq!(
-            warnings("Shift+X"),
-            vec!["所有软件里都无法再输入大写的 X".to_owned()]
-        );
-        assert!(warnings("Shift+1")[0].contains("输入符号"));
-        assert!(warnings("Shift+Up")[0].contains("扩展选区"));
-        // Shift+Space has its own entry; not two warnings.
-        assert_eq!(warnings("Shift+Space").len(), 1);
-        assert!(warnings("Shift+F8").is_empty());
-    }
-
-    #[test]
-    fn alt_only_warns_about_windows_terminal() {
-        for text in ["Alt+X", "Alt+1", "Alt+F8"] {
-            assert!(
-                warnings(text)
-                    .iter()
-                    .any(|w| w.contains("Windows Terminal")),
-                "{text}"
-            );
-        }
-        for text in ["Ctrl+Alt+Q", "Alt+Shift+X", "Ctrl+Shift+X"] {
-            assert!(
-                !warnings(text)
-                    .iter()
-                    .any(|w| w.contains("Windows Terminal")),
-                "{text}"
-            );
-        }
-    }
-
-    #[test]
-    fn several_warnings_are_all_listed() {
-        // Alt+Space: window menu and Alt only.
-        assert_eq!(warnings("Alt+Space").len(), 2);
-    }
-
-    #[test]
-    fn listed_conflicts_name_the_program() {
-        assert_eq!(
-            warnings("Ctrl+Alt+X"),
-            vec!["在 Visual Studio 中是「工具箱」，在那里会失效".to_owned()]
-        );
-        // Several programs, each listed.
-        let w = warnings("Ctrl+Alt+L");
-        assert!(w.iter().any(|w| w.contains("IntelliJ IDEA")));
-        assert!(w.iter().any(|w| w.contains("Word")));
-        assert!(w.iter().any(|w| w.contains("Visual Studio")));
-    }
-
-    #[test]
-    fn rule_tables_parse() {
-        for (m, k, _) in BLOCKED.iter().chain(&COMMON) {
+    fn rule_tables_name_known_keys() {
+        for (m, k) in OWN
+            .iter()
+            .map(|(m, k, _)| (m, k))
+            .chain(SYSTEM.iter().map(|(m, k)| (m, k)))
+        {
             assert!(find_key(k).is_some(), "{k}");
             assert!(!m.win);
-        }
-        for (program, combination, _) in CONFLICTS {
-            let hotkey = Hotkey::parse(combination).unwrap();
-            assert_eq!(
-                hotkey.canonical(),
-                *combination,
-                "{program}: write it canonically"
-            );
         }
     }
 }
