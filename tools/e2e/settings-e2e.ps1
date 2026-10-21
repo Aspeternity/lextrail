@@ -39,6 +39,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $App = (Resolve-Path $App).Path
+. (Join-Path $PSScriptRoot "run-dirs.ps1")
 if ($App -like "*\release\*") { throw "use a debug build: release builds would use the real settings" }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 
@@ -412,6 +413,7 @@ try {
   $held = [LtSet]::ReleaseHeld()
   if ($held) { Write-Host "released stuck keys: $held" }
   Stop-App $appProc
+  Remove-RunDirs $configDir, $dataDir
 }
 
 if ($failures -gt 0) { Write-Host "$failures check(s) failed; log: $log"; exit 1 }
