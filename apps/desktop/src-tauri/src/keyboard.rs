@@ -10,9 +10,14 @@
 //!   key-down, like an auto-repeat, and no key-up: its logical state stays what the
 //!   keyboard says, and the user's own release ends it. A modifier, unlike an ordinary
 //!   key, does not make Windows Terminal drop its selection (R3-P1).
-//! - **Only Alt is held** (e.g. an Alt+letter hotkey): the unassigned virtual key 0xE8 is
-//!   pressed and released, as AutoHotkey does with its menu mask key. Windows Terminal
-//!   drops its selection on it (known limitation, D014).
+//! - **Only Alt is held** (e.g. an Alt+letter hotkey): left Ctrl is pressed and released,
+//!   as AutoHotkey's menu mask key once was. Ctrl is a modifier, so Windows Terminal keeps
+//!   its selection. Shift is never tapped: Alt+Shift switches the input language.
+//! - **Only Alt is held and "show the pointer when Ctrl is pressed" is on**: a Ctrl tap
+//!   would flash that ring at every lookup. The unassigned virtual key 0xE8 is sent
+//!   instead, as AutoHotkey does now, but only once the capture has read the selection
+//!   (or after [`AFTER_CAPTURE_WAIT`]): Windows Terminal drops its selection on any
+//!   ordinary key, and the capture must come first (D014 supplement).
 //!
 //! The repeat has one race: the user may release the modifier between the check and the
 //! injected key-down, which then arrives after the real key-up and leaves the modifier
@@ -101,14 +106,22 @@ impl Modifier {
 pub enum Mask {
     /// One more key-down of a held modifier.
     Repeat(Modifier),
-    /// Press and release the unassigned virtual key 0xE8.
-    Unassigned,
+    /// Only Alt is held: press and release left Ctrl.
+    CtrlTap,
+    /// Only Alt is held and a Ctrl tap would show the pointer ring: press and release
+    /// the unassigned virtual key 0xE8 once the capture has read the selection.
+    AfterCapture,
 }
+
+/// The longest the 0xE8 of [`Mask::AfterCapture`] waits for the capture. UI Automation
+/// usually answers within 20-50 ms; the mask must still come while Alt is held.
+pub const AFTER_CAPTURE_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// `None` when Alt is not held: its release has already happened, or it is not part of
 /// the hotkey. Ctrl is preferred over Shift (a Shift tap with Alt held could switch the
-/// input language, so Shift only ever gets a key-down too).
-pub fn choose_mask(held: HeldKeys) -> Option<Mask> {
+/// input language, so Shift only ever gets a key-down too). `pointer_ring`: Windows shows
+/// the pointer's location when Ctrl is pressed (`SPI_GETMOUSESONAR`).
+pub fn choose_mask(held: HeldKeys, pointer_ring: bool) -> Option<Mask> {
     if !held.alt {
         return None;
     }
@@ -120,7 +133,12 @@ pub fn choose_mask(held: HeldKeys) -> Option<Mask> {
     ]
     .into_iter()
     .find_map(|(down, m)| down.then_some(m));
-    Some(modifier.map_or(Mask::Unassigned, Mask::Repeat))
+    let alone = if pointer_ring {
+        Mask::AfterCapture
+    } else {
+        Mask::CtrlTap
+    };
+    Some(modifier.map_or(alone, Mask::Repeat))
 }
 
 /// Follows the low-level hook's view of the repeated modifier until the repeat itself
@@ -259,6 +277,16 @@ pub fn mask_alt_release() {
 #[cfg(not(windows))]
 pub fn mask_alt_release() {}
 
+/// The capture has read the selection, or is about to wait for the keys to be released:
+/// a waiting [`Mask::AfterCapture`] goes out now.
+#[cfg(windows)]
+pub fn capture_settled() {
+    win::capture_settled();
+}
+
+#[cfg(not(windows))]
+pub fn capture_settled() {}
+
 #[cfg(windows)]
 mod win {
     use std::mem::size_of;
@@ -278,10 +306,12 @@ mod win {
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLKHF_UP,
         MSG, MsgWaitForMultipleObjects, PM_REMOVE, PeekMessageW, PostThreadMessageW, QS_ALLINPUT,
-        SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_NULL,
+        SPI_GETMOUSESONAR, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowsHookExW,
+        SystemParametersInfoW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_NULL,
     };
+    use windows::core::BOOL;
 
-    use super::{HeldKeys, Mask, Modifier, Release, RepeatWatch, choose_mask};
+    use super::{AFTER_CAPTURE_WAIT, HeldKeys, Mask, Modifier, Release, RepeatWatch, choose_mask};
 
     /// Virtual key 0xE8: unassigned, so applications have no meaning for it.
     const UNASSIGNED_KEY: u16 = 0xE8;
@@ -326,6 +356,78 @@ mod win {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// Wakes the thread holding a [`Mask::AfterCapture`] back; one at a time (a newer
+    /// hotkey's replaces it, and the older one then goes out at once).
+    static AFTER_CAPTURE: Mutex<Option<mpsc::Sender<()>>> = Mutex::new(None);
+
+    fn after_capture() -> std::sync::MutexGuard<'static, Option<mpsc::Sender<()>>> {
+        AFTER_CAPTURE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub fn capture_settled() {
+        if let Some(wake) = after_capture().take() {
+            let _ = wake.send(());
+        }
+    }
+
+    /// Sends 0xE8 once the capture is done (or [`AFTER_CAPTURE_WAIT`] passed), if Alt is
+    /// still held then; once it is released the mask would come too late anyway.
+    fn send_unassigned_after_capture() {
+        let (wake, wait) = mpsc::channel();
+        *after_capture() = Some(wake);
+        let spawned = thread::Builder::new()
+            .name("hotkey-mask-later".into())
+            .spawn(move || {
+                let start = Instant::now();
+                let _ = wait.recv_timeout(AFTER_CAPTURE_WAIT);
+                let still = held_keys().alt;
+                if still {
+                    send_unassigned();
+                }
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "hotkey: alt mask: 0xE8 after the capture ({:.1}ms){}",
+                    start.elapsed().as_secs_f64() * 1000.0,
+                    if still {
+                        ""
+                    } else {
+                        ", not sent: Alt already released"
+                    }
+                );
+                #[cfg(not(debug_assertions))]
+                let _ = start;
+            });
+        if let Err(e) = spawned {
+            // No thread to wait on: the mask now rather than none.
+            eprintln!("hotkey: could not start the delayed Alt mask: {e}");
+            after_capture().take();
+            send_unassigned();
+        }
+    }
+
+    /// Windows shows the pointer's location when Ctrl is pressed (mouse settings).
+    fn pointer_ring() -> bool {
+        // Debug builds only: LEXTRAIL_DEBUG_POINTER_RING=1 acts as if the setting were on,
+        // to test the delayed mask without changing the user's mouse settings.
+        #[cfg(debug_assertions)]
+        if std::env::var_os("LEXTRAIL_DEBUG_POINTER_RING").is_some() {
+            return true;
+        }
+        let mut on = BOOL(0);
+        // SAFETY: SPI_GETMOUSESONAR writes a BOOL to the given pointer.
+        let read = unsafe {
+            SystemParametersInfoW(
+                SPI_GETMOUSESONAR,
+                0,
+                Some((&raw mut on).cast()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        };
+        read.is_ok() && on.as_bool()
+    }
+
     pub fn mask_alt_release() {
         // Debug builds only: LEXTRAIL_DEBUG_NO_ALT_MASK=1 turns the mask off, to reproduce
         // the lone-Alt problem; LEXTRAIL_DEBUG_ALT_MASK_E8=1 always sends 0xE8 (the
@@ -353,13 +455,23 @@ mod win {
         // for (seen in tools/e2e/stuck-keys.ps1).
         let watcher = Watcher::start();
         let seen: Vec<(u32, bool)> = early().clone();
-        let mask = choose_mask(held_keys().with_events(&seen));
+        let mask = choose_mask(held_keys().with_events(&seen), pointer_ring());
         let armed = match (mask, &watcher) {
             (Some(Mask::Repeat(modifier)), Some(w)) => Some((modifier, w.arm(modifier))),
             _ => None,
         };
         match (mask, armed) {
             (None, _) => {}
+            (Some(Mask::CtrlTap), _) => {
+                let ctrl = Modifier::LeftCtrl;
+                send(&[
+                    key(ctrl.vk(), ctrl.extended(), false),
+                    key(ctrl.vk(), ctrl.extended(), true),
+                ]);
+                #[cfg(debug_assertions)]
+                eprintln!("hotkey: alt mask: Ctrl tap");
+            }
+            (Some(Mask::AfterCapture), _) => send_unassigned_after_capture(),
             (_, Some((modifier, Arm::Armed))) => {
                 send(&[key(modifier.vk(), modifier.extended(), false)]);
             }
@@ -369,7 +481,7 @@ mod win {
                 eprintln!("hotkey: alt mask: none, {_modifier:?} or Alt released meanwhile");
             }
             // Without the hook a stuck key would go unnoticed: use the plain key-press.
-            (Some(_), _) => {
+            (Some(Mask::Repeat(_)), _) => {
                 send_unassigned();
                 #[cfg(debug_assertions)]
                 eprintln!("hotkey: alt mask: 0xE8");
@@ -445,7 +557,7 @@ mod win {
                 right_shift: modifier == Modifier::RightShift,
             }
             .with_events(&events);
-            if choose_mask(still) != Some(Mask::Repeat(modifier)) {
+            if choose_mask(still, false) != Some(Mask::Repeat(modifier)) {
                 return Arm::Released;
             }
             let mut repeat = RepeatWatch::new(modifier);
@@ -692,24 +804,24 @@ mod tests {
             k.left_ctrl = true;
         });
         // Alt's release already seen: no mask at all.
-        assert_eq!(choose_mask(state.with_events(&[(0xA4, true)])), None);
+        assert_eq!(choose_mask(state.with_events(&[(0xA4, true)]), false), None);
         // Ctrl's release seen, Alt still down: the unassigned key, never a stuck Ctrl.
         assert_eq!(
-            choose_mask(state.with_events(&[(0xA2, true)])),
-            Some(Mask::Unassigned)
+            choose_mask(state.with_events(&[(0xA2, true)]), false),
+            Some(Mask::CtrlTap)
         );
         // Released and pressed again: held.
         assert_eq!(
-            choose_mask(state.with_events(&[(0xA2, true), (0xA2, false)])),
+            choose_mask(state.with_events(&[(0xA2, true), (0xA2, false)]), false),
             Some(Mask::Repeat(Modifier::LeftCtrl))
         );
         // Side-neutral codes count for both sides; other keys do not count.
         assert_eq!(
-            choose_mask(state.with_events(&[(0x11, true), (0x58, true)])),
-            Some(Mask::Unassigned)
+            choose_mask(state.with_events(&[(0x11, true), (0x58, true)]), false),
+            Some(Mask::CtrlTap)
         );
         assert_eq!(
-            choose_mask(state.with_events(&[])),
+            choose_mask(state.with_events(&[]), false),
             Some(Mask::Repeat(Modifier::LeftCtrl))
         );
     }
@@ -720,18 +832,18 @@ mod tests {
             left_ctrl: true,
             ..HeldKeys::default()
         };
-        assert_eq!(choose_mask(keys), None);
+        assert_eq!(choose_mask(keys, false), None);
     }
 
     #[test]
     fn repeats_ctrl_for_the_default_hotkey() {
         // Ctrl+Alt+X with either Ctrl key.
         assert_eq!(
-            choose_mask(held(|k| k.left_ctrl = true)),
+            choose_mask(held(|k| k.left_ctrl = true), false),
             Some(Mask::Repeat(Modifier::LeftCtrl))
         );
         assert_eq!(
-            choose_mask(held(|k| k.right_ctrl = true)),
+            choose_mask(held(|k| k.right_ctrl = true), false),
             Some(Mask::Repeat(Modifier::RightCtrl))
         );
     }
@@ -739,21 +851,37 @@ mod tests {
     #[test]
     fn prefers_ctrl_over_shift_and_falls_back_to_shift() {
         assert_eq!(
-            choose_mask(held(|k| {
-                k.left_shift = true;
-                k.left_ctrl = true;
-            })),
+            choose_mask(
+                held(|k| {
+                    k.left_shift = true;
+                    k.left_ctrl = true;
+                }),
+                false
+            ),
             Some(Mask::Repeat(Modifier::LeftCtrl))
         );
         assert_eq!(
-            choose_mask(held(|k| k.right_shift = true)),
+            choose_mask(held(|k| k.right_shift = true), false),
             Some(Mask::Repeat(Modifier::RightShift))
         );
     }
 
     #[test]
-    fn alt_alone_uses_the_unassigned_key() {
-        assert_eq!(choose_mask(held(|_| {})), Some(Mask::Unassigned));
+    fn alt_alone_taps_ctrl() {
+        assert_eq!(choose_mask(held(|_| {}), false), Some(Mask::CtrlTap));
+    }
+
+    #[test]
+    fn alt_alone_with_the_pointer_ring_waits_for_the_capture() {
+        assert_eq!(choose_mask(held(|_| {}), true), Some(Mask::AfterCapture));
+    }
+
+    #[test]
+    fn the_pointer_ring_does_not_change_a_repeat() {
+        assert_eq!(
+            choose_mask(held(|k| k.left_ctrl = true), true),
+            Some(Mask::Repeat(Modifier::LeftCtrl))
+        );
     }
 
     const LCTRL: u32 = 0xA2;

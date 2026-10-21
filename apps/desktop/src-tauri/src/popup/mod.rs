@@ -262,13 +262,19 @@ fn run_capture<R: Runtime>(
         Trigger::Hotkey => {
             let progress = |p: CaptureProgress| {
                 let event = match p {
-                    CaptureProgress::WaitingForKeys => request::Event::WaitingForKeys { id },
+                    CaptureProgress::WaitingForKeys => {
+                        // A delayed Alt mask must come before the keys are released.
+                        crate::keyboard::capture_settled();
+                        request::Event::WaitingForKeys { id }
+                    }
                     CaptureProgress::KeysReleased => request::Event::KeysReleased { id },
                 };
                 dispatch_request(app, event);
             };
             own_copy(app, id, true);
             let (result, trace) = capture.capture_traced(&target, &progress);
+            // The selection has been read: a delayed Alt mask may go out now.
+            crate::keyboard::capture_settled();
             own_copy(app, id, false);
             let pdf = trace.from_chromium_pdf();
             (result, trace, pdf)

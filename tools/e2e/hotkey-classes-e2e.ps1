@@ -12,9 +12,10 @@ with that lookup hotkey in fresh scratch settings and data directories, then:
   the output is double-clicked with the real mouse, the hotkey is pressed, and
     - the popup must show "brown";
     - the terminal's selection must still be "brown" afterwards (UI Automation). With
-      only Alt held the Alt mask falls back to 0xE8, which clears it before the capture
-      (D014 supplement, R3-9): for "Alt+..." the popup must say nothing is selected and
-      the selection is expected to be gone.
+      only Alt held the Alt mask is a Ctrl tap, which keeps it too. With -PointerRing
+      (debug switch LEXTRAIL_DEBUG_POINTER_RING: as if "show the pointer when Ctrl is
+      pressed" were on) only Alt gets 0xE8 after the capture (D014 supplement): the popup
+      must still show "brown", and for "Alt+..." the selection is expected to be gone.
   VS Code: a new instance with its own scratch profile (--user-data-dir, --extensions-dir;
   never the user's own) opens a scratch file; Ctrl+Home, Ctrl+Shift+Right select "The",
   the hotkey is pressed, the popup must show the word; after Esc the menu bar must not
@@ -39,6 +40,7 @@ param(
   [switch]$NoTerminal,
   [switch]$NoVsCode,
   [switch]$NoStuckKeys,
+  [switch]$PointerRing,
   [int]$StuckRounds = 10
 )
 $ErrorActionPreference = "Stop"
@@ -211,15 +213,11 @@ function Test-Terminal([string]$Hotkey, [string]$Tag) {
     $selected = ($text.GetSelection() | ForEach-Object { $_.GetText(-1) }) -join ""
     Check ($selected.Trim() -eq "brown") "$Tag terminal: 'brown' selected before the hotkey ('$selected')"
     Send-Keys $wt "terminal" (Get-HotkeyVks $Hotkey)
-    # With only Alt held the mask falls back to 0xE8, which clears the selection before
-    # the capture (D014 supplement, R3-9): the popup says nothing is selected.
-    $altOnly = $Hotkey -match "^Alt\+"
-    # "No text selected", built from code points (the script is read in the ANSI code page).
-    $noSelection = -join (@(0x6CA1, 0x6709, 0x9009, 0x4E2D, 0x6587, 0x5B57) | ForEach-Object { [char]$_ })
-    Check-Popup $(if ($altOnly) { $noSelection } else { "brown" }) "$Tag-terminal" $wt
+    Check-Popup "brown" "$Tag-terminal" $wt
     $after = ($text.GetSelection() | ForEach-Object { $_.GetText(-1) }) -join ""
-    if ($altOnly) {
-      Check ($after.Trim() -ne "brown") "$Tag terminal: selection gone, as expected with only Alt ('$after')"
+    # With -PointerRing and only Alt held, 0xE8 goes out after the capture and clears it.
+    if ($PointerRing -and $Hotkey -match "^Alt\+") {
+      Check ($after.Trim() -ne "brown") "$Tag terminal: selection gone after the capture, as expected ('$after')"
     } else {
       Check ($after.Trim() -eq "brown") "$Tag terminal: selection kept ('$after')"
     }
@@ -281,10 +279,12 @@ try {
     $configDir = Join-Path $OutDir ("config-" + [guid]::NewGuid())
     Write-HotkeySettings $configDir $hotkey
     $env:LEXTRAIL_DEBUG_CONFIG_DIR = $configDir
+    if ($PointerRing) { $env:LEXTRAIL_DEBUG_POINTER_RING = "1" }
     $env:LEXTRAIL_DEBUG_DATA_DIR = Join-Path $OutDir ("data-" + [guid]::NewGuid())
     $log = Join-Path $OutDir "$tag-app.log"
     $lt = Start-Process $App -RedirectStandardError $log -PassThru
     Remove-Item Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR
+    Remove-Item Env:LEXTRAIL_DEBUG_POINTER_RING -ErrorAction SilentlyContinue
     Start-Sleep 4
     # A hotkey another program holds did not register: pressing it would reach that
     # program, so nothing is sent for this hotkey.
