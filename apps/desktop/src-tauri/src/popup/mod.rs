@@ -804,6 +804,7 @@ fn create<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         // content events; a finished page load alone is not enough.
         .visible(false)
         .build()?;
+    webview::disable_browser_keys(&window)?;
 
     window.on_window_event({
         let window = window.clone();

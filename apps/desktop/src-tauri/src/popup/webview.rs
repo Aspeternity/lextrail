@@ -62,6 +62,24 @@ fn debug_resume_delay() {
     }
 }
 
+/// Turns off WebView2's browser keys (F5 and Ctrl+R reload, Ctrl+P, Ctrl+F, zoom, ...) for
+/// the popup: a reload would lose its content and break D010. Editing keys such as Ctrl+C
+/// still work.
+#[cfg(windows)]
+pub fn disable_browser_keys<R: Runtime>(window: &WebviewWindow<R>) -> tauri::Result<()> {
+    window.with_webview(move |webview| {
+        // SAFETY: called on the UI thread that owns the WebView2 controller.
+        if let Err(e) = unsafe { windows_impl::disable_browser_keys(&webview.controller()) } {
+            eprintln!("disabling browser keys failed: {e}");
+        }
+    })
+}
+
+#[cfg(not(windows))]
+pub fn disable_browser_keys<R: Runtime>(_window: &WebviewWindow<R>) -> tauri::Result<()> {
+    Ok(())
+}
+
 #[cfg(not(windows))]
 pub fn suspend<R: Runtime>(
     _window: &WebviewWindow<R>,
@@ -87,7 +105,9 @@ mod windows_impl {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2_3, ICoreWebView2Controller};
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2_3, ICoreWebView2Controller, ICoreWebView2Settings3,
+    };
     use webview2_com::TrySuspendCompletedHandler;
     use windows::core::{Interface, Result};
 
@@ -136,6 +156,15 @@ mod windows_impl {
             let core: ICoreWebView2_3 = controller.CoreWebView2()?.cast()?;
             core.Resume()?;
             controller.SetIsVisible(true)
+        }
+    }
+
+    /// # Safety
+    /// Must run on the thread that owns `controller`.
+    pub unsafe fn disable_browser_keys(controller: &ICoreWebView2Controller) -> Result<()> {
+        unsafe {
+            let settings: ICoreWebView2Settings3 = controller.CoreWebView2()?.Settings()?.cast()?;
+            settings.SetAreBrowserAcceleratorKeysEnabled(false)
         }
     }
 }

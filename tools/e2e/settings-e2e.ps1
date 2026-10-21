@@ -232,7 +232,7 @@ try {
       }
       $false
     }
-    $ctrlAltX = @($MOD_CONTROL -bor $MOD_ALT, 0x58)
+    $ctrlAltX = @(($MOD_CONTROL -bor $MOD_ALT), 0x58)
 
     function Assert-Front([IntPtr]$Hwnd, [string]$What) {
       $fg = [LtSet]::GetForegroundWindow()
