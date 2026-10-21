@@ -10,6 +10,7 @@
 - `cargo run -p lextrail-dict-builder --release`：生成词典 `data/build/lextrail-dict-core.db`（格式版本 2）。**编译桌面程序之前必须先生成**（它是 Tauri 资源，缺失时 `tauri-build` 报错）
 - `cargo run -p lextrail-dict --release --example view -- data/build/lextrail-dict-core.db better self-attention`：看某个词在悬浮窗里会显示什么
 - `pnpm check`：格式、lint、类型检查、全部测试（含 release 配置的 clippy）
+- `pnpm --filter @lextrail/desktop test`：只跑前端测试（Vitest + jsdom，配置在 `apps/desktop/vite.config.ts` 的 `test`）。测试文件 `*.test.ts` 和被测组件放在一起；Rust 命令和事件用 `@tauri-apps/api/mocks` 的 `mockIPC(..., { shouldMockEvents: true })` 代替，每个测试后 `clearMocks()`。`pnpm test` 和 CI 都会跑
 - `pnpm --filter @lextrail/desktop tauri build --debug --no-bundle`：带日志的 debug 版（`target\debug\lextrail-desktop.exe`，在终端里运行看日志）
 - `pnpm --filter @lextrail/desktop tauri build --no-bundle`：真正的 release 版。**不要用** `cargo build --release`（会加载开发服务器页面）
 - `powershell -NoProfile -ExecutionPolicy Bypass -File tools/e2e/popup-e2e.ps1 -App target/debug/lextrail-desktop.exe [-Pdf] [-HoldMs 2000]`：悬浮窗端到端检查（会移动鼠标、模拟按键）
@@ -27,7 +28,7 @@
 - `crates/lextrail-store`（D037、D040）：SQLite、`user_version` 迁移、`meta` / `lookups`
 - `crates/lextrail-config`（D035）：设置文件与凭据管理器
 - `apps/desktop/src-tauri`：托盘、单实例、主窗口（占位）、`hotkey.rs` + `keyboard.rs`（屏蔽键与防卡键钩子）、`dictionary.rs`、`history.rs`、`popup/`（`lifecycle`、`request`、`activation`、`foreground`、`content`、`placement`、`sizing`、`timing`）。悬浮窗权限在 `capabilities/popup.json`
-- `apps/desktop/src`：悬浮窗页面（`popup/`），主窗口占位。**前端还没有测试框架**
+- `apps/desktop/src`：悬浮窗页面（`popup/`）、设置窗口（`settings/`），主窗口占位；前端测试 `*.test.ts`
 - `tools/e2e/`：`popup-e2e.ps1`、`stuck-keys.ps1`、`key-observer.ps1`、测试页面；`tools/bench`：性能测试
 
 ## 3. debug 版开关
