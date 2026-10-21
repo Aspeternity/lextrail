@@ -3,8 +3,8 @@
 > 每次开发结束前更新本文件（见 `AGENTS.md` 的"结束流程"）。
 > **只保留当前状态，控制在 100 行以内。** 已完成任务的过程记录写进对应的 `docs/specs/` 文件，完成情况以 `ROADMAP.md` 的勾选和 `git log` 为准；命令、debug 开关、测试规则见 `DEVELOPMENT.md`。
 
-**最后更新**：2026-10-22（M1.5 第 0 步补充数据）
-**当前阶段**：M1.5 · 牛津词典（第 0 步调研和补充数据完成，下一步写 spec 正文）
+**最后更新**：2026-10-22（M1.5 spec 草稿）
+**当前阶段**：M1.5 · 牛津词典（spec 草稿完成，等项目负责人选择和批准）
 
 ---
 
@@ -26,17 +26,19 @@ M0 全部完成（路线 A，D036）。**M1 完成**（2026-10-21；剩下的 5 
 
 ## 正在进行
 
-- M1.5 · 牛津词典（D049，新增里程碑）：第 0 步调研和补充数据（稳定编号、重复记录、多词条顺序）已完成，在 `specs/m1.5-oxford.md` 第 0 节（只有结构和统计）。
-  - 项目负责人已定（2026-10-22，写 spec 时整理进 `DECISIONS.md`）：转换工具用 `mdictlib =0.2.8`（不开 `lzo`，只在转换工具里用）；牛津数据默认放 `%LOCALAPPDATA%\io.github.aspeternity.lextrail\` 下，设置窗口可改"扩展词典文件夹"，文件夹不存在时当作没有牛津数据（不报错，设置窗口显示状态）；查询历史 `lextrail.db` 不动（D040）；音频在 spec 里列选项再定，数据库先记下音频文件名。
+- M1.5 · 牛津词典（D049，新增里程碑）：第 0 步调研和两次补充数据在 `specs/m1.5-oxford.md` 第 0 节（只有结构和统计）；spec 正文草稿（第 1–14 节）已写好，等项目负责人批准。
+  - 已定：读取库 `mdictlib =0.2.8`（D050）；扩展词典位置与设置（D051）；数据库先记下全部音频文件名。
   - 源文件已移出仓库，在 `D:\LexTrailData\oxford-source\HKOUP_mdict_export20260925\`（转换工具用命令行参数指定位置）；项目负责人自己的转换结果放 `D:\LexTrailData\dicts\`。
   - 调研临时文件在仓库外 `D:\Projects\lextrail-oxford-scratch`，spec 批准后删除。
 
 ## 下一步
 
-1. 写 `docs/specs/m1.5-oxford.md` 正文（含稳定编号规则、数据位置与设置、音频选项），项目负责人批准后再写代码。
+1. 项目负责人在 spec 第 14 节选择：义项编号方案 A / B（推荐 B）、发音 A–D（推荐 C）、悬浮窗显示密度（推荐中英都显示），并批准其余内容。
+2. 批准后按 spec 第 13 节的顺序实施；批准后删除 `D:\Projects\lextrail-oxford-scratch`。
 
 ## 待跟进（不在 ROADMAP 中的观察项）
 
+- **三个模拟按键的 e2e 脚本还没实际跑过清理逻辑**：`popup-e2e.ps1`、`hotkey-classes-e2e.ps1`、`stuck-keys.ps1` 结束时删除本次临时文件夹（`run-dirs.ps1`）只做了语法检查；下次正式跑时确认 `%TEMP%` 下没有留下 `lextrail-e2e-edge-*`、`lextrail-e2e-print-*` 和 `-OutDir` 下的 `config-*`、`data-*`、`vscode-*`。（`settings-e2e.ps1` 已实测）
 - **B3 没有结论**：VS Code 编辑器里 UIA 报告"没有选中"的原因未确认；剪贴板兜底已覆盖，暂不继续。如需要，可在 `editor.accessibilitySupport = on` 下手动选词，用 `capture_probe` 看 UIA 是否取到。
 - 获取焦点"被拒后不带焦点显示"仍只用模拟开关验证过。
 - 冷启动后 0–100 ms 内按 Esc 可能无效（`m0-benchmark.md` 4.5 节），低优先级。

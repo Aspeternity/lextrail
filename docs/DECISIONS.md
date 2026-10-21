@@ -438,6 +438,19 @@
 - 读取 MDX/MDD 的库只用 MIT、Apache 等兼容协议；GPL 代码（如 GoldenDict）不用，也不照抄。
 - 细则见 `docs/specs/m1.5-oxford.md`（调研后编写，项目负责人批准后再写代码）。由项目负责人决定。
 
+### D050 ✅ 牛津 MDX/MDD 读取库：`mdictlib`，固定版本，只在转换工具里用（2026-10-22）
+- 用 `mdictlib = "=0.2.8"`（MIT），`default-features = false`（不开 `lzo`：源文件没有 LZO 压缩的块）。
+- 只有转换工具 `tools/oxford-builder` 依赖它；桌面程序读的是转换出的 SQLite 文件，不依赖 MDX 库。
+- 理由：调研时实测读出的记录数、字节数与 Python readmdict 完全一致（`m1.5-oxford.md` 0.4）；自己写读取器约 1–2 天，没有必要。固定版本是为了转换结果可重复。
+- 由项目负责人决定。
+
+### D051 ✅ 扩展词典的位置：默认 `%LOCALAPPDATA%` 下，设置窗口可改文件夹（2026-10-22）
+- 默认放在 `%LOCALAPPDATA%\io.github.aspeternity.lextrail\` 下（子文件夹和文件名见 `m1.5-oxford.md` 第 2 节）；设置窗口加"扩展词典文件夹"，可以换到别的文件夹，不选就用默认。
+- 查询历史 `lextrail.db` 的位置不变（D040）。
+- 设置文件会漫游（D035）：文件夹不存在时按"没有牛津数据"处理，设置窗口显示状态，不报错。
+- 转换工具用命令行参数指定源文件位置，不写死路径。
+- 由项目负责人决定。
+
 ---
 
 ## 待确认事项
