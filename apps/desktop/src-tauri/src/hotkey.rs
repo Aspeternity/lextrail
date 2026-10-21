@@ -391,10 +391,11 @@ mod tests {
     }
 
     #[test]
-    fn default_lookup_parses_and_is_ctrl_alt_x() {
-        // D014: provisional default for lookup.
+    fn default_lookup_parses_and_is_alt_space() {
+        // D014: the default for lookup, allowed by the rules (D048).
         let default = HotkeySettings::default().lookup;
-        assert_eq!(hk(&default).canonical(), "Ctrl+Alt+X");
+        assert_eq!(hk(&default).canonical(), "Alt+Space");
+        assert_eq!(hotkey::check(&hk(&default)), Verdict::Allowed);
         assert!(
             hk(&default)
                 .to_global_shortcut()

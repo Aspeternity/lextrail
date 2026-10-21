@@ -328,7 +328,7 @@ mod tests {
         assert_eq!(v.lookup.unwrap().display, "Ctrl + Alt + X");
         assert!(!v.lookup_active);
         assert_eq!(v.lookup_error.as_deref(), Some("占用"));
-        assert_eq!(v.default_lookup.accelerator, "Ctrl+Alt+X");
+        assert_eq!(v.default_lookup.accelerator, "Alt+Space");
         assert!(v.record_history && !v.double_ctrl_c);
         assert!(!v.lookup_off);
     }

@@ -17,7 +17,7 @@ mod lifecycle;
 mod placement;
 mod request;
 mod sizing;
-mod timing;
+pub(crate) mod timing;
 mod webview;
 
 use std::sync::atomic::{AtomicIsize, AtomicU64, Ordering};

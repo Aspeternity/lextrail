@@ -140,7 +140,7 @@ cargo run -p lextrail-bench --release -- long --wait-mins 120
 ```
 
 - `quick` 约 6 分钟，`long` 约等待时间 + 1 分钟。运行期间会移动鼠标、模拟按键，请不要操作电脑（`long` 只在开头和结尾操作，中间可以正常使用）。
-- 运行前会结束正在运行的 LexTrail；要求设置是默认的快捷键和 `responsive` 模式，否则拒绝运行。
+- 运行前会结束正在运行的 LexTrail。应用在 bench 模式下（`LEXTRAIL_BENCH_TIMINGS`）设置和数据库都用临时目录（`%TEMP%\lextrail-bench-config`、`lextrail-bench-data`），每次启动前清空设置目录，所以总是默认设置（默认快捷键 Alt+Space、`responsive` 模式），和本机的真实设置无关（2026-10-21 起；之前读真实设置文件，非默认时拒绝运行）。
 - 可选参数：`--app 路径`、`--cold N`、`--samples N`、`--wait-mins N`。
 - 从 M1 起，bench 启动应用时设置环境变量 `LEXTRAIL_BENCH_TIMINGS`，应用每次查词后把自己测到的时间写进这个文件（只有数字，不含取到的文字），bench 据此把显示时间拆成：取词耗时（取词本身）、窗口就绪（从快捷键到窗口创建或恢复完成）、窗口显示、获得焦点（都从应用收到快捷键算起）。bench 自己测的"快捷键 → 悬浮窗可见"仍是主指标。
 
@@ -246,3 +246,15 @@ bench 测"快捷键 → 悬浮窗可见"；应用通过 `LEXTRAIL_BENCH_TIMINGS`
 - 热显示、挂起后恢复比 7.5 慢约 5–15 ms，A 和 B 都慢，所以主要不是浏览器快捷键造成的（设置窗口相关的代码或机器状态，未拆分）。A 与 B 之间"窗口显示"差 1–2.5 ms，在 10 个样本的波动范围内；这个设置只在建窗口时执行一次。项目负责人决定保留修复，慢的部分**待观察**，以后的 bench 仍然这样再拆查。
 - 每轮都有 1–2 次 `LeftCtrl was released before its mask repeat; released it`，都补发了松开，没有卡住。
 - 注意：bench 期间电脑锁屏会让模拟按键送不到，报"popup did not become visible"（本次前两次失败的原因）。
+
+### 7.7 默认快捷键改为 Alt+Space 后（2026-10-21，分支 `feat/hotkey-settings`）
+
+默认快捷键改为 Alt+Space（D014），只有 Alt 时屏蔽键补发 Ctrl（D014 补充），快捷键规则简化（D048）。bench 改为在临时目录里用默认设置运行（不再读本机的设置文件），按 Alt+Space。`quick --lookup-text launch`，release 版，单独的 Windows Terminal 窗口（最大化）。
+
+| 托盘 | 悬浮窗可见时 | 挂起（15 秒） | 设置窗口开着 | 设置窗口关掉后挂起 | 冷启动中位数（p90） | 热显示 | 挂起后恢复 | 挂起后空闲 CPU |
+|---|---|---|---|---|---|---|---|---|
+| 1.6 MiB | 79.5 MiB | 85.7 MiB | 66.5 MiB | 43.8 MiB | 289.0 ms（294.8） | 37.5 ms | 34.8 ms | 0.003 % |
+
+- 全部在预算内（挂起 < 100 MB、恢复 < 100 ms、冷启动 < 400 ms）。
+- 悬浮窗可见和挂起时比 7.6 多约 3 MiB，原因未查（这次改动没有动悬浮窗页面；运行间波动在 7.3–7.6 中约 1–2 MiB）。热显示、恢复与 7.6 相近（7.6 为 33.3 / 38.9 ms）。
+- 冷启动的取词耗时 p90 46.9 ms（一次较慢的 UIA），其余与之前相同。

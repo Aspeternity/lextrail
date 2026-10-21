@@ -138,7 +138,7 @@
 
 ## 七、常用软件快捷键清单（已取消，D048）
 
-2026-10-21 核对过的清单（Visual Studio、IntelliJ、Word、VS Code、Chrome / Edge、Windows Terminal、福昕、SumatraPDF 等）不再用于提示，已从代码删除；需要时查 git 历史（提交 88dec0d）。默认快捷键改为按"好按、不吃打字键、不是系统保留"来选，由项目负责人在 Alt+Space 和 Ctrl+Alt+某个字母之间决定（D014）。
+2026-10-21 核对过的清单（Visual Studio、IntelliJ、Word、VS Code、Chrome / Edge、Windows Terminal、福昕、SumatraPDF 等）不再用于提示，已从代码删除；需要时查 git 历史（提交 88dec0d）。默认快捷键改为按"好按、不吃打字键、不是系统保留"来选，项目负责人 2026-10-21 定为 **Alt+Space**（D014）。
 
 ---
 
@@ -160,7 +160,7 @@
   - 录制中关闭设置窗口：旧组合仍能查词。
   - 两个开关：打开连按后不重启就能连按查词；关闭后不再触发；不记录历史后查词，临时数据库里没有新记录。
 - **按修饰键分类复测**（D014、R2-1、R2-2）：分别把查词快捷键设成下面五类，每类都测 Windows Terminal 选词（取到单词、选区保留，手动测试清单 5.1）和 VS Code 查词后按 Esc 再按 ↓（不框住"文件(F)"、不弹出菜单）：
-  1. Ctrl+Alt（默认 Ctrl+Alt+X）
+  1. Ctrl+Alt（如 Ctrl+Alt+X）
   2. Shift+Alt（如 Shift+Alt+X）
   3. 只有 Alt（如 Alt+J、Alt+Space；补发 Ctrl 后预期和其他类一样取到词、选区保留，D014 补充）
   4. Ctrl+Shift（如 Ctrl+Shift+F1，不需要屏蔽键）

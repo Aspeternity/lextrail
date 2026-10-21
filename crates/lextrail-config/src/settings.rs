@@ -42,7 +42,7 @@ pub struct HotkeySettings {
 impl Default for HotkeySettings {
     fn default() -> Self {
         Self {
-            lookup: "Ctrl+Alt+X".to_owned(),
+            lookup: "Alt+Space".to_owned(),
             double_ctrl_c: false,
         }
     }
@@ -87,7 +87,7 @@ mod tests {
     fn defaults_match_decisions() {
         let settings = Settings::default();
         assert_eq!(settings.version, SCHEMA_VERSION);
-        assert_eq!(settings.hotkeys.lookup, "Ctrl+Alt+X"); // D014
+        assert_eq!(settings.hotkeys.lookup, "Alt+Space"); // D014
         assert!(!settings.hotkeys.double_ctrl_c); // D012
         assert_eq!(settings.popup.mode, PopupMode::Responsive); // D009
         assert!(settings.history.record);

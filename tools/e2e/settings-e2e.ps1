@@ -233,7 +233,8 @@ try {
       }
       $false
     }
-    $ctrlAltX = @(($MOD_CONTROL -bor $MOD_ALT), 0x58)
+    # The default lookup hotkey (D014).
+    $defaultKey = @($MOD_ALT, 0x20)
 
     function Assert-Front([IntPtr]$Hwnd, [string]$What) {
       $fg = [LtSet]::GetForegroundWindow()
@@ -263,16 +264,16 @@ try {
 
     function Lookup-Setting { if ((Get-Content $settingsFile -Raw) -match 'lookup = "([^"]*)"') { $Matches[1] } }
 
-    Check (-not (Is-Free @ctrlAltX)) "LexTrail holds Ctrl+Alt+X"
+    Check (-not (Is-Free @defaultKey)) "LexTrail holds Alt+Space"
 
     Click-Id $win "hotkey-change"
-    Check (Is-Free @ctrlAltX) "recording turns the hotkey off"
+    Check (Is-Free @defaultKey) "recording turns the hotkey off"
 
     # F5 is a fine hotkey: recorded, and the page did not reload (the notice is there).
     Send-Combo $win "settings window" @() 0x74
     Check ((Text-Of (Find-Id $win "hotkey-notice")) -match "F5") "F5 is recorded; the page did not reload"
     Check (-not (Is-Free 0 0x74)) "LexTrail holds F5"
-    Check (Is-Free @ctrlAltX) "Ctrl+Alt+X is let go"
+    Check (Is-Free @defaultKey) "Alt+Space is let go"
     Check ((Lookup-Setting) -eq "F5") "F5 is saved"
 
     # Browser shortcuts while recording: recorded at once (other programs' shortcuts are
@@ -291,26 +292,26 @@ try {
 
     # Restore the default: no question either.
     Click-Id $win "hotkey-default"
-    Check (-not (Is-Free @ctrlAltX)) "restore default: LexTrail holds Ctrl+Alt+X"
+    Check (-not (Is-Free @defaultKey)) "restore default: LexTrail holds Alt+Space"
     Check (Is-Free $MOD_CONTROL 0x46) "Ctrl+F is let go"
-    Check ((Lookup-Setting) -eq "Ctrl+Alt+X") "Ctrl+Alt+X is saved"
+    Check ((Lookup-Setting) -eq "Alt+Space") "Alt+Space is saved"
 
     # No lookup hotkey (spec 5.4): saved as an empty value, nothing held, not a failure.
     Click-Id $win "hotkey-off"
     Check ((Lookup-Setting) -eq "") "no hotkey is saved as an empty value"
-    Check (Is-Free @ctrlAltX) "no hotkey: Ctrl+Alt+X is let go"
+    Check (Is-Free @defaultKey) "no hotkey: Alt+Space is let go"
     Check ((Text-Of (Find-Id $win "hotkey-recorder")) -match "\S") "no hotkey: the recorder says so"
     Save-Screenshot $win "hotkey-off"
     Click-Id $win "hotkey-default"
-    Check (-not (Is-Free @ctrlAltX)) "default again after no hotkey"
+    Check (-not (Is-Free @defaultKey)) "default again after no hotkey"
 
     # Ctrl+C is refused; Esc cancels.
     Click-Id $win "hotkey-change"
     Send-Combo $win "settings window" @($CTRL) 0x43
     Check ((Text-Of (Find-Id $win "hotkey-notice")) -match "Ctrl \+ C") "Ctrl+C is refused with the reason"
-    Check (Is-Free @ctrlAltX) "still recording after Ctrl+C"
+    Check (Is-Free @defaultKey) "still recording after Ctrl+C"
     Send-Combo $win "settings window" @() 0x1B
-    Check (-not (Is-Free @ctrlAltX)) "Esc cancels: Ctrl+Alt+X is back"
+    Check (-not (Is-Free @defaultKey)) "Esc cancels: Alt+Space is back"
 
     # A combination another program holds: the window never sees the key.
     $held = [LtSet]::RegisterHotKey([IntPtr]::Zero, 0x4C55, ($MOD_CONTROL -bor $MOD_ALT -bor 0x4000), 0x59)
@@ -322,14 +323,14 @@ try {
     Save-Screenshot $win "recording-taken"
     Send-Combo $win "settings window" @() 0x1B
     [void][LtSet]::UnregisterHotKey([IntPtr]::Zero, 0x4C55)
-    Check (-not (Is-Free @ctrlAltX)) "Ctrl+Alt+X is back after Esc"
+    Check (-not (Is-Free @defaultKey)) "Alt+Space is back after Esc"
 
     # The new one fails to register: the current one stays, the file is unchanged.
     Click-Id $win "hotkey-change"
     Send-Combo $win "settings window" @($CTRL, $SHIFT) 0x71
     Check ((Lookup-Setting) -eq "Ctrl+Shift+F2") "Ctrl+Shift+F2 is saved"
-    $held = [LtSet]::RegisterHotKey([IntPtr]::Zero, 0x4C56, ($MOD_CONTROL -bor $MOD_ALT -bor 0x4000), 0x58)
-    Check $held "this script holds Ctrl+Alt+X"
+    $held = [LtSet]::RegisterHotKey([IntPtr]::Zero, 0x4C56, ($MOD_ALT -bor 0x4000), 0x20)
+    Check $held "this script holds Alt+Space"
     Click-Id $win "hotkey-default"
     Check ($null -ne (Find-Id $win "hotkey-notice")) "registering a taken default reports the failure"
     Check (-not (Is-Free ($MOD_CONTROL -bor $MOD_SHIFT) 0x71)) "Ctrl+Shift+F2 still works"
@@ -337,7 +338,7 @@ try {
     Save-Screenshot $win "default-taken"
     [void][LtSet]::UnregisterHotKey([IntPtr]::Zero, 0x4C56)
     Click-Id $win "hotkey-default"
-    Check (-not (Is-Free @ctrlAltX)) "default again once it is free"
+    Check (-not (Is-Free @defaultKey)) "default again once it is free"
 
     # A window of this script, to switch to.
     $form = New-Object System.Windows.Forms.Form
@@ -359,22 +360,22 @@ try {
     try {
       # Switching to another window while recording cancels it.
       Click-Id $win "hotkey-change"
-      Check (Is-Free @ctrlAltX) "recording again"
+      Check (Is-Free @defaultKey) "recording again"
       Click-Form
       Start-Sleep -Milliseconds 500
-      Check (-not (Is-Free @ctrlAltX)) "switching away while recording brings Ctrl+Alt+X back"
+      Check (-not (Is-Free @defaultKey)) "switching away while recording brings Alt+Space back"
 
       # Closing the window while recording.
       Click-Id $win "hotkey-change"
-      Check (Is-Free @ctrlAltX) "recording before closing"
+      Check (Is-Free @defaultKey) "recording before closing"
       [void][LtSet]::PostMessage($win, 0x10, [IntPtr]::Zero, [IntPtr]::Zero)
       Start-Sleep -Milliseconds 1000
       Check ([LtSet]::Windows([uint32]$appProc.Id, $settingsTitle).Count -eq 0) "the settings window is closed"
-      Check (-not (Is-Free @ctrlAltX)) "closing while recording brings Ctrl+Alt+X back"
+      Check (-not (Is-Free @defaultKey)) "closing while recording brings Alt+Space back"
 
       # F5 in the popup must not reload its page (D010): no second PageReady.
       Click-Form
-      Send-Combo $form.Handle "test form" @($CTRL, $ALT) 0x58
+      Send-Combo $form.Handle "test form" @($ALT) 0x20
       Start-Sleep -Milliseconds 800
       $popup = [LtSet]::FindWindow("Tauri Window", "LexTrail")
       Check ($popup -ne [IntPtr]::Zero -and [LtSet]::IsWindowVisible($popup)) "the hotkey shows the popup"

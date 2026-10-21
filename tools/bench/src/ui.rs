@@ -10,15 +10,13 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
-    VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE, VK_MENU,
+    VIRTUAL_KEY, VK_ESCAPE, VK_MENU, VK_SPACE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     FindWindowExW, GetForegroundWindow, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
     PostMessageW, SetCursorPos, WM_CLOSE,
 };
 use windows::core::w;
-
-const VK_X: VIRTUAL_KEY = VIRTUAL_KEY(0x58);
 
 fn key(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     INPUT {
@@ -47,7 +45,7 @@ fn chord(keys: &[VIRTUAL_KEY]) -> Result<()> {
 
 /// The default lookup hotkey (D014).
 pub fn press_hotkey() -> Result<()> {
-    chord(&[VK_CONTROL, VK_MENU, VK_X])
+    chord(&[VK_MENU, VK_SPACE])
 }
 
 pub fn press_escape() -> Result<()> {

@@ -35,7 +35,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/e2e/hotkey-classes-e2e
 #>
 param(
   [string]$App = "target\debug\lextrail-desktop.exe",
-  [string[]]$Hotkeys = @("Ctrl+Alt+X", "Shift+Alt+X", "Alt+J", "Ctrl+Shift+F1", "F8"),
+  [string[]]$Hotkeys = @("Ctrl+Alt+X", "Shift+Alt+X", "Alt+Space", "Ctrl+Shift+F1", "F8"),
   [string]$OutDir = (Join-Path $env:TEMP "lextrail-classes-e2e"),
   [switch]$NoTerminal,
   [switch]$NoVsCode,

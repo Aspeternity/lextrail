@@ -19,7 +19,7 @@ M0 全部完成（路线 A，D036）。M1 已完成并合并到 `main`：
 - 悬浮窗高度随内容调整（D046 补充，`specs/m1-popup-dict.md` 第八节），R8 验收。
 
 手动测试清单与各轮结果：`specs/m1-capture-manual-tests.md`。
-性能：最近一次 `specs/m0-benchmark.md` 7.6（2026-10-21）：托盘 1.6 MiB、挂起 82.9 MiB、设置窗口关掉后挂起 44.0 MiB、冷启动 279.3 ms、热显示 33.3 ms、挂起后恢复 38.9 ms，全部达标；热显示和恢复比 7.5 慢 5–15 ms，待观察。
+性能：最近一次 `specs/m0-benchmark.md` 7.7（2026-10-21，默认 Alt+Space）：托盘 1.6 MiB、挂起 85.7 MiB、设置窗口关掉后挂起 43.8 MiB、冷启动 289.0 ms、热显示 37.5 ms、挂起后恢复 34.8 ms，全部达标；热显示比 7.5 慢约 10 ms，待观察。
 
 ## 正在进行
 
@@ -29,13 +29,14 @@ M0 全部完成（路线 A，D036）。M1 已完成并合并到 `main`：
     - **D048**：只禁止不能用的组合（LexTrail 自己用的、Windows 保留的、不带 Ctrl / Alt 的、带 Win 的），其他一律允许，不提示也不确认；删除软件快捷键清单和"提示但允许"。
     - **不使用快捷键**：设置窗口"不使用"，设置文件 `lookup = ""`。
     - **D014 补充**：只有 Alt 时屏蔽键改为补发一次 Ctrl，Windows Terminal 里也能取词；开了"按 Ctrl 键时显示指针位置"时改为取词后再补发 `0xE8`。
-  - 剩下：**默认快捷键待项目负责人决定**（Alt+Space 或 Ctrl+Alt+某个字母，D014）；新规则和"不使用"的真实键盘复测；合并到 `main`。
+    - **默认快捷键改为 Alt+Space**（D014 ✅）。
+    - bench 7.7（Alt+Space，bench 改为用临时设置目录）全部达标。
+  - 剩下：R10 真实键盘复测（`m1-capture-manual-tests.md`）；合并到 `main`。
 
 ## 下一步
 
-1. 项目负责人定默认快捷键（D014），改默认值和相关测试。
-2. 真实键盘复测：新的禁止规则、"不使用"、只有 Alt 的组合在 Windows Terminal 里取词；通过后合并到 `main`。
-3. 前端测试框架（Vitest）还没引入（M1 任务）。
+1. R10 真实键盘复测（AI 启动程序、读日志）；通过后合并到 `main`。
+2. 前端测试框架（Vitest）还没引入（M1 任务）。
 
 ## 待跟进（不在 ROADMAP 中的观察项）
 
@@ -46,7 +47,7 @@ M0 全部完成（路线 A，D036）。M1 已完成并合并到 `main`：
 
 ## 遇到的问题 / 需要项目负责人决定
 
-- 默认快捷键 D014 待决定：Alt+Space（会盖掉 Windows 的窗口菜单，可能和 PowerToys Run 冲突）或 Ctrl+Alt+某个字母。服务端许可证写法和 `apps/server` 是否加入 Cargo workspace 推迟到 M4（见 `DECISIONS.md` 待确认事项）。
+- 服务端许可证写法和 `apps/server` 是否加入 Cargo workspace 推迟到 M4（见 `DECISIONS.md` 待确认事项）。
 
 ## 备注
 

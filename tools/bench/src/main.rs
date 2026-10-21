@@ -41,7 +41,7 @@ mod run {
     use std::time::{Duration, Instant};
 
     use anyhow::{Context, Result, bail};
-    use lextrail_config::{PopupMode, Settings, SettingsFile};
+    use lextrail_config::{PopupMode, Settings};
 
     use crate::procs::{self, Memory, TreeSample, mib};
     use crate::stats::{Summary, cpu_percent, ms};
@@ -98,7 +98,7 @@ mod run {
 
     pub fn main() -> Result<()> {
         let options = parse_args()?;
-        check_settings()?;
+        check_default_hotkey()?;
         if !options.app.exists() {
             bail!(
                 "{} not found; build it with `pnpm --filter @lextrail/desktop tauri build --no-bundle`",
@@ -119,22 +119,25 @@ mod run {
         }
     }
 
-    /// The benchmark relies on the default hotkey and the default (responsive) mode.
-    fn check_settings() -> Result<()> {
-        let dir = std::env::var("APPDATA").context("APPDATA is not set")?;
-        let file = SettingsFile::in_dir(PathBuf::from(dir).join("io.github.aspeternity.lextrail"));
-        let settings = if file.path().exists() {
-            file.load()?.into_settings()
-        } else {
-            Settings::default()
-        };
-        if settings.hotkeys.lookup != "Ctrl+Alt+X" || settings.popup.mode != PopupMode::Responsive {
+    /// The app runs with default settings in a scratch directory (it never reads the
+    /// user's own while benchmarked); this checks that the default is what
+    /// [`ui::press_hotkey`] presses, and the default (responsive) popup mode.
+    fn check_default_hotkey() -> Result<()> {
+        let settings = Settings::default();
+        if settings.hotkeys.lookup != "Alt+Space" || settings.popup.mode != PopupMode::Responsive {
             bail!(
-                "{} must use the default hotkey (Ctrl+Alt+X) and popup mode (responsive)",
-                file.path().display()
+                "the default hotkey is now {} (mode {:?}): update ui::press_hotkey",
+                settings.hotkeys.lookup,
+                settings.popup.mode
             );
         }
         Ok(())
+    }
+
+    /// The app's settings directory while benchmarked (`paths.rs` in the app): emptied
+    /// before each start, so the app writes the current defaults.
+    fn scratch_config_dir() -> PathBuf {
+        std::env::temp_dir().join("lextrail-bench-config")
     }
 
     fn quick(options: &Options, cpus: usize) -> Result<()> {
@@ -262,6 +265,7 @@ mod run {
             kill_all()?;
             let timings = std::env::temp_dir().join("lextrail-bench-timings.txt");
             let _ = std::fs::remove_file(&timings);
+            let _ = std::fs::remove_dir_all(scratch_config_dir());
             let mut command = Command::new(&options.app);
             command.env(timings::ENV, &timings);
             if let Some(text) = &options.lookup_text {
