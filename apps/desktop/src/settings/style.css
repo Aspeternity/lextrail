@@ -143,16 +143,6 @@ body {
   font-weight: 400;
 }
 
-.hotkey__status {
-  margin: 6px 0 0;
-  color: #1a7f37;
-  font-size: 13px;
-}
-
-.hotkey__status--failed {
-  color: #cf222e;
-}
-
 .switch {
   display: inline-flex;
   align-items: center;

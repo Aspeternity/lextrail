@@ -23,7 +23,7 @@ const emit = defineEmits<{ update: [settings: SettingsView] }>();
 type State = { kind: 'idle' } | { kind: 'recording' };
 
 const state = ref<State>({ kind: 'idle' });
-/** A line under the recorder: the result of the last action, or a recording hint. */
+/** The result of the last action or key press; shown instead of the status while set. */
 const notice = ref<{ text: string; error: boolean } | null>(null);
 const held = ref<Modifiers | null>(null);
 /**
@@ -54,11 +54,11 @@ const recorderText = computed(() => {
 });
 
 const status = computed(() => {
-  if (state.value.kind !== 'idle') return '录制期间快捷键暂停使用';
+  if (state.value.kind !== 'idle') return '录制中，快捷键暂停使用';
   if (props.settings.lookupOff) {
     return props.settings.doubleCtrlC
-      ? '不使用快捷键，可以连按两次 Ctrl+C 查词'
-      : '不使用快捷键。要查词，请设置快捷键或打开下面的"连按两次 Ctrl+C"';
+      ? '不使用快捷键，可连按两次 Ctrl+C 查词'
+      : '不使用快捷键，可在下面打开"连按两次 Ctrl+C"查词';
   }
   if (props.settings.lookupActive) return '已生效';
   return `未生效：${props.settings.lookupError ?? '原因未知'}`;
@@ -67,6 +67,9 @@ const status = computed(() => {
 const failed = computed(
   () => state.value.kind === 'idle' && !props.settings.lookupActive && !props.settings.lookupOff,
 );
+
+/** One line under the recorder: the last result if there is one, else the status. */
+const message = computed(() => notice.value ?? { text: status.value, error: failed.value });
 
 const isDefault = computed(
   () => props.settings.lookup?.accelerator === props.settings.defaultLookup.accelerator,
@@ -114,10 +117,8 @@ async function apply(hotkey: HotkeyView | null): Promise<void> {
     emit('update', result.settings);
     switch (result.outcome) {
       case 'changed':
-        notice.value = {
-          text: hotkey ? `已改为 ${hotkey.display}` : '已关闭快捷键',
-          error: false,
-        };
+        // Turned off: the status already says so.
+        notice.value = hotkey ? { text: `已改为 ${hotkey.display}，已生效`, error: false } : null;
         break;
       case 'unchanged':
         notice.value = null;
@@ -127,12 +128,12 @@ async function apply(hotkey: HotkeyView | null): Promise<void> {
         break;
       case 'register_failed':
         notice.value = {
-          text: `${hotkey?.display ?? ''} 注册失败：${result.message ?? ''}。已保留原来的快捷键`,
+          text: `${hotkey?.display ?? ''} 注册失败（${result.message ?? ''}），仍用原来的快捷键`,
           error: true,
         };
         break;
       case 'save_failed':
-        notice.value = { text: `${result.message ?? ''}。已保留原来的快捷键`, error: true };
+        notice.value = { text: `${result.message ?? ''}，仍用原来的快捷键`, error: true };
         break;
     }
   } catch (error: unknown) {
@@ -264,21 +265,12 @@ async function turnOff(): Promise<void> {
       </button>
     </div>
     <p
-      id="hotkey-status"
-      role="status"
-      class="hotkey__status"
-      :class="{ 'hotkey__status--failed': failed }"
-    >
-      {{ status }}
-    </p>
-    <p
-      v-if="notice"
-      id="hotkey-notice"
+      id="hotkey-message"
       role="status"
       class="message"
-      :class="notice.error ? 'message--error' : 'message--ok'"
+      :class="message.error ? 'message--error' : 'message--ok'"
     >
-      {{ notice.text }}
+      {{ message.text }}
     </p>
   </div>
 </template>

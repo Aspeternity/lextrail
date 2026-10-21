@@ -271,7 +271,7 @@ try {
 
     # F5 is a fine hotkey: recorded, and the page did not reload (the notice is there).
     Send-Combo $win "settings window" @() 0x74
-    Check ((Text-Of (Find-Id $win "hotkey-notice")) -match "F5") "F5 is recorded; the page did not reload"
+    Check ((Text-Of (Find-Id $win "hotkey-message")) -match "F5") "F5 is recorded; the page did not reload"
     Check (-not (Is-Free 0 0x74)) "LexTrail holds F5"
     Check (Is-Free @defaultKey) "Alt+Space is let go"
     Check ((Lookup-Setting) -eq "F5") "F5 is saved"
@@ -282,7 +282,7 @@ try {
       Click-Id $win "hotkey-recorder"
       Send-Combo $win "settings window" @($CTRL) $k[0]
       Check ((Lookup-Setting) -eq $k[1]) "$($k[1]) is recorded and saved without a question"
-      Check ((Text-Of (Find-Id $win "hotkey-notice")) -match [regex]::Escape($k[1].Replace("+", " + "))) "$($k[1]): the page did not reload"
+      Check ((Text-Of (Find-Id $win "hotkey-message")) -match [regex]::Escape($k[1].Replace("+", " + "))) "$($k[1]): the page did not reload"
       Save-Screenshot $win ("recording-" + $k[1].Replace("+", ""))
       Check ([LtSet]::Windows([uint32]$appProc.Id, $settingsTitle).Count -eq 1) "$($k[1]) opened no other window"
     }
@@ -308,7 +308,7 @@ try {
     # Ctrl+C is refused; Esc cancels.
     Click-Id $win "hotkey-recorder"
     Send-Combo $win "settings window" @($CTRL) 0x43
-    Check ((Text-Of (Find-Id $win "hotkey-notice")) -match "Ctrl \+ C") "Ctrl+C is refused with the reason"
+    Check ((Text-Of (Find-Id $win "hotkey-message")) -match "Ctrl \+ C") "Ctrl+C is refused with the reason"
     Check (Is-Free @defaultKey) "still recording after Ctrl+C"
     Send-Combo $win "settings window" @() 0x1B
     Check (-not (Is-Free @defaultKey)) "Esc cancels: Alt+Space is back"
@@ -318,7 +318,7 @@ try {
     Check $held "this script holds Ctrl+Alt+Y"
     Click-Id $win "hotkey-recorder"
     Send-Combo $win "settings window" @($CTRL, $ALT) 0x59
-    $notice = Text-Of (Find-Id $win "hotkey-notice")
+    $notice = Text-Of (Find-Id $win "hotkey-message")
     Check ($notice.Contains($noReaction)) "a held combination shows 'no reaction'"
     Save-Screenshot $win "recording-taken"
     Send-Combo $win "settings window" @() 0x1B
@@ -332,7 +332,8 @@ try {
     $held = [LtSet]::RegisterHotKey([IntPtr]::Zero, 0x4C56, ($MOD_ALT -bor 0x4000), 0x20)
     Check $held "this script holds Alt+Space"
     Click-Id $win "hotkey-default"
-    Check ($null -ne (Find-Id $win "hotkey-notice")) "registering a taken default reports the failure"
+    # "Registration failed", built from code points.
+    Check ((Text-Of (Find-Id $win "hotkey-message")).Contains((Text 0x6CE8, 0x518C, 0x5931, 0x8D25))) "registering a taken default reports the failure"
     Check (-not (Is-Free ($MOD_CONTROL -bor $MOD_SHIFT) 0x71)) "Ctrl+Shift+F2 still works"
     Check ((Lookup-Setting) -eq "Ctrl+Shift+F2") "the file still says Ctrl+Shift+F2"
     Save-Screenshot $win "default-taken"
