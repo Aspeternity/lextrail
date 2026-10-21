@@ -34,7 +34,7 @@ M0 全部完成（路线 A，D036）。**M1 完成**（2026-10-21；剩下的 5 
 ## 下一步
 
 1. 等项目负责人确认 spec 0.7 g 的数据和第 6.2 节的新规则（牛津只有变形等关系时 ECDICT 自己的词条也给出）。
-2. 同时进行 spec 第 13 节第 1、2 步：`lextrail-dict` 的编号、指纹、规范化、音标规则（纯函数 + 测试）；转换工具 `tools/oxford-builder`。
+2. spec 第 13 节第 1 步已完成（`lextrail-dict`：`ext::id` 编号、`ext::text` 指纹和匹配规范化、`normalize_phonetic` 新音标规则，ECDICT 词典已按新写法重新生成）。下一步是第 2 步转换工具 `tools/oxford-builder`。
 3. 之后：扩展词典读取与查询合并、设置、悬浮窗、发音、性能和手动测试。
 
 ## 待跟进（不在 ROADMAP 中的观察项）
