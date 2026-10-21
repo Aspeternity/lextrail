@@ -136,6 +136,11 @@ $env:LEXTRAIL_DEBUG_DATA_DIR = Join-Path $OutDir ("data-" + [guid]::NewGuid())
 Start-Process $App -RedirectStandardError $log -WindowStyle Hidden
 Remove-Item Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR -ErrorAction SilentlyContinue
 Start-Sleep 4
+# A hotkey another program holds did not register: pressing it would reach that program.
+if (Select-String -Path $log -Pattern "did not register" -SimpleMatch -Quiet) {
+  Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
+  throw "the hotkey did not register (taken by another program?); not sending keys. Log: $log"
+}
 $form = @'
 Add-Type -AssemblyName System.Windows.Forms
 $f = New-Object System.Windows.Forms.Form

@@ -310,6 +310,11 @@ $env:LEXTRAIL_DEBUG_DATA_DIR = $dataDir
 Start-Process $App -RedirectStandardError $log -WindowStyle Hidden
 Remove-Item Env:LEXTRAIL_DEBUG_RESUME_DELAY_MS, Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR, Env:LEXTRAIL_DEBUG_FORCE_ATTACH, Env:LEXTRAIL_DEBUG_MAX_HEIGHT -ErrorAction SilentlyContinue
 Start-Sleep 4
+# A hotkey another program holds did not register: pressing it would reach that program.
+if (Select-String -Path $log -Pattern "did not register" -SimpleMatch -Quiet) {
+  Get-Process lextrail-desktop -ErrorAction SilentlyContinue | Stop-Process -Force
+  throw "the hotkey did not register (taken by another program?); not sending keys. Log: $log"
+}
 
 $edge = if ($Chrome) { "$env:ProgramFiles\Google\Chrome\Application\chrome.exe" }
   else { "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe" }

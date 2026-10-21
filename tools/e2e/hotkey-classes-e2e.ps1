@@ -12,8 +12,9 @@ with that lookup hotkey in fresh scratch settings and data directories, then:
   the output is double-clicked with the real mouse, the hotkey is pressed, and
     - the popup must show "brown";
     - the terminal's selection must still be "brown" afterwards (UI Automation). With
-      only Alt held the Alt mask falls back to 0xE8, which clears it (D014 supplement):
-      for "Alt+..." the selection is expected to be gone.
+      only Alt held the Alt mask falls back to 0xE8, which clears it before the capture
+      (D014 supplement, R3-9): for "Alt+..." the popup must say nothing is selected and
+      the selection is expected to be gone.
   VS Code: a new instance with its own scratch profile (--user-data-dir, --extensions-dir;
   never the user's own) opens a scratch file; Ctrl+Home, Ctrl+Shift+Right select "The",
   the hotkey is pressed, the popup must show the word; after Esc the menu bar must not
@@ -33,7 +34,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/e2e/hotkey-classes-e2e
 #>
 param(
   [string]$App = "target\debug\lextrail-desktop.exe",
-  [string[]]$Hotkeys = @("Ctrl+Alt+X", "Shift+Alt+X", "Alt+X", "Ctrl+Shift+F1", "F8"),
+  [string[]]$Hotkeys = @("Ctrl+Alt+X", "Shift+Alt+X", "Alt+J", "Ctrl+Shift+F1", "F8"),
   [string]$OutDir = (Join-Path $env:TEMP "lextrail-classes-e2e"),
   [switch]$NoTerminal,
   [switch]$NoVsCode,
@@ -105,6 +106,8 @@ public static class LtCls {
 [void][LtCls]::SetProcessDPIAware()
 $UIA = [System.Windows.Automation.AutomationElement]
 $TreeScope = [System.Windows.Automation.TreeScope]
+$Endpoint = [System.Windows.Automation.Text.TextPatternRangeEndpoint]
+$TextUnit = [System.Windows.Automation.Text.TextUnit]
 $ControlType = [System.Windows.Automation.ControlType]
 
 $failures = 0
@@ -184,11 +187,22 @@ function Test-Terminal([string]$Hotkey, [string]$Tag) {
     Start-Sleep 2
     $root = $UIA::FromHandle($wt)
     $textCond = New-Object System.Windows.Automation.PropertyCondition($UIA::IsTextPatternAvailableProperty, $true)
-    $term = $root.FindFirst($TreeScope::Descendants, $textCond)
+    # The terminal's own text, not the tab title (also a text control).
+    $termCond = New-Object System.Windows.Automation.AndCondition($textCond,
+      (New-Object System.Windows.Automation.PropertyCondition($UIA::ClassNameProperty, "TermControl")))
+    $term = $root.FindFirst($TreeScope::Descendants, $termCond)
     if (-not $term) { throw "no text control in the terminal" }
     $text = $term.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern)
     # The last "brown": the output line, not the command line.
-    $range = $text.DocumentRange.FindText("brown", $true, $false)
+    # Windows Terminal does not support FindText: find it in the text and move a range there.
+    $doc = $text.DocumentRange
+    $at = $doc.GetText(-1).LastIndexOf("brown")
+    if ($at -lt 0) { throw "no 'brown' in the terminal text" }
+    $range = $doc.Clone()
+    [void]$range.MoveEndpointByRange($Endpoint::End, $range, $Endpoint::Start)
+    [void]$range.Move($TextUnit::Character, $at)
+    [void]$range.MoveEndpointByUnit($Endpoint::End, $TextUnit::Character, 5)
+    if ($range.GetText(-1) -ne "brown") { throw "the range at 'brown' reads '$($range.GetText(-1))'" }
     $rects = $range.GetBoundingRectangles()
     if ($rects.Count -eq 0) { throw "'brown' is not on screen" }
     $x = [int]($rects[0].X + $rects[0].Width / 2); $y = [int]($rects[0].Y + $rects[0].Height / 2)
@@ -197,9 +211,13 @@ function Test-Terminal([string]$Hotkey, [string]$Tag) {
     $selected = ($text.GetSelection() | ForEach-Object { $_.GetText(-1) }) -join ""
     Check ($selected.Trim() -eq "brown") "$Tag terminal: 'brown' selected before the hotkey ('$selected')"
     Send-Keys $wt "terminal" (Get-HotkeyVks $Hotkey)
-    Check-Popup "brown" "$Tag-terminal" $wt
-    $after = ($text.GetSelection() | ForEach-Object { $_.GetText(-1) }) -join ""
+    # With only Alt held the mask falls back to 0xE8, which clears the selection before
+    # the capture (D014 supplement, R3-9): the popup says nothing is selected.
     $altOnly = $Hotkey -match "^Alt\+"
+    # "No text selected", built from code points (the script is read in the ANSI code page).
+    $noSelection = -join (@(0x6CA1, 0x6709, 0x9009, 0x4E2D, 0x6587, 0x5B57) | ForEach-Object { [char]$_ })
+    Check-Popup $(if ($altOnly) { $noSelection } else { "brown" }) "$Tag-terminal" $wt
+    $after = ($text.GetSelection() | ForEach-Object { $_.GetText(-1) }) -join ""
     if ($altOnly) {
       Check ($after.Trim() -ne "brown") "$Tag terminal: selection gone, as expected with only Alt ('$after')"
     } else {
@@ -268,6 +286,13 @@ try {
     $lt = Start-Process $App -RedirectStandardError $log -PassThru
     Remove-Item Env:LEXTRAIL_DEBUG_CONFIG_DIR, Env:LEXTRAIL_DEBUG_DATA_DIR
     Start-Sleep 4
+    # A hotkey another program holds did not register: pressing it would reach that
+    # program, so nothing is sent for this hotkey.
+    if (Select-String -Path $log -Pattern "did not register" -SimpleMatch -Quiet) {
+      Stop-Process -Id $lt.Id -Force -ErrorAction SilentlyContinue
+      Check $false "$hotkey registers (taken by another program?); its tests skipped"
+      continue
+    }
     try {
       if (-not $NoTerminal) { Test-Terminal $hotkey $tag }
       if (-not $NoVsCode) { Test-VsCode $hotkey $tag }
@@ -275,9 +300,12 @@ try {
       Stop-Process -Id $lt.Id -Force -ErrorAction SilentlyContinue
     }
     if (-not $NoStuckKeys) {
-      & (Join-Path $PSScriptRoot "stuck-keys.ps1") -App $App -Hotkey $hotkey -Rounds $StuckRounds -OutDir $OutDir |
-        Select-Object -Last 3 | ForEach-Object { Write-Host "  stuck-keys: $_" }
-      Check ($LASTEXITCODE -eq 0) "$hotkey stuck-keys: no stuck key"
+      # Judged by its last line: a script run with & leaves $LASTEXITCODE alone unless it
+      # calls exit.
+      $lines = @(& (Join-Path $PSScriptRoot "stuck-keys.ps1") -App $App -Hotkey $hotkey -Rounds $StuckRounds -OutDir $OutDir |
+        Select-Object -Last 3)
+      $lines | ForEach-Object { Write-Host "  stuck-keys: $_" }
+      Check ($lines[-1] -like "no stuck keys in *") "$hotkey stuck-keys: no stuck key"
     }
   }
 } finally {
