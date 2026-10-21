@@ -19,9 +19,9 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
-  # Platform-independent checks: formatting and frontend lint.
+  # Platform-independent checks: formatting, frontend lint and frontend tests.
   style:
-    name: Format, ESLint & typecheck
+    name: Format, ESLint, typecheck & frontend tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -35,6 +35,7 @@ jobs:
       - run: pnpm format:check
       - run: pnpm exec eslint .
       - run: pnpm typecheck
+      - run: pnpm -r test
 
   # Clippy, tests and build run on Windows so `cfg(target_os = "windows")` code is covered.
   windows:

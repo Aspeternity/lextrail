@@ -9,7 +9,7 @@
     "lint": "eslint . && cargo clippy --workspace --all-targets -- -D warnings && cargo clippy --workspace --all-targets --release -- -D warnings",
     "format": "prettier --write . && cargo fmt --all",
     "format:check": "prettier --check . && cargo fmt --all --check",
-    "test": "cargo test --workspace",
+    "test": "cargo test --workspace && pnpm -r test",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "typecheck": "pnpm -r typecheck"
   },
