@@ -23,6 +23,12 @@ apps/desktop/src-tauri/gen/
 data/raw/
 data/build/
 
+# Oxford dictionary data provided by the project owner: never committed (public repo, D049).
+# Sources, converted databases, extracted samples, audio and research scratch files.
+*.mdx
+*.mdd
+HKOUP_mdict_export*/
+
 # Editors and OS
 .vscode/*
 !.vscode/extensions.json
