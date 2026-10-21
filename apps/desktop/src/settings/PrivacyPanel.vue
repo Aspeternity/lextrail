@@ -6,11 +6,19 @@ const props = defineProps<{ settings: SettingsView }>();
 const emit = defineEmits<{ update: [settings: SettingsView] }>();
 
 const error = ref<string | null>(null);
-const busy = ref(false);
+/**
+ * A change is on its way to Rust. Only guards against a second click (which is undone):
+ * the switch keeps its look meanwhile, so nothing flashes.
+ */
+let busy = false;
 
 async function toggle(event: Event): Promise<void> {
   const box = event.target as HTMLInputElement;
-  busy.value = true;
+  if (busy) {
+    box.checked = !box.checked;
+    return;
+  }
+  busy = true;
   error.value = null;
   try {
     // The switch says "不记录", the setting says "record".
@@ -19,7 +27,7 @@ async function toggle(event: Event): Promise<void> {
     box.checked = !props.settings.recordHistory;
     error.value = errorText(e);
   } finally {
-    busy.value = false;
+    busy = false;
   }
 }
 </script>
@@ -34,7 +42,7 @@ async function toggle(event: Event): Promise<void> {
           type="checkbox"
           class="switch__input"
           :checked="!settings.recordHistory"
-          :disabled="!!settings.readOnly || busy"
+          :disabled="!!settings.readOnly"
           @change="toggle"
         />
         <span class="switch__label">不记录查询历史</span>

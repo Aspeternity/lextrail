@@ -16,11 +16,19 @@ const DOUBLE_COPY_HELP =
   'DeepL 桌面版等软件默认也用连按两次 Ctrl+C，同时开着时会一起弹出。';
 
 const error = ref<string | null>(null);
-const busy = ref(false);
+/**
+ * A change is on its way to Rust. Only guards against a second click (which is undone):
+ * the switch keeps its look meanwhile, so nothing flashes.
+ */
+let busy = false;
 
 async function toggleDoubleCopy(event: Event): Promise<void> {
   const box = event.target as HTMLInputElement;
-  busy.value = true;
+  if (busy) {
+    box.checked = !box.checked;
+    return;
+  }
+  busy = true;
   error.value = null;
   try {
     emit('update', await setDoubleCtrlC(box.checked));
@@ -29,7 +37,7 @@ async function toggleDoubleCopy(event: Event): Promise<void> {
     box.checked = props.settings.doubleCtrlC;
     error.value = errorText(e);
   } finally {
-    busy.value = false;
+    busy = false;
   }
 }
 </script>
@@ -51,7 +59,7 @@ async function toggleDoubleCopy(event: Event): Promise<void> {
           type="checkbox"
           class="switch__input"
           :checked="settings.doubleCtrlC"
-          :disabled="!!settings.readOnly || busy"
+          :disabled="!!settings.readOnly"
           @change="toggleDoubleCopy"
         />
         <span class="switch__label">连按两次 Ctrl+C 查词</span>

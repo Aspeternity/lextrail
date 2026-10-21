@@ -26,7 +26,11 @@ const state = ref<State>({ kind: 'idle' });
 /** A line under the recorder: the result of the last action, or a recording hint. */
 const notice = ref<{ text: string; error: boolean } | null>(null);
 const held = ref<Modifiers | null>(null);
-const busy = ref(false);
+/**
+ * A change is on its way to Rust. Only guards against a second click: the buttons keep
+ * their look meanwhile, or the whole row would flash for the few milliseconds it takes.
+ */
+let busy = false;
 const recorder = ref<HTMLButtonElement | null>(null);
 /** Modifiers went down since all were last up, and no main key arrived (spec 4.4). */
 let sawModifier = false;
@@ -69,7 +73,7 @@ const isDefault = computed(
 );
 
 async function startRecording(): Promise<void> {
-  if (busy.value || state.value.kind !== 'idle') return;
+  if (busy || state.value.kind !== 'idle') return;
   notice.value = null;
   try {
     emit('update', await setRecording(true));
@@ -102,8 +106,9 @@ async function cancel(): Promise<void> {
 
 /** `null` turns the lookup hotkey off. */
 async function apply(hotkey: HotkeyView | null): Promise<void> {
+  if (busy) return;
   listen(false);
-  busy.value = true;
+  busy = true;
   try {
     const result = await applyHotkey(hotkey?.accelerator ?? '');
     emit('update', result.settings);
@@ -133,7 +138,7 @@ async function apply(hotkey: HotkeyView | null): Promise<void> {
   } catch (error: unknown) {
     notice.value = { text: errorText(error), error: true };
   } finally {
-    busy.value = false;
+    busy = false;
   }
   state.value = { kind: 'idle' };
 }
@@ -207,13 +212,12 @@ onBeforeUnmount(() => {
   if (state.value.kind !== 'idle') void cancel();
 });
 
+/** The notice is replaced by the result, not cleared first: no line appearing and going. */
 async function restoreDefault(): Promise<void> {
-  notice.value = null;
   await apply(props.settings.defaultLookup);
 }
 
 async function turnOff(): Promise<void> {
-  notice.value = null;
   await apply(null);
 }
 </script>
@@ -221,55 +225,37 @@ async function turnOff(): Promise<void> {
 <template>
   <div class="hotkey">
     <div class="hotkey__row">
+      <!-- Click to record; Esc cancels (spec 4). -->
       <button
         id="hotkey-recorder"
         ref="recorder"
         type="button"
         class="hotkey__recorder"
         :class="{ 'hotkey__recorder--recording': state.kind === 'recording' }"
-        :disabled="!!settings.readOnly || busy"
+        :disabled="!!settings.readOnly"
+        title="点击后按下新的快捷键，Esc 取消"
         @click="startRecording"
       >
         {{ recorderText }}
       </button>
-      <template v-if="state.kind === 'idle'">
-        <button
-          id="hotkey-change"
-          type="button"
-          class="button"
-          :disabled="!!settings.readOnly || busy"
-          @click="startRecording"
-        >
-          更改
-        </button>
-        <button
-          id="hotkey-default"
-          type="button"
-          class="button"
-          :disabled="!!settings.readOnly || busy || isDefault"
-          :title="`默认：${settings.defaultLookup.display}`"
-          @click="restoreDefault"
-        >
-          恢复默认
-        </button>
-        <button
-          id="hotkey-off"
-          type="button"
-          class="button"
-          :disabled="!!settings.readOnly || busy || settings.lookupOff"
-          @click="turnOff"
-        >
-          不使用
-        </button>
-      </template>
       <button
-        v-else-if="state.kind === 'recording'"
-        id="hotkey-cancel-recording"
+        id="hotkey-default"
         type="button"
         class="button"
-        @click="cancel"
+        :disabled="!!settings.readOnly || isDefault"
+        :title="`默认：${settings.defaultLookup.display}`"
+        @click="restoreDefault"
       >
-        取消
+        恢复默认
+      </button>
+      <button
+        id="hotkey-off"
+        type="button"
+        class="button"
+        :disabled="!!settings.readOnly || settings.lookupOff"
+        @click="turnOff"
+      >
+        不使用
       </button>
     </div>
     <p

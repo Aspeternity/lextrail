@@ -266,7 +266,7 @@ try {
 
     Check (-not (Is-Free @defaultKey)) "LexTrail holds Alt+Space"
 
-    Click-Id $win "hotkey-change"
+    Click-Id $win "hotkey-recorder"
     Check (Is-Free @defaultKey) "recording turns the hotkey off"
 
     # F5 is a fine hotkey: recorded, and the page did not reload (the notice is there).
@@ -279,16 +279,16 @@ try {
     # Browser shortcuts while recording: recorded at once (other programs' shortcuts are
     # the user's choice, D048), no reload / print / find.
     foreach ($k in @(@(0x52, "Ctrl+R"), @(0x50, "Ctrl+P"), @(0x46, "Ctrl+F"))) {
-      Click-Id $win "hotkey-change"
+      Click-Id $win "hotkey-recorder"
       Send-Combo $win "settings window" @($CTRL) $k[0]
       Check ((Lookup-Setting) -eq $k[1]) "$($k[1]) is recorded and saved without a question"
       Check ((Text-Of (Find-Id $win "hotkey-notice")) -match [regex]::Escape($k[1].Replace("+", " + "))) "$($k[1]): the page did not reload"
       Save-Screenshot $win ("recording-" + $k[1].Replace("+", ""))
       Check ([LtSet]::Windows([uint32]$appProc.Id, $settingsTitle).Count -eq 1) "$($k[1]) opened no other window"
     }
-    Click-Id $win "hotkey-change"
-    Click-Id $win "hotkey-cancel-recording"
-    Check (-not (Is-Free $MOD_CONTROL 0x46)) "cancel brings Ctrl+F back"
+    Click-Id $win "hotkey-recorder"
+    Send-Combo $win "settings window" @() 0x1B
+    Check (-not (Is-Free $MOD_CONTROL 0x46)) "Esc brings Ctrl+F back"
 
     # Restore the default: no question either.
     Click-Id $win "hotkey-default"
@@ -306,7 +306,7 @@ try {
     Check (-not (Is-Free @defaultKey)) "default again after no hotkey"
 
     # Ctrl+C is refused; Esc cancels.
-    Click-Id $win "hotkey-change"
+    Click-Id $win "hotkey-recorder"
     Send-Combo $win "settings window" @($CTRL) 0x43
     Check ((Text-Of (Find-Id $win "hotkey-notice")) -match "Ctrl \+ C") "Ctrl+C is refused with the reason"
     Check (Is-Free @defaultKey) "still recording after Ctrl+C"
@@ -316,7 +316,7 @@ try {
     # A combination another program holds: the window never sees the key.
     $held = [LtSet]::RegisterHotKey([IntPtr]::Zero, 0x4C55, ($MOD_CONTROL -bor $MOD_ALT -bor 0x4000), 0x59)
     Check $held "this script holds Ctrl+Alt+Y"
-    Click-Id $win "hotkey-change"
+    Click-Id $win "hotkey-recorder"
     Send-Combo $win "settings window" @($CTRL, $ALT) 0x59
     $notice = Text-Of (Find-Id $win "hotkey-notice")
     Check ($notice.Contains($noReaction)) "a held combination shows 'no reaction'"
@@ -326,7 +326,7 @@ try {
     Check (-not (Is-Free @defaultKey)) "Alt+Space is back after Esc"
 
     # The new one fails to register: the current one stays, the file is unchanged.
-    Click-Id $win "hotkey-change"
+    Click-Id $win "hotkey-recorder"
     Send-Combo $win "settings window" @($CTRL, $SHIFT) 0x71
     Check ((Lookup-Setting) -eq "Ctrl+Shift+F2") "Ctrl+Shift+F2 is saved"
     $held = [LtSet]::RegisterHotKey([IntPtr]::Zero, 0x4C56, ($MOD_ALT -bor 0x4000), 0x20)
@@ -359,14 +359,14 @@ try {
 
     try {
       # Switching to another window while recording cancels it.
-      Click-Id $win "hotkey-change"
+      Click-Id $win "hotkey-recorder"
       Check (Is-Free @defaultKey) "recording again"
       Click-Form
       Start-Sleep -Milliseconds 500
       Check (-not (Is-Free @defaultKey)) "switching away while recording brings Alt+Space back"
 
       # Closing the window while recording.
-      Click-Id $win "hotkey-change"
+      Click-Id $win "hotkey-recorder"
       Check (Is-Free @defaultKey) "recording before closing"
       [void][LtSet]::PostMessage($win, 0x10, [IntPtr]::Zero, [IntPtr]::Zero)
       Start-Sleep -Milliseconds 1000
