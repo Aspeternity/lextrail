@@ -37,7 +37,7 @@
 - `LEXTRAIL_DEBUG_CAPTURE_DELAY_MS`：让取词变慢
 - `LEXTRAIL_DEBUG_SKIP_ACTIVATION`：不获取焦点
 - `LEXTRAIL_DEBUG_FORCE_ATTACH`：强制走获取焦点的后备路径（`popup-e2e.ps1 -ForceAttach`）
-- `LEXTRAIL_DEBUG_NO_ALT_MASK`：关掉屏蔽键；`LEXTRAIL_DEBUG_ALT_MASK_E8`：屏蔽键总用旧的 `0xE8`（对比用）
+- `LEXTRAIL_DEBUG_NO_ALT_MASK`：关掉屏蔽键；`LEXTRAIL_DEBUG_ALT_MASK_E8`：屏蔽键总用旧的 `0xE8`（对比用）；`LEXTRAIL_DEBUG_POINTER_RING`：当作开了"按 Ctrl 键时显示指针位置"，只有 Alt 时走"取词后再补发 `0xE8`"（`hotkey-classes-e2e.ps1 -PointerRing`）
 - `LEXTRAIL_DEBUG_CLIPBOARD_ONLY`：跳过 UIA，只走剪贴板
 - `LEXTRAIL_DEBUG_CONFIG_DIR` / `LEXTRAIL_DEBUG_DATA_DIR`：设置文件、数据库改用指定目录（`popup-e2e.ps1`、`stuck-keys.ps1` 已默认用临时目录）
 
@@ -57,5 +57,8 @@ debug 版日志：每次取词打印一行，如 `capture #2: captured | start +
 - **bench 要在普通终端窗口（如 Windows Terminal）中运行**：从 Claude 桌面应用等 Chromium 系窗口里启动时，前台是它，每次多等约 400 ms 的剪贴板确认，结果不可比。看结果时先看"capture (in app)"是否正常（约 20–35 ms）。
 - 用 `Start-Process -WindowStyle Hidden` 启动时，第一个提示框会被系统隐藏。正常启动不受影响。
 - 本机模拟输入：中文输入法会转换模拟键入的文字（改用粘贴）；Ctrl+` 是本机另一个截图工具的全局快捷键；新配置的 Edge 会弹出同步登录对话框（用 `--inprivate`）和"翻译此页"提示（先按 Esc）。
+- **锁屏时模拟按键送不到**：前台窗口为空（`GetForegroundWindow` 返回 0、`LogonUI` 在运行），bench 报"popup did not become visible"。长时间无人操作会自动锁屏，跑 bench 前确认没锁屏。
+- 用 `wt.exe` 新开窗口运行命令时，命令里的 `;` 会被 wt 当成它自己的子命令分隔符：把命令写进 `.ps1` 再用 `-File` 运行。
+- 本机 Alt+X、Alt+Q、Alt+F9 被别的程序占用（Alt+X 是 Asterun），e2e 脚本的"只有 Alt"一类用 Alt+J；脚本在快捷键没注册上时会停止、不发按键。
 - TypeScript 锁定在 `~6.0.3`（`typescript-eslint` 8.x 不支持 7.x）。
 - 依赖提醒：`glib 0.18.5`（RUSTSEC-2024-0429）和 `proc-macro-error`（unmaintained）只经由 Tauri 的 Linux 依赖引入，Windows 构建没有；等 Tauri 升级到 glib 0.20 以上再看。

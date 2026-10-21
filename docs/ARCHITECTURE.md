@@ -40,7 +40,7 @@ LexTrail 是一款常驻后台的桌面翻译与词汇学习工具：
 │        ▼                                  ▼                             │
 │  本地 SQLite                       同步客户端 ─────────────┐            │
 │                                                            │            │
-│  界面：悬浮窗（轻量页面）│ 主窗口（生词本/复习/设置）│ 托盘 │            │
+│  界面：悬浮窗（轻量页面）│ 主窗口（生词本/复习）│设置│ 托盘 │            │
 └────────────────────────────────────────────────────────────┼────────────┘
                                                              │ HTTPS
                                           ┌──────────────────▼──────────┐
@@ -89,8 +89,10 @@ lextrail/
 │   │   │                       main.rs（启动、插件、单实例）、tray.rs、hotkey.rs、settings.rs、
 │   │   │                       notice.rs（原生提示框）、memory.rs（低内存通知）、
 │   │   │                       popup/（悬浮窗：lifecycle 状态机、placement 定位、webview 挂起与恢复）、
-│   │   │                       main_window.rs（主窗口，关闭即销毁）
-│   │   └── src/              Vue 前端：popup/（悬浮窗，独立轻量入口）、main/（主窗口）；两个 Vite 入口
+│   │   │                       main_window.rs（主窗口，关闭即销毁）、
+│   │   │                       settings_window.rs（设置窗口，关闭即销毁，D047）
+│   │   └── src/              Vue 前端：popup/（悬浮窗，独立轻量入口）、main/（主窗口：生词本、复习）、
+│   │                           settings/（设置窗口，D047）；三个 Vite 入口
 │   ├── server/               同步服务端（占位，M4；LICENSE：AGPL-3.0）
 │   └── pwa/                  手机端复习 PWA（占位，M4；构建后嵌入服务端）
 ├── packages/
@@ -465,7 +467,7 @@ address                         ★  🔊  📌
 6. 获取焦点：先直接 `SetForegroundWindow`；被拒绝时（例如慢速取词期间有过其他输入），先用 `IsHungAppWindow` 确认前台窗口没有失去响应，再用 `AttachThreadInput` 挂到前台线程的输入队列后重试，无论成功与否都立即解除挂接。不使用 Tauri 的 `set_focus` 后备做法（它会模拟一次 Alt 键，发到原窗口，可能打开其菜单栏）。获取焦点期间发生的前台变化视为我们自己造成的，不隐藏悬浮窗（`popup/activation.rs`、`popup/request.rs`）。
    - 仍然失败时：结果照常显示，但悬浮窗没有焦点，Esc 关不掉；在原窗口里操作也不会改变前台窗口。关闭方式：点击悬浮窗右上角的 × 按钮（任何时候都显示）；或点击悬浮窗本身（它因此获得焦点，之后 Esc、点击外部都可关闭）；或切换到其他窗口（仍在监视前台，会隐藏）；或再次按快捷键查别的词。
 7. 悬浮窗隐藏时清空内容，下次显示时不会闪出旧结果。
-8. 权限（Tauri 2 ACL）：`apps/desktop/src-tauri/capabilities/popup.json` 只给悬浮窗授予 `core:event:allow-listen`；`hide_popup`、`popup_ready` 是应用自己的命令，不需要权限。主窗口目前不调用任何 Tauri API，没有授予权限，以后按需添加。
+8. 权限（Tauri 2 ACL）：`apps/desktop/src-tauri/capabilities/popup.json` 只给悬浮窗授予 `core:event:allow-listen`；`hide_popup`、`popup_ready` 是应用自己的命令，不需要权限。主窗口目前不调用任何 Tauri API，没有授予权限，以后按需添加。（M1 设置窗口起改为每个窗口只能调用自己的命令，见 `docs/specs/m1-hotkey-settings.md` 1.3。）
 
 **钉住状态**（📌，功能以后实现，规则先定）：
 - 钉住时不因失去焦点或前台窗口变化而隐藏，只能用 Esc（悬浮窗有焦点时）或再次点击 📌 / 关闭按钮关闭。
@@ -515,6 +517,8 @@ M0 阶段必须实测以下指标；任何一项不达标，都要在 `DECISIONS
 ---
 
 ## 12. 主要设置项
+
+设置放在单独的设置窗口（托盘右键"设置…"，D047），左边分类、右边内容；M1 只做"快捷键"和"隐私"两类，其余分类在对应里程碑加入。从设置窗口改的设置立即生效。
 
 | 分类 | 设置 |
 |---|---|

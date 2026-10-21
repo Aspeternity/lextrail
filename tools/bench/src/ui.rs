@@ -7,16 +7,16 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
-    VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE, VK_MENU,
+    VIRTUAL_KEY, VK_ESCAPE, VK_MENU, VK_SPACE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, GetForegroundWindow, GetWindowThreadProcessId, IsWindowVisible, SetCursorPos,
+    FindWindowExW, GetForegroundWindow, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
+    PostMessageW, SetCursorPos, WM_CLOSE,
 };
 use windows::core::w;
-
-const VK_X: VIRTUAL_KEY = VIRTUAL_KEY(0x58);
 
 fn key(vk: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     INPUT {
@@ -45,7 +45,7 @@ fn chord(keys: &[VIRTUAL_KEY]) -> Result<()> {
 
 /// The default lookup hotkey (D014).
 pub fn press_hotkey() -> Result<()> {
-    chord(&[VK_CONTROL, VK_MENU, VK_X])
+    chord(&[VK_MENU, VK_SPACE])
 }
 
 pub fn press_escape() -> Result<()> {
@@ -61,11 +61,19 @@ pub fn park_cursor() -> Result<()> {
 
 /// The app's popup window ("Tauri Window" titled "LexTrail"), if it exists.
 pub fn find_popup(pid: u32) -> Option<HWND> {
+    find_window(pid, w!("LexTrail"))
+}
+
+/// The app's settings window (D047), if it exists.
+pub fn find_settings(pid: u32) -> Option<HWND> {
+    find_window(pid, w!("LexTrail 设置"))
+}
+
+fn find_window(pid: u32, title: windows::core::PCWSTR) -> Option<HWND> {
     let mut after: Option<HWND> = None;
     loop {
         // SAFETY: plain Win32 calls with valid string literals.
-        let hwnd =
-            unsafe { FindWindowExW(None, after, w!("Tauri Window"), w!("LexTrail")) }.ok()?;
+        let hwnd = unsafe { FindWindowExW(None, after, w!("Tauri Window"), title) }.ok()?;
         let mut owner = 0;
         unsafe { GetWindowThreadProcessId(hwnd, Some(&mut owner)) };
         if owner == pid {
@@ -73,6 +81,26 @@ pub fn find_popup(pid: u32) -> Option<HWND> {
         }
         after = Some(hwnd);
     }
+}
+
+/// Asks a window to close, as its close button would.
+pub fn close(hwnd: HWND) -> Result<()> {
+    // SAFETY: plain Win32 call.
+    unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)) }?;
+    Ok(())
+}
+
+/// Waits until the window is destroyed.
+pub fn wait_gone(hwnd: HWND, timeout: Duration) -> Result<()> {
+    let start = Instant::now();
+    // SAFETY: plain Win32 call; a destroyed handle reports false.
+    while unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+        if start.elapsed() > timeout {
+            bail!("window did not close within {timeout:?}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Ok(())
 }
 
 pub fn is_visible(hwnd: HWND) -> bool {

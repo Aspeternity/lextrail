@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-popup-resize"
+description = "Enables the popup_resize command without any pre-configured scope."
+commands.allow = ["popup_resize"]
+
+[[permission]]
+identifier = "deny-popup-resize"
+description = "Denies the popup_resize command without any pre-configured scope."
+commands.deny = ["popup_resize"]

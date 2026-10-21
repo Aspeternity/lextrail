@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use lextrail_core::lookup::{CaptureMethod, LookupKind};
 use lextrail_store::{LookupOutcome, NewLookup, Store, StoreError};
@@ -23,8 +24,9 @@ pub struct Record {
 pub struct HistoryService {
     /// The data directory (`app_local_data_dir()`); `None` when it is unknown.
     dir: Option<PathBuf>,
-    /// `false`: "不记录查询历史" (`history.record` in the settings file).
-    enabled: bool,
+    /// `false`: "不记录查询历史" (`history.record` in the settings file). Changed from the
+    /// settings window without a restart.
+    enabled: AtomicBool,
     store: Mutex<State>,
 }
 
@@ -36,10 +38,14 @@ enum State {
 }
 
 impl HistoryService {
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Relaxed);
+    }
+
     pub fn new(dir: Option<PathBuf>, enabled: bool) -> Self {
         Self {
             dir,
-            enabled,
+            enabled: AtomicBool::new(enabled),
             store: Mutex::new(State::NotOpened),
         }
     }
@@ -53,7 +59,7 @@ impl HistoryService {
         record: &Record,
         on_open_failure: impl FnOnce(&str),
     ) -> Option<LookupOutcome> {
-        if !self.enabled {
+        if !self.enabled.load(Ordering::Relaxed) {
             return None;
         }
         let mut state = self.store.lock().unwrap_or_else(|e| e.into_inner());

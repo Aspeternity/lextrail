@@ -1,0 +1,180 @@
+/* Keep the background in sync with BACKGROUND in src-tauri/src/settings_window.rs. */
+:root {
+  color-scheme: light;
+  font-family: 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+  font-size: 14px;
+  color: #1f2328;
+  background: #ffffff;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  user-select: none;
+}
+
+.settings {
+  display: flex;
+  height: 100%;
+}
+
+/* Categories on the left, content on the right (D047). */
+.settings__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 160px;
+  box-sizing: border-box;
+  padding: 16px 8px;
+  border-right: 1px solid #d0d7de;
+  background: #f6f8fa;
+}
+
+.settings__category {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings__category:hover {
+  background: #eaeef2;
+}
+
+.settings__category--current {
+  background: #ddf4ff;
+  color: #0969da;
+  font-weight: 600;
+}
+
+.settings__content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 16px 24px 24px;
+}
+
+.panel__title {
+  margin: 0 0 16px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.field {
+  margin-bottom: 24px;
+}
+
+.field__label {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.field__help {
+  margin: 4px 0 8px;
+  color: #59636e;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.button {
+  padding: 5px 12px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #f6f8fa;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  background: #eaeef2;
+}
+
+.button:disabled {
+  color: #8c959f;
+  cursor: default;
+}
+
+.button--primary {
+  border-color: #1f883d;
+  background: #1f883d;
+  color: #ffffff;
+}
+
+.button--primary:hover:not(:disabled) {
+  background: #1a7f37;
+}
+
+.hotkey__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* A button, not an input: the IME must not see the keys (spec 1.2). */
+.hotkey__recorder {
+  min-width: 220px;
+  padding: 6px 12px;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #ffffff;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hotkey__recorder--recording {
+  border-color: #0969da;
+  box-shadow: 0 0 0 3px rgb(9 105 218 / 0.2);
+  color: #0969da;
+  font-weight: 400;
+}
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.switch__input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.message {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
+
+.message--ok {
+  color: #1a7f37;
+}
+
+.message--error {
+  color: #cf222e;
+}
+
+.message--warning {
+  margin: 0 0 16px;
+  padding: 8px 12px;
+  border: 1px solid #d4a72c;
+  border-radius: 6px;
+  background: #fff8c5;
+  color: #1f2328;
+}

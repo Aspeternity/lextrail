@@ -4,7 +4,8 @@ import { defineConfig } from 'vite';
 
 const src = resolve(import.meta.dirname, 'src');
 
-// Two independent entries: the popup stays a separate lightweight page (D010).
+// Independent entries: the popup stays a separate lightweight page (D010); the settings
+// window has its own (D047).
 export default defineConfig({
   root: src,
   plugins: [vue()],
@@ -22,6 +23,7 @@ export default defineConfig({
       input: {
         popup: resolve(src, 'popup/index.html'),
         main: resolve(src, 'main/index.html'),
+        settings: resolve(src, 'settings/index.html'),
       },
     },
   },

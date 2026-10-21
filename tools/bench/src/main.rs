@@ -41,7 +41,7 @@ mod run {
     use std::time::{Duration, Instant};
 
     use anyhow::{Context, Result, bail};
-    use lextrail_config::{PopupMode, Settings, SettingsFile};
+    use lextrail_config::{PopupMode, Settings};
 
     use crate::procs::{self, Memory, TreeSample, mib};
     use crate::stats::{Summary, cpu_percent, ms};
@@ -98,7 +98,7 @@ mod run {
 
     pub fn main() -> Result<()> {
         let options = parse_args()?;
-        check_settings()?;
+        check_default_hotkey()?;
         if !options.app.exists() {
             bail!(
                 "{} not found; build it with `pnpm --filter @lextrail/desktop tauri build --no-bundle`",
@@ -119,22 +119,25 @@ mod run {
         }
     }
 
-    /// The benchmark relies on the default hotkey and the default (responsive) mode.
-    fn check_settings() -> Result<()> {
-        let dir = std::env::var("APPDATA").context("APPDATA is not set")?;
-        let file = SettingsFile::in_dir(PathBuf::from(dir).join("io.github.aspeternity.lextrail"));
-        let settings = if file.path().exists() {
-            file.load()?.into_settings()
-        } else {
-            Settings::default()
-        };
-        if settings.hotkeys.lookup != "Ctrl+Alt+X" || settings.popup.mode != PopupMode::Responsive {
+    /// The app runs with default settings in a scratch directory (it never reads the
+    /// user's own while benchmarked); this checks that the default is what
+    /// [`ui::press_hotkey`] presses, and the default (responsive) popup mode.
+    fn check_default_hotkey() -> Result<()> {
+        let settings = Settings::default();
+        if settings.hotkeys.lookup != "Alt+Space" || settings.popup.mode != PopupMode::Responsive {
             bail!(
-                "{} must use the default hotkey (Ctrl+Alt+X) and popup mode (responsive)",
-                file.path().display()
+                "the default hotkey is now {} (mode {:?}): update ui::press_hotkey",
+                settings.hotkeys.lookup,
+                settings.popup.mode
             );
         }
         Ok(())
+    }
+
+    /// The app's settings directory while benchmarked (`paths.rs` in the app): emptied
+    /// before each start, so the app writes the current defaults.
+    fn scratch_config_dir() -> PathBuf {
+        std::env::temp_dir().join("lextrail-bench-config")
     }
 
     fn quick(options: &Options, cpus: usize) -> Result<()> {
@@ -200,6 +203,23 @@ mod run {
         section("show after suspend (hidden 15 s)");
         print_summary(&resumed);
         print_split(&resumed_split);
+
+        // 3. The settings window (D047) shares the WebView2 environment with the popup;
+        // what stays after it is closed (docs/specs/m1-hotkey-settings.md 8.3).
+        let settings = app.open_settings(options)?;
+        sleep(Duration::from_secs(2));
+        section("settings window open (popup suspended)");
+        report_tree("memory", &app.sample()?);
+        ui::close(settings)?;
+        ui::wait_gone(settings, SHOW_TIMEOUT)?;
+        app.show()?;
+        sleep(Duration::from_millis(300));
+        app.hide()?;
+        app.timing()?;
+        sleep(SUSPEND_SETTLE);
+        section("suspended after the settings window was opened and closed (hidden 15 s)");
+        report_tree("memory", &app.sample()?);
+        report_cpu("idle CPU", &app, cpus)?;
         app.quit()
     }
 
@@ -245,6 +265,7 @@ mod run {
             kill_all()?;
             let timings = std::env::temp_dir().join("lextrail-bench-timings.txt");
             let _ = std::fs::remove_file(&timings);
+            let _ = std::fs::remove_dir_all(scratch_config_dir());
             let mut command = Command::new(&options.app);
             command.env(timings::ENV, &timings);
             if let Some(text) = &options.lookup_text {
@@ -302,6 +323,25 @@ mod run {
             ui::press_escape()?;
             ui::wait_popup(self.pid(), false, start, SHOW_TIMEOUT)?;
             Ok(())
+        }
+
+        /// Opens the settings window the way a shortcut would (`--settings` to the running
+        /// app) and waits until it is shown (the app shows it once the page has loaded).
+        fn open_settings(&self, options: &Options) -> Result<windows::Win32::Foundation::HWND> {
+            Command::new(&options.app)
+                .arg("--settings")
+                .status()
+                .context("cannot start the app with --settings")?;
+            let start = Instant::now();
+            loop {
+                if let Some(hwnd) = ui::find_settings(self.pid()).filter(|&h| ui::is_visible(h)) {
+                    return Ok(hwnd);
+                }
+                if start.elapsed() > SHOW_TIMEOUT {
+                    bail!("the settings window did not show within {SHOW_TIMEOUT:?}");
+                }
+                sleep(Duration::from_millis(20));
+            }
         }
 
         fn sample(&self) -> Result<TreeSample> {
