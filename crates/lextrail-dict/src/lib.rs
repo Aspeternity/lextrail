@@ -11,6 +11,7 @@ mod classify;
 mod dictionary;
 mod exchange;
 pub mod ext;
+mod merge;
 mod phonetic;
 pub mod schema;
 mod senses;
@@ -23,6 +24,7 @@ pub use dictionary::{
     LookupOptions, LookupResult, PartsResult, normalize_query,
 };
 pub use exchange::{Exchange, FormKind, parse_exchange};
+pub use merge::{Content, Hit, Lexicon, Merged, MergedFound, OxfordEntry, Role};
 pub use phonetic::normalize_phonetic;
 pub use senses::{Sense, split_translation};
 pub use suffix::candidates as suffix_candidates;

@@ -9,6 +9,27 @@
 //! identified by `entry_id`, `grp` (the [`super::id::Group`] text: `s`, `i3`, ...) and the
 //! sense number, so the stable id of a sense is `entries.entry_key` + `grp` + `sense`.
 
+use serde::{Deserialize, Serialize};
+
+/// A cross-reference ("SYN establish", "past tense of go"), stored as a JSON array in the
+/// `xrefs` columns of `groups` and `senses`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Xref {
+    /// The `xt` attribute: `syn`, `opp`, `see`, `cp`, `ptof` (past tense of) ...
+    pub kind: String,
+    /// The label as shown: "SYN", "see also", ...
+    pub label: String,
+    pub targets: Vec<String>,
+}
+
+impl Xref {
+    /// Points from a word form to its base form: "past tense of", "plural of" ... (`ptof`,
+    /// `ptppof`, `plof`, `ppof`, `presptof`, `thirdpsof`, `singof`).
+    pub fn is_form_of(&self) -> bool {
+        self.kind.ends_with("of")
+    }
+}
+
 /// `meta.format` of an extended dictionary.
 pub const FORMAT: &str = "lextrail-ext-dict";
 /// `meta.format_version` of an extended dictionary.

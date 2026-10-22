@@ -15,6 +15,9 @@ pub enum DictError {
     UnsupportedFormat { found: Option<String> },
     #[error(transparent)]
     Sqlite(#[from] rusqlite::Error),
+    /// A JSON column of an extended dictionary that does not parse.
+    #[error("invalid data in dictionary file: {0}")]
+    Data(String),
 }
 
 /// A dictionary entry with its senses in source order.
@@ -151,7 +154,7 @@ const EXCHANGE_LEMMA_SQL: &str = "SELECT f.lemma, f.kind, e.frq, e.bnc FROM form
      ORDER BY f.lemma, f.kind";
 
 /// Parts of a compound that get no entry of their own (`English-to-German`).
-const FUNCTION_WORDS: &[&str] = &[
+pub(crate) const FUNCTION_WORDS: &[&str] = &[
     "a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "nor", "of", "on",
     "onto", "or", "per", "the", "to", "via", "vs", "with",
 ];
@@ -348,14 +351,18 @@ impl Dictionary {
     }
 
     /// The best entry for `word`; see [`Dictionary::entries_for`].
-    fn entry(&self, word: &str) -> Result<Option<Entry>, DictError> {
+    pub(crate) fn entry(&self, word: &str) -> Result<Option<Entry>, DictError> {
         Ok(self.entries_for(word, false)?.into_iter().next())
     }
 
     /// Entries for `word` in any case: the exact case, else the lowercase entry, else the
     /// first by source order. A capitalized word (`March`) with its own and a lowercase
     /// entry gives both: its own first, or the lowercase one first at a sentence start.
-    fn entries_for(&self, word: &str, sentence_start: bool) -> Result<Vec<Entry>, DictError> {
+    pub(crate) fn entries_for(
+        &self,
+        word: &str,
+        sentence_start: bool,
+    ) -> Result<Vec<Entry>, DictError> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT id, word FROM entries WHERE word = ?1 COLLATE NOCASE ORDER BY id",
         )?;
@@ -419,7 +426,7 @@ impl Dictionary {
 
     /// Base form from the `forms` table. Several lemmas (e.g. `found` -> find / found):
     /// the more frequent one.
-    fn exchange_lemma(&self, form: &str) -> Result<Option<Inflection>, DictError> {
+    pub(crate) fn exchange_lemma(&self, form: &str) -> Result<Option<Inflection>, DictError> {
         let mut stmt = self.conn.prepare_cached(EXCHANGE_LEMMA_SQL)?;
         let rows = stmt
             .query_map([form], |r| {
@@ -525,18 +532,18 @@ fn same_word(a: &Entry, b: &Entry) -> bool {
 }
 
 /// Has an exam tag, Collins stars or the Oxford 3000 mark.
-fn is_marked(entry: &Entry) -> bool {
+pub(crate) fn is_marked(entry: &Entry) -> bool {
     !entry.tags.is_empty() || entry.collins.is_some_and(|c| c > 0) || entry.oxford
 }
 
 /// `March`: an uppercase first letter and lowercase letters after it.
-fn is_capitalized(word: &str) -> bool {
+pub(crate) fn is_capitalized(word: &str) -> bool {
     let mut chars = word.chars();
     chars.next().is_some_and(char::is_uppercase) && chars.all(|c| !c.is_uppercase())
 }
 
 /// Every sense only says which form of another word this is ("launch的过去式和过去分词").
-fn is_form_note(entry: &Entry) -> bool {
+pub(crate) fn is_form_note(entry: &Entry) -> bool {
     const NOTES: [&str; 7] = [
         "的过去式",
         "的过去分词",
@@ -554,7 +561,7 @@ fn is_form_note(entry: &Entry) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::schema::{INDEXES, SCHEMA};
     use rusqlite::params;
@@ -647,7 +654,8 @@ mod tests {
         ("improving", "improve", "i"),
     ];
 
-    fn fixture(dir: &Path) -> Dictionary {
+    /// A small ECDICT dictionary in `dir` (also used by `merge` tests).
+    pub(crate) fn fixture(dir: &Path) -> Dictionary {
         let path = dir.join("dict.db");
         let conn = Connection::open(&path).unwrap();
         conn.execute_batch(SCHEMA).unwrap();

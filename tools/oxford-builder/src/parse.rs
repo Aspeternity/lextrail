@@ -47,14 +47,7 @@ pub struct Entry {
     pub sounds: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Xref {
-    /// The `xt` attribute: `syn`, `opp`, `see`, `cp`, ...
-    pub kind: String,
-    /// The label as shown: "SYN", "see also", ...
-    pub label: String,
-    pub targets: Vec<String>,
-}
+pub use lextrail_dict::ext::schema::Xref;
 
 #[derive(Debug, Clone)]
 pub struct GroupData {

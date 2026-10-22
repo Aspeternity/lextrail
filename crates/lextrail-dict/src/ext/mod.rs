@@ -2,6 +2,7 @@
 //! (`tools/oxford-builder`) and the reader, so that they exist only once (D038).
 
 pub mod id;
+pub mod reader;
 pub mod schema;
 pub mod text;
 
