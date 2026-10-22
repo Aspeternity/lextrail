@@ -1,7 +1,7 @@
 //! Maps the sense and group ids of a previous conversion to the new ones
 //! (`docs/specs/m1.5-oxford.md` 5.4), by fingerprint.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
@@ -40,6 +40,7 @@ pub struct RenameCounts {
     pub unchanged: u64,
     pub same_entry: u64,
     pub cross_entry: u64,
+    pub changed: u64,
     pub removed: u64,
 }
 
@@ -100,7 +101,8 @@ pub fn read_previous(path: &Path) -> Result<Vec<Item>> {
 
 /// For each old item: unchanged (same id and fingerprint), found in the same entry (by
 /// entry key, else source entry number) in a group of the same kind, found once anywhere,
-/// or removed.
+/// changed (its id is still there with another fingerprint, and no other old item moved
+/// to that id: a reworded definition keeps its id), or removed.
 pub fn renames(old: &[Item], new: &[Item]) -> (Vec<Rename>, RenameCounts) {
     let by_id: HashMap<String, &Item> = new.iter().map(|i| (i.id(), i)).collect();
     let mut by_entry: HashMap<&str, Vec<&Item>> = HashMap::new();
@@ -114,7 +116,7 @@ pub fn renames(old: &[Item], new: &[Item]) -> (Vec<Rename>, RenameCounts) {
             .or_default()
             .push(i);
     }
-    let mut out = Vec::new();
+    let mut found: Vec<(String, Option<(String, &'static str)>)> = Vec::new();
     let mut counts = RenameCounts::default();
     for o in old {
         let id = o.id();
@@ -141,24 +143,40 @@ pub fn renames(old: &[Item], new: &[Item]) -> (Vec<Rename>, RenameCounts) {
                 .or(found.first())
                 .map(|n| n.id())
         });
-        if let Some(new_id) = same_entry {
-            counts.same_entry += 1;
-            out.push((id, Some(new_id), "same_entry"));
-            continue;
-        }
-        match by_fingerprint
-            .get(&(o.fingerprint.as_str(), o.sense.is_some()))
-            .map(Vec::as_slice)
-        {
-            Some([only]) => {
-                counts.cross_entry += 1;
-                out.push((id, Some(only.id()), "cross_entry"));
+        let target = match same_entry {
+            Some(new_id) => Some((new_id, "same_entry")),
+            None => match by_fingerprint
+                .get(&(o.fingerprint.as_str(), o.sense.is_some()))
+                .map(Vec::as_slice)
+            {
+                Some([only]) => Some((only.id(), "cross_entry")),
+                _ => None,
+            },
+        };
+        found.push((id, target));
+    }
+    // Ids another old item moved to: the old item that had the id is gone (a sense
+    // deleted before it), not changed.
+    let moved_to: HashSet<String> = found
+        .iter()
+        .filter_map(|(_, t)| t.as_ref().map(|(new_id, _)| new_id.clone()))
+        .collect();
+    let mut out = Vec::new();
+    for (id, target) in found {
+        let (new_id, how) = match target {
+            Some((new_id, how)) => (Some(new_id), how),
+            None if by_id.contains_key(&id) && !moved_to.contains(&id) => {
+                (Some(id.clone()), "changed")
             }
-            _ => {
-                counts.removed += 1;
-                out.push((id, None, "removed"));
-            }
+            None => (None, "removed"),
+        };
+        match how {
+            "same_entry" => counts.same_entry += 1,
+            "cross_entry" => counts.cross_entry += 1,
+            "changed" => counts.changed += 1,
+            _ => counts.removed += 1,
         }
+        out.push((id, new_id, how));
     }
     (out, counts)
 }
@@ -170,4 +188,77 @@ pub fn write(conn: &Connection, renames: &[Rename]) -> Result<()> {
         stmt.execute(params![old, new, how])?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Senses of one main group, numbered from 1, with these fingerprints.
+    fn senses(fingerprints: &[&str]) -> Vec<Item> {
+        fingerprints
+            .iter()
+            .enumerate()
+            .map(|(n, f)| Item {
+                entry_key: "blorf||verb".to_owned(),
+                source_entry: 1,
+                grp: "s".to_owned(),
+                sense: Some(n as i64 + 1),
+                fingerprint: (*f).to_owned(),
+            })
+            .collect()
+    }
+
+    fn table(old: &[&str], new: &[&str]) -> Vec<String> {
+        renames(&senses(old), &senses(new))
+            .0
+            .into_iter()
+            .map(|(o, n, how)| format!("{o} {} {how}", n.as_deref().unwrap_or("-")))
+            .collect()
+    }
+
+    #[test]
+    fn a_reworded_definition_keeps_its_id() {
+        let (renames, counts) = renames(&senses(&["a", "b", "c"]), &senses(&["a", "B", "c"]));
+        assert_eq!(
+            renames,
+            [(
+                "oalecd10/blorf||verb/s/2".to_owned(),
+                Some("oalecd10/blorf||verb/s/2".to_owned()),
+                "changed"
+            )]
+        );
+        assert_eq!(
+            (counts.unchanged, counts.changed, counts.removed),
+            (2, 1, 0)
+        );
+    }
+
+    #[test]
+    fn a_sense_inserted_before_moves_the_later_ones() {
+        assert_eq!(
+            table(&["a", "b"], &["new", "a", "b"]),
+            [
+                "oalecd10/blorf||verb/s/1 oalecd10/blorf||verb/s/2 same_entry",
+                "oalecd10/blorf||verb/s/2 oalecd10/blorf||verb/s/3 same_entry",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_deleted_sense_is_removed_even_when_its_number_is_reused() {
+        assert_eq!(
+            table(&["a", "b", "c"], &["b", "c"]),
+            [
+                "oalecd10/blorf||verb/s/1 - removed",
+                "oalecd10/blorf||verb/s/2 oalecd10/blorf||verb/s/1 same_entry",
+                "oalecd10/blorf||verb/s/3 oalecd10/blorf||verb/s/2 same_entry",
+            ]
+        );
+        // The last number disappears.
+        assert_eq!(
+            table(&["a", "b", "c"], &["a", "b"]),
+            ["oalecd10/blorf||verb/s/3 - removed"]
+        );
+    }
 }

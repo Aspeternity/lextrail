@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use lextrail_dict::ext::schema::FORMAT;
-use lextrail_oxford_builder::{Args, run};
+use lextrail_oxford_builder::{Args, Step, run, run_checked};
 use rusqlite::Connection;
 
 fn fixture(name: &str) -> String {
@@ -323,13 +323,39 @@ fn a_second_conversion_replaces_the_files() {
 }
 
 #[test]
+fn a_failed_text_step_leaves_both_old_files() {
+    let src = Source::fixtures();
+    let out = src.dir.path().join("out");
+    run(&src.args(&out), "2026-01-01T00:00:00Z").unwrap();
+    let before: Vec<Vec<u8>> = ["oalecd10.db", "oalecd10-audio.db"]
+        .iter()
+        .map(|f| fs::read(out.join(f)).unwrap())
+        .collect();
+    // As if Ctrl+C were pressed (or writing failed) after the audio file was finished.
+    let err = run_checked(&src.args(&out), "2026-02-02T00:00:00Z", &|step| {
+        if step == Step::Text {
+            anyhow::bail!("stopped")
+        }
+        Ok(())
+    })
+    .unwrap_err();
+    assert_eq!(err.to_string(), "stopped");
+    let after: Vec<Vec<u8>> = ["oalecd10.db", "oalecd10-audio.db"]
+        .iter()
+        .map(|f| fs::read(out.join(f)).unwrap())
+        .collect();
+    assert!(before == after, "an old file was replaced");
+    assert_eq!(file_names(&out), ["oalecd10-audio.db", "oalecd10.db"]);
+}
+
+#[test]
 fn ids_of_a_new_export_are_mapped_to_the_old_ones() {
     let src = Source::fixtures();
     let v1 = src.dir.path().join("v1");
     run(&src.args(&v1), "2026-01-01T00:00:00Z").unwrap();
 
     // The new export: sense 1 of the verb removed (sense 2 becomes 1), the noun's first
-    // definition reworded, and a new entry.
+    // definition reworded (it keeps its id), and a new entry.
     let mut changed = records(|h| {
         let start = h.find(r#"<span class="t-sn-blk" shcut="y"><ol start="1">"#);
         let h = match start {
@@ -357,12 +383,13 @@ fn ids_of_a_new_export_are_mapped_to_the_old_ones() {
             "SELECT old_id, new_id, how FROM sense_renames ORDER BY old_id"
         ),
         [
-            "oalecd10/blorf||noun/s/1 | - | removed",
+            "oalecd10/blorf||noun/s/1 | oalecd10/blorf||noun/s/1 | changed",
             "oalecd10/blorf||verb/s/1 | - | removed",
             "oalecd10/blorf||verb/s/2 | oalecd10/blorf||verb/s/1 | same_entry",
         ]
     );
-    assert_eq!(renames.removed, 2);
+    assert_eq!(renames.changed, 1);
+    assert_eq!(renames.removed, 1);
     assert_eq!(renames.same_entry, 1);
     // Everything else (the idioms, phrasal verb and derivative, both snibs) is unchanged:
     // 10 senses and 4 groups, minus the 3 above.
