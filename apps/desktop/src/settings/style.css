@@ -143,6 +143,29 @@ body {
   font-weight: 400;
 }
 
+.dict__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.dict__folder {
+  font-family: Consolas, 'Microsoft YaHei UI', monospace;
+  font-size: 13px;
+  user-select: text;
+  word-break: break-all;
+}
+
+.dict__default {
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #eaeef2;
+  color: #59636e;
+  font-size: 12px;
+}
+
 .switch {
   display: inline-flex;
   align-items: center;

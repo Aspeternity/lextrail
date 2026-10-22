@@ -200,6 +200,26 @@ try {
   Toggle $win "no-history"
   Check ((Get-Content $settingsFile -Raw) -match "record = true") "history again is saved"
 
+  # Extended dictionaries (docs/specs/m1.5-oxford.md 2.2, 2.3): the default folder in the
+  # scratch data directory does not exist yet.
+  Invoke-Id $win "nav-dictionaries"
+  $dicts = Join-Path $dataDir "dicts"
+  $status = { Text-Of (Find-Id $win "dict-status") }
+  Check ((& $status) -like "*$dicts*") "a missing default folder is named in the status"
+  New-Item -ItemType Directory $dicts | Out-Null
+  Toggle $win "dict-oxford"
+  Check ((Get-Content $settingsFile -Raw) -match "oxford = false") "Oxford off is saved"
+  $noOxford = Text 0x6CA1, 0x6709, 0x627E, 0x5230, 0x725B, 0x6D25, 0x8BCD, 0x5178
+  Check ((& $status) -like "*$noOxford*") "the status follows the folder (no oalecd10.db)"
+  Toggle $win "dict-oxford"
+  Check ((Get-Content $settingsFile -Raw) -match "oxford = true") "Oxford on is saved"
+  Toggle $win "dict-english"
+  Check ((Get-Content $settingsFile -Raw) -match "english_definitions = false") "English definitions off is saved"
+  Save-Screenshot $win "settings-dictionaries"
+  Toggle $win "dict-english"
+  Check ((Get-Content $settingsFile -Raw) -match "english_definitions = true") "English definitions on is saved"
+  Invoke-Id $win "nav-privacy"
+
   # A hand edit while the app runs: the app must not overwrite it.
   Add-Content -Path $settingsFile -Value "# hand edit" -Encoding ASCII
   Toggle $win "no-history"

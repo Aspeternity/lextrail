@@ -9,6 +9,10 @@
     "allow-hotkey-check",
     "allow-hotkey-apply",
     "allow-settings-set-double-ctrl-c",
-    "allow-settings-set-record-history"
+    "allow-settings-set-record-history",
+    "allow-settings-pick-dict-folder",
+    "allow-settings-reset-dict-folder",
+    "allow-settings-set-oxford",
+    "allow-settings-set-english-definitions"
   ]
 }

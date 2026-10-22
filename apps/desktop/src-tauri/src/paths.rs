@@ -27,6 +27,12 @@ pub fn data_dir<R: Runtime>(app: &AppHandle<R>, benchmark: bool) -> Option<PathB
     debug_override("LEXTRAIL_DEBUG_DATA_DIR").or_else(|| app.path().app_local_data_dir().ok())
 }
 
+/// The default extended dictionary folder: `dicts` in the data directory
+/// (`docs/specs/m1.5-oxford.md` 2.2, D051).
+pub fn default_dicts_dir<R: Runtime>(app: &AppHandle<R>, benchmark: bool) -> Option<PathBuf> {
+    data_dir(app, benchmark).map(|dir| dir.join("dicts"))
+}
+
 /// A non-empty directory from `var`, in debug builds only.
 fn debug_override(var: &str) -> Option<PathBuf> {
     if !cfg!(debug_assertions) {

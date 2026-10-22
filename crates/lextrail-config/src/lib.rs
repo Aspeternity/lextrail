@@ -15,5 +15,6 @@ pub use file::{ConfigError, FileStamp, LoadOutcome, SettingsFile};
 pub use secrets::WindowsCredentialStore;
 pub use secrets::{MemorySecretStore, SecretError, SecretKey, SecretStore};
 pub use settings::{
-    HistorySettings, HotkeySettings, PopupMode, PopupSettings, SCHEMA_VERSION, Settings,
+    DictionarySettings, HistorySettings, HotkeySettings, PopupMode, PopupSettings, SCHEMA_VERSION,
+    Settings,
 };

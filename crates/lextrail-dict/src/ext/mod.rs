@@ -4,6 +4,7 @@
 pub mod id;
 pub mod reader;
 pub mod schema;
+pub mod status;
 pub mod text;
 
 /// Source name of the Oxford Advanced Learner's English-Chinese Dictionary, 10th edition.

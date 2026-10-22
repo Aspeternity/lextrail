@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-settings-set-english-definitions"
+description = "Enables the settings_set_english_definitions command without any pre-configured scope."
+commands.allow = ["settings_set_english_definitions"]
+
+[[permission]]
+identifier = "deny-settings-set-english-definitions"
+description = "Denies the settings_set_english_definitions command without any pre-configured scope."
+commands.deny = ["settings_set_english_definitions"]

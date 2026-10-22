@@ -46,7 +46,11 @@ fn main() {
             settings_window::hotkey_check,
             settings_window::hotkey_apply,
             settings_window::settings_set_double_ctrl_c,
-            settings_window::settings_set_record_history
+            settings_window::settings_set_record_history,
+            settings_window::settings_pick_dict_folder,
+            settings_window::settings_reset_dict_folder,
+            settings_window::settings_set_oxford,
+            settings_window::settings_set_english_definitions
         ])
         .setup(|app| {
             let handle = app.handle();
@@ -54,6 +58,11 @@ fn main() {
             let service = settings::SettingsService::load(handle);
             let settings = service.settings();
             app.manage(service);
+            let benchmark = std::env::var_os(popup::timing::ENV).is_some();
+            app.manage(dictionary::ExtDictionaryService::new(
+                paths::default_dicts_dir(handle, benchmark),
+                &settings.dictionaries,
+            ));
             popup::init(
                 handle,
                 settings.popup.mode,
@@ -129,7 +138,7 @@ mod tests {
         let popup = handlers("popup");
         let settings = handlers("settings_window");
         assert_eq!(popup.len(), 4);
-        assert_eq!(settings.len(), 6);
+        assert_eq!(settings.len(), 10);
         assert_eq!(granted(include_str!("../capabilities/popup.json")), popup);
         assert_eq!(
             granted(include_str!("../capabilities/settings.json")),

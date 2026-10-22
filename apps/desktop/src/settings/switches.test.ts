@@ -2,6 +2,7 @@ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { flushPromises, mount } from '@vue/test-utils';
 import { afterEach, describe, expect, test } from 'vitest';
 import HotkeyPanel from './HotkeyPanel.vue';
+import DictionaryPanel from './DictionaryPanel.vue';
 import type { SettingsView } from './ipc';
 import PrivacyPanel from './PrivacyPanel.vue';
 
@@ -14,9 +15,23 @@ function settingsView(fields: Partial<SettingsView> = {}): SettingsView {
     defaultLookup: { accelerator: 'Alt+Space', display: 'Alt + Space' },
     doubleCtrlC: false,
     recordHistory: true,
+    dictionaries: {
+      folder: 'C:\\Users\\me\\AppData\\Local\\io.github.aspeternity.lextrail\\dicts',
+      folderIsDefault: true,
+      oxford: false,
+      englishDefinitions: false,
+      status: 'missing',
+      statusText: '没有找到牛津词典',
+    },
     readOnly: null,
     ...fields,
   };
+}
+
+/** `settingsView()` with some dictionary fields changed. */
+function withDictionaries(fields: Partial<SettingsView['dictionaries']>): SettingsView {
+  const view = settingsView();
+  return { ...view, dictionaries: { ...view.dictionaries, ...fields } };
 }
 
 afterEach(() => {
@@ -43,6 +58,24 @@ const SWITCHES = [
     command: 'settings_set_record_history',
     on: { record: false },
     after: settingsView({ recordHistory: false }),
+  },
+  {
+    name: '使用牛津词典',
+    id: '#dict-oxford',
+    error: '#dict-error',
+    component: DictionaryPanel,
+    command: 'settings_set_oxford',
+    on: { on: true },
+    after: withDictionaries({ oxford: true }),
+  },
+  {
+    name: '显示英文释义',
+    id: '#dict-english',
+    error: '#dict-error',
+    component: DictionaryPanel,
+    command: 'settings_set_english_definitions',
+    on: { on: true },
+    after: withDictionaries({ englishDefinitions: true }),
   },
 ] as const;
 
@@ -89,4 +122,57 @@ test('"不记录查询历史" shows the opposite of recordHistory', () => {
     props: { settings: settingsView({ recordHistory: false }) },
   });
   expect(wrapper.find<HTMLInputElement>('#no-history').element.checked).toBe(true);
+});
+
+describe('扩展词典文件夹', () => {
+  test('shows the folder and the status from Rust', () => {
+    const wrapper = mount(DictionaryPanel, { props: { settings: settingsView() } });
+    expect(wrapper.find('#dict-folder').text()).toContain('io.github.aspeternity.lextrail');
+    expect(wrapper.text()).toContain('默认位置');
+    expect(wrapper.find('#dict-status').text()).toBe('没有找到牛津词典');
+    // Already the default folder.
+    expect(wrapper.find('#dict-reset').attributes('disabled')).toBeDefined();
+  });
+
+  test('a usable dictionary is shown as such, an unusable one as an error', () => {
+    const ready = mount(DictionaryPanel, {
+      props: {
+        settings: withDictionaries({ status: 'ready', statusText: '牛津 · 3 个词条' }),
+      },
+    });
+    expect(ready.find('#dict-status').classes()).toContain('message--ok');
+    const unusable = mount(DictionaryPanel, {
+      props: { settings: withDictionaries({ status: 'unusable', statusText: '无法使用' }) },
+    });
+    expect(unusable.find('#dict-status').classes()).toContain('message--error');
+  });
+
+  test('"选择文件夹…" and "恢复默认" ask Rust', async () => {
+    const chosen = withDictionaries({ folder: 'D:\\LexTrailData\\dicts', folderIsDefault: false });
+    const calls: string[] = [];
+    mockIPC((cmd) => {
+      calls.push(cmd);
+      return cmd === 'settings_pick_dict_folder' ? chosen : settingsView();
+    });
+    const wrapper = mount(DictionaryPanel, { props: { settings: settingsView() } });
+    await wrapper.find('#dict-pick').trigger('click');
+    await flushPromises();
+    expect(wrapper.emitted('update')?.[0]).toEqual([chosen]);
+    await wrapper.setProps({ settings: chosen });
+    expect(wrapper.find('#dict-reset').attributes('disabled')).toBeUndefined();
+    await wrapper.find('#dict-reset').trigger('click');
+    await flushPromises();
+    expect(calls).toEqual(['settings_pick_dict_folder', 'settings_reset_dict_folder']);
+  });
+
+  test('a failure is shown', async () => {
+    mockIPC(() => {
+      throw '无法写入设置文件';
+    });
+    const wrapper = mount(DictionaryPanel, { props: { settings: settingsView() } });
+    await wrapper.find('#dict-pick').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('#dict-error').text()).toBe('无法写入设置文件');
+    expect(wrapper.emitted('update')).toBeUndefined();
+  });
 });

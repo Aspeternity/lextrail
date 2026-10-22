@@ -16,6 +16,14 @@ function settingsView(fields: Partial<SettingsView> = {}): SettingsView {
     defaultLookup: ALT_SPACE,
     doubleCtrlC: false,
     recordHistory: true,
+    dictionaries: {
+      folder: '',
+      folderIsDefault: true,
+      oxford: true,
+      englishDefinitions: true,
+      status: 'missing',
+      statusText: '没有找到牛津词典',
+    },
     readOnly: null,
     ...fields,
   };

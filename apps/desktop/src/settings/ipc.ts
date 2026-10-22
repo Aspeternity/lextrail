@@ -16,7 +16,19 @@ export interface SettingsView {
   defaultLookup: HotkeyView;
   doubleCtrlC: boolean;
   recordHistory: boolean;
+  dictionaries: DictionariesView;
   readOnly: string | null;
+}
+
+/** The extended dictionary section (`DictionariesView`). */
+export interface DictionariesView {
+  /** The folder in use; empty when unknown. */
+  folder: string;
+  folderIsDefault: boolean;
+  oxford: boolean;
+  englishDefinitions: boolean;
+  status: 'ready' | 'missing' | 'unusable';
+  statusText: string;
 }
 
 /** A recorded key press checked by Rust (`CheckView`). */
@@ -68,6 +80,17 @@ export const setDoubleCtrlC = (on: boolean): Promise<SettingsView> =>
 
 export const setRecordHistory = (record: boolean): Promise<SettingsView> =>
   invoke('settings_set_record_history', { record });
+
+/** Opens the folder dialog; cancelling resolves with the unchanged settings. */
+export const pickDictFolder = (): Promise<SettingsView> => invoke('settings_pick_dict_folder');
+
+export const resetDictFolder = (): Promise<SettingsView> => invoke('settings_reset_dict_folder');
+
+export const setOxford = (on: boolean): Promise<SettingsView> =>
+  invoke('settings_set_oxford', { on });
+
+export const setEnglishDefinitions = (on: boolean): Promise<SettingsView> =>
+  invoke('settings_set_english_definitions', { on });
 
 /** The message of a rejected command (Rust returns a string). */
 export function errorText(error: unknown): string {

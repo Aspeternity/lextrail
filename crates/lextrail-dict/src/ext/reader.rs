@@ -277,6 +277,14 @@ impl ExtDictionary {
         Ok(Self { conn, source })
     }
 
+    /// A `meta` value.
+    pub(crate) fn meta(&self, key: &str) -> Result<Option<String>, DictError> {
+        Ok(self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
+            .optional()?)
+    }
+
     /// `meta.source`, e.g. `oalecd10`.
     pub fn source(&self) -> &str {
         &self.source

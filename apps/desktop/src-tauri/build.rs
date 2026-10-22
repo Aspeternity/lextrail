@@ -14,6 +14,10 @@ const COMMANDS: &[&str] = &[
     "hotkey_apply",
     "settings_set_double_ctrl_c",
     "settings_set_record_history",
+    "settings_pick_dict_folder",
+    "settings_reset_dict_folder",
+    "settings_set_oxford",
+    "settings_set_english_definitions",
 ];
 
 fn main() {

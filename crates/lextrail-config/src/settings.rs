@@ -13,6 +13,7 @@ pub struct Settings {
     pub hotkeys: HotkeySettings,
     pub popup: PopupSettings,
     pub history: HistorySettings,
+    pub dictionaries: DictionarySettings,
 }
 
 impl Default for Settings {
@@ -22,6 +23,7 @@ impl Default for Settings {
             hotkeys: HotkeySettings::default(),
             popup: PopupSettings::default(),
             history: HistorySettings::default(),
+            dictionaries: DictionarySettings::default(),
         }
     }
 }
@@ -79,6 +81,30 @@ impl Default for HistorySettings {
     }
 }
 
+/// Extended dictionaries (`docs/specs/m1.5-oxford.md` 2.2, D051).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DictionarySettings {
+    /// The extended dictionary folder; empty for the default one (`dicts` in the local
+    /// data directory). The file roams (D035): the folder may not exist on this computer.
+    pub folder: String,
+    /// Use the Oxford dictionary when its file is there.
+    pub oxford: bool,
+    /// Show Oxford's English definitions in the popup; off folds them with the examples
+    /// (D054).
+    pub english_definitions: bool,
+}
+
+impl Default for DictionarySettings {
+    fn default() -> Self {
+        Self {
+            folder: String::new(),
+            oxford: true,
+            english_definitions: true,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,6 +117,9 @@ mod tests {
         assert!(!settings.hotkeys.double_ctrl_c); // D012
         assert_eq!(settings.popup.mode, PopupMode::Responsive); // D009
         assert!(settings.history.record);
+        assert_eq!(settings.dictionaries.folder, "");
+        assert!(settings.dictionaries.oxford);
+        assert!(settings.dictionaries.english_definitions); // D054
     }
 
     #[test]
@@ -104,6 +133,11 @@ mod tests {
                 double_ctrl_c: true,
             },
             history: HistorySettings { record: false },
+            dictionaries: DictionarySettings {
+                folder: r"D:\LexTrailData\dicts".into(),
+                oxford: false,
+                english_definitions: false,
+            },
             ..Settings::default()
         };
         let text = toml::to_string(&settings).unwrap();
@@ -116,7 +150,16 @@ mod tests {
         assert_eq!(settings.popup.mode, PopupMode::MemorySaver);
         assert_eq!(settings.hotkeys, HotkeySettings::default());
         assert!(settings.history.record);
+        assert_eq!(settings.dictionaries, DictionarySettings::default());
         assert_eq!(settings.version, SCHEMA_VERSION);
+        let settings: Settings = toml::from_str(
+            "[dictionaries]
+oxford = false
+",
+        )
+        .unwrap();
+        assert!(!settings.dictionaries.oxford);
+        assert!(settings.dictionaries.english_definitions);
     }
 
     #[test]

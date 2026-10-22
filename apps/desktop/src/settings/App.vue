@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import DictionaryPanel from './DictionaryPanel.vue';
 import HotkeyPanel from './HotkeyPanel.vue';
 import PrivacyPanel from './PrivacyPanel.vue';
 import { errorText, getSettings, type SettingsView } from './ipc';
@@ -7,6 +8,7 @@ import { errorText, getSettings, type SettingsView } from './ipc';
 // Later categories (popup, AI, sync, ...) are added to this list (D047).
 const categories = [
   { id: 'hotkeys', label: '快捷键' },
+  { id: 'dictionaries', label: '词典' },
   { id: 'privacy', label: '隐私' },
 ] as const;
 type CategoryId = (typeof categories)[number]['id'];
@@ -51,6 +53,11 @@ function update(view: SettingsView): void {
           {{ settings.readOnly }}
         </p>
         <HotkeyPanel v-if="current === 'hotkeys'" :settings="settings" @update="update" />
+        <DictionaryPanel
+          v-else-if="current === 'dictionaries'"
+          :settings="settings"
+          @update="update"
+        />
         <PrivacyPanel v-else :settings="settings" @update="update" />
       </template>
     </main>
