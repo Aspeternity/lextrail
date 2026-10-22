@@ -43,6 +43,10 @@ const ENTRIES: &[EntryRow] = &[
     (17, "gaolf", "noun", None, None, Some("ɡeɪlf")),
     (18, "blorf-out", "noun", None, None, None),
     (19, "areb", "noun", None, None, None),
+    (20, "KLOMPS", "abbreviation", None, None, None),
+    (21, "klomp", "noun", None, None, None),
+    (22, "-snorb", "suffix", None, None, None),
+    (23, "glimp-", "prefix", None, None, None),
 ];
 
 /// entry, group, label.
@@ -130,6 +134,12 @@ const KEYS: &[KeyRowData] = &[
     ("wug", 16, "headword", None, None, None),
     ("wugs", 16, "other", None, None, None),
     ("models", 16, "other", None, None, None),
+    ("KLOMPS", 20, "headword", None, None, None),
+    ("klomps", 21, "inflection", Some("s"), Some("klomp"), None),
+    ("klomp", 21, "headword", None, None, None),
+    ("snorb", 22, "headword", None, None, None),
+    ("glimp", 7, "headword", None, None, None),
+    ("glimp", 23, "headword", None, None, None),
 ];
 
 fn oxford(dir: &Path) -> ExtDictionary {
@@ -287,17 +297,107 @@ fn headword_entries_in_key_order_with_ecdict_tags() {
 #[test]
 fn the_selected_case_first_and_lowercase_first_at_a_sentence_start() {
     let f = Fixture::new();
+    // An entry written as selected only in another case is not the key's own: last.
     assert_eq!(
         hits(&f.look("Zorb")),
-        ["O:Zorb noun Query", "O:zorb verb Query"]
+        ["O:Zorb noun Query", "O:zorb verb OtherCase"]
     );
     assert_eq!(
         hits(&f.look("zorb")),
-        ["O:zorb verb Query", "O:Zorb noun Query"]
+        ["O:zorb verb Query", "O:Zorb noun OtherCase"]
     );
+    // At a sentence start both spellings count as written as selected, lowercase first.
     assert_eq!(
         hits(&f.look_with("Zorb", true)),
         ["O:zorb verb Query", "O:Zorb noun Query"]
+    );
+    // Neither written as selected: both, lowercase first (`m1-dict.md` 8).
+    assert_eq!(
+        hits(&f.look("ZORB")),
+        ["O:zorb verb Query", "O:Zorb noun Query"]
+    );
+}
+
+#[test]
+fn rows_in_another_case_do_not_count_when_some_are_written_as_selected() {
+    let f = Fixture::new();
+    // `KLOMPS` is not the plural of klomp, whatever is selected (6.3 case a).
+    let m = f.look("KLOMPS");
+    assert_eq!(hits(&m), ["O:KLOMPS abbreviation Query"]);
+    let m = f.look("klomps");
+    assert_eq!(
+        hits(&m),
+        [
+            "O:klomp noun Lemma (klomp 的复数)",
+            "O:KLOMPS abbreviation OtherCase"
+        ]
+    );
+    assert_eq!(m.notes(), ["klomps 是 klomp 的复数"]);
+    assert_eq!(m.lemma, "klomp");
+    // At a sentence start the lowercase spelling counts as written as selected (D046).
+    assert_eq!(hits(&f.look_with("Klomps", true)), hits(&m));
+    // Nothing written as selected: all rows, the own entry not marked as a form (case c).
+    assert_eq!(
+        hits(&f.look("Klomps")),
+        [
+            "O:klomp noun Lemma (klomp 的复数)",
+            "O:KLOMPS abbreviation Query"
+        ]
+    );
+}
+
+#[test]
+fn prefixes_and_suffixes_only_when_nothing_else_is_found() {
+    let f = Fixture::new();
+    assert_eq!(hits(&f.look("glimp")), ["O:glimp verb Query"]);
+    assert_eq!(hits(&f.look("snorb")), ["O:-snorb suffix Related"]);
+}
+
+#[test]
+fn relations_merge_into_one_text() {
+    let forms = |base: &str, kinds: &[&str]| {
+        Link::new(
+            base,
+            How::Forms(
+                kinds
+                    .iter()
+                    .map(|k| KIND_ORDER.iter().position(|o| o == k).unwrap())
+                    .collect(),
+            ),
+        )
+    };
+    // better: no kind for the adverb well, comparative for the adjective.
+    assert_eq!(
+        merge_links(&[
+            forms("well", &[]),
+            forms("well", &["r"]),
+            forms("good", &["r"])
+        ]),
+        "well、good 的比较级"
+    );
+    assert_eq!(
+        merge_links(&[forms("bad", &["r"]), forms("badly", &[])]),
+        "bad 的比较级；badly 的变化形式"
+    );
+    assert_eq!(
+        merge_links(&[forms("ward", &["s"]), forms("ward", &["3"])]),
+        "ward 的第三人称单数、复数"
+    );
+    assert_eq!(
+        merge_links(&[
+            forms("ˈmeans-test", &["p", "d"]),
+            forms("means-test", &["d", "p"])
+        ]),
+        "means-test 的过去式、过去分词"
+    );
+    assert_eq!(
+        merge_links(&[
+            forms("M", &["s"]),
+            Link::new("manuscript", How::Variant),
+            Link::new("MSc", How::Variant),
+            Link::new("drily", How::Derivative),
+        ]),
+        "M 的复数；manuscript、MSc 的另一种写法；drily 的派生词"
     );
 }
 
@@ -347,10 +447,8 @@ fn several_base_forms_each_with_a_note() {
             "O:blorf noun Lemma (blorf 的复数)"
         ]
     );
-    assert_eq!(
-        m.notes(),
-        ["blorfs 是 blorf 的第三人称单数", "blorfs 是 blorf 的复数"]
-    );
+    // One line (6.3).
+    assert_eq!(m.notes(), ["blorfs 是 blorf 的第三人称单数、复数"]);
 }
 
 #[test]

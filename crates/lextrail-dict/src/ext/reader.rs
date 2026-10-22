@@ -60,6 +60,8 @@ pub struct KeyRow {
     /// The key as the source wrote it (`keys.key_exact`).
     pub key: String,
     pub entry_id: i64,
+    /// The headword of that entry.
+    pub headword: String,
     pub relation: Relation,
     /// Kinds of form for an inflection (`p`, `d`, `3`, `s`, `neg` ...).
     pub kinds: Vec<String>,
@@ -68,6 +70,11 @@ pub struct KeyRow {
     pub via: Option<String>,
     /// The idiom, phrasal verb or derivative group the key leads to (`p27`).
     pub group: Option<String>,
+}
+
+/// A prefix or suffix entry (`-wards`, `bi-`): its headword starts or ends with a hyphen.
+pub fn is_affix(headword: &str) -> bool {
+    headword.len() > 1 && (headword.starts_with('-') || headword.ends_with('-'))
 }
 
 /// An entry with everything the popup can show.
@@ -294,8 +301,9 @@ impl ExtDictionary {
     /// frequency of the headword, homograph number, source order (spec 6.1).
     pub fn rows(&self, key: &str) -> Result<Vec<KeyRow>, DictError> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT key_exact, entry_id, relation, kinds, via, grp FROM keys
-             WHERE key = ?1 ORDER BY ord, key_exact",
+            "SELECT k.key_exact, k.entry_id, k.relation, k.kinds, k.via, k.grp, e.headword
+             FROM keys k JOIN entries e ON e.id = k.entry_id
+             WHERE k.key = ?1 ORDER BY k.ord, k.key_exact",
         )?;
         let rows = stmt
             .query_map([key], |r| {
@@ -306,14 +314,16 @@ impl ExtDictionary {
                     r.get::<_, Option<String>>(3)?,
                     r.get::<_, Option<String>>(4)?,
                     r.get::<_, Option<String>>(5)?,
+                    r.get::<_, String>(6)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         rows.into_iter()
-            .map(|(key, entry_id, relation, kinds, via, group)| {
+            .map(|(key, entry_id, relation, kinds, via, group, headword)| {
                 Ok(KeyRow {
                     key,
                     entry_id,
+                    headword,
                     relation: Relation::from_name(&relation)
                         .ok_or_else(|| DictError::Data(format!("relation {relation:?}")))?,
                     kinds: kinds
@@ -335,7 +345,11 @@ impl ExtDictionary {
             &[Relation::Headword][..],
             &[Relation::Idiom, Relation::Phrasal][..],
         ] {
-            for r in rows.iter().filter(|r| wanted.contains(&r.relation)) {
+            // Prefix and suffix entries only when nothing else is found (spec 6.3).
+            for r in rows
+                .iter()
+                .filter(|r| wanted.contains(&r.relation) && !is_affix(&r.headword))
+            {
                 if !out.iter().any(|(id, _)| *id == r.entry_id) {
                     out.push((r.entry_id, r.group.clone()));
                 }

@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 
 use crate::dictionary::{FUNCTION_WORDS, is_capitalized, is_form_note, is_marked};
-use crate::ext::reader::{ExtDictionary, ExtEntry, KeyRow, Relation};
+use crate::ext::reader::{ExtDictionary, ExtEntry, KeyRow, Relation, is_affix};
 use crate::{
     Classification, DictError, Dictionary, Entry, EntryRole, FormKind, LookupOptions, LookupResult,
     normalize_query,
@@ -69,8 +69,12 @@ pub enum Role {
     FormOf,
     /// The entry the text is a form, variant, derivative, idiom or phrasal verb of.
     Lemma,
-    /// Found through an `other` relation: shown only when nothing else is found.
+    /// Found through an `other` relation, or a prefix or suffix entry: shown only when
+    /// nothing else is found.
     Related,
+    /// The text's own entry written in another case, while entries written as selected
+    /// exist (`AIDS` for `aids`): shown last, not counted as the text's own entry (6.3).
+    OtherCase,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +88,103 @@ pub struct Hit {
     /// The idiom, phrasal verb or derivative group the text leads to, shown open and first
     /// (spec 7.3).
     pub open_group: Option<String>,
+    /// `relation` as data, for merging several into one line (6.3); Oxford base forms only.
+    pub link: Option<Link>,
+}
+
+/// How the text relates to one base form (spec 6.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Link {
+    /// Without stress marks (`means-test`, not `ˈmeans-test`).
+    base: String,
+    how: How,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum How {
+    /// Indexes into [`KIND_ORDER`]; empty when the kind is not known.
+    Forms(Vec<usize>),
+    Variant,
+    Derivative,
+    Idiom,
+    Phrasal,
+}
+
+/// Kinds of form (`keys.kinds`) in the order they are written.
+const KIND_ORDER: &[&str] = &[
+    "p", "d", "i", "3", "s", "sg", "r", "t", "neg", "short", "fem",
+];
+
+impl Link {
+    fn new(base: &str, how: How) -> Self {
+        Self {
+            base: base.chars().filter(|c| !matches!(c, 'ˈ' | 'ˌ')).collect(),
+            how,
+        }
+    }
+
+    /// "find 的过去式、过去分词", "color 的另一种写法".
+    fn text(&self) -> String {
+        format!("{} {}", self.base, self.tail())
+    }
+
+    /// The text after the base form: "的过去式、过去分词", "的另一种写法".
+    fn tail(&self) -> String {
+        match &self.how {
+            How::Forms(kinds) if kinds.is_empty() => "的变化形式".to_owned(),
+            How::Forms(kinds) => {
+                let names: Vec<&str> = kinds
+                    .iter()
+                    .filter_map(|&k| kind_name(KIND_ORDER[k]))
+                    .collect();
+                format!("的{}", names.join("、"))
+            }
+            How::Variant => "的另一种写法".to_owned(),
+            How::Derivative => "的派生词".to_owned(),
+            How::Idiom => "词条中的习语".to_owned(),
+            How::Phrasal => "词条中的短语动词".to_owned(),
+        }
+    }
+}
+
+/// Several relations as one text (spec 6.3): the kinds of form of one base form together,
+/// base forms with the same text joined by "、", the rest by "；", in the given order
+/// ("well、good 的比较级", "bad 的比较级；badly 的变化形式").
+fn merge_links(links: &[Link]) -> String {
+    let mut merged: Vec<Link> = Vec::new();
+    for link in links {
+        let same_base = merged.iter_mut().find(|m| {
+            m.base == link.base
+                && match (&m.how, &link.how) {
+                    (How::Forms(_), How::Forms(_)) => true,
+                    (a, b) => a == b,
+                }
+        });
+        match (same_base, &link.how) {
+            (Some(m), How::Forms(more)) => {
+                if let How::Forms(kinds) = &mut m.how {
+                    kinds.extend(more);
+                    kinds.sort_unstable();
+                    kinds.dedup();
+                }
+            }
+            (Some(_), _) => {}
+            (None, _) => merged.push(link.clone()),
+        }
+    }
+    let mut segments: Vec<(String, Vec<&str>)> = Vec::new();
+    for link in &merged {
+        let tail = link.tail();
+        match segments.iter_mut().find(|(t, _)| *t == tail) {
+            Some((_, bases)) => bases.push(&link.base),
+            None => segments.push((tail, vec![&link.base])),
+        }
+    }
+    segments
+        .iter()
+        .map(|(tail, bases)| format!("{} {tail}", bases.join("、")))
+        .collect::<Vec<_>>()
+        .join("；")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,8 +208,14 @@ impl Merged {
         {
             return Vec::new();
         }
+        let lemmas = || self.hits.iter().filter(|h| h.role == Role::Lemma);
+        // Oxford's base forms: one line (6.3).
+        if lemmas().next().is_some() && lemmas().all(|h| h.link.is_some()) {
+            let links: Vec<Link> = lemmas().filter_map(|h| h.link.clone()).collect();
+            return vec![format!("{} 是 {}", self.query, merge_links(&links))];
+        }
         let mut notes: Vec<String> = Vec::new();
-        for hit in self.hits.iter().filter(|h| h.role == Role::Lemma) {
+        for hit in lemmas() {
             if let Some(r) = &hit.relation {
                 let note = format!("{} 是 {r}", self.query);
                 if !notes.contains(&note) {
@@ -156,26 +263,36 @@ impl Lexicon<'_> {
         if query.is_empty() {
             return Ok(None);
         }
-        let rows = oxford_rows(ext, &query)?;
+        // Prefix and suffix entries are shown only when nothing else is found, like
+        // `other` relations (6.3).
+        let (rows, affixes): (Vec<KeyRow>, Vec<KeyRow>) = oxford_rows(ext, &query)?
+            .into_iter()
+            .partition(|r| !is_affix(&r.headword));
+        let (rows, other_case) = by_case(rows, &query, options.sentence_start);
         if rows.iter().any(|r| r.relation != Relation::Other)
-            && let Some(found) = self.oxford_result(ext, &query, &rows, options)?
+            && let Some(found) = self.oxford_result(ext, &query, &rows, &other_case, options)?
         {
             return Ok(Some(found));
         }
         if let Some(found) = self.ecdict.lookup_with(text, options)? {
             return Ok(Some(self.with_oxford_lemma(ext, found)?));
         }
-        if rows.is_empty() {
+        if rows.is_empty() && affixes.is_empty() {
             return Ok(None);
         }
         let mut seen = HashSet::new();
         let mut hits = Vec::new();
-        for row in rows.iter().filter(|r| seen.insert(r.entry_id)) {
+        for row in rows
+            .iter()
+            .chain(&affixes)
+            .filter(|r| seen.insert(r.entry_id))
+        {
             hits.push(Hit {
                 content: self.oxford(ext, row.entry_id)?,
                 role: Role::Related,
                 relation: None,
                 open_group: None,
+                link: None,
             });
         }
         Ok(Some(Merged {
@@ -259,6 +376,7 @@ impl Lexicon<'_> {
         ext: &ExtDictionary,
         query: &str,
         rows: &[KeyRow],
+        other_case: &HashSet<i64>,
         options: LookupOptions,
     ) -> Result<Option<Merged>, DictError> {
         let mut seen = HashSet::new();
@@ -270,10 +388,22 @@ impl Lexicon<'_> {
                 .collect()
         };
 
-        // The key's own Oxford entries.
+        // The key's own Oxford entries; those written as selected only in another case come
+        // last and do not count as its own (6.3).
         let mut headword_entries: Vec<(ExtEntry, Content)> = Vec::new();
+        let mut in_other_case: Vec<Hit> = Vec::new();
         for row in of(&[Relation::Headword]) {
-            headword_entries.push(self.oxford_pair(ext, row.entry_id)?);
+            if other_case.contains(&row.entry_id) {
+                in_other_case.push(Hit {
+                    content: self.oxford(ext, row.entry_id)?,
+                    role: Role::OtherCase,
+                    relation: None,
+                    open_group: None,
+                    link: None,
+                });
+            } else {
+                headword_entries.push(self.oxford_pair(ext, row.entry_id)?);
+            }
         }
 
         // Base forms. With an Oxford entry of its own, a key that is also a variant of
@@ -284,6 +414,7 @@ impl Lexicon<'_> {
         let mut base: Vec<Hit> = Vec::new();
         let mut referred: Vec<Hit> = Vec::new();
         let mut form_rows: Vec<&KeyRow> = Vec::new();
+        let mut form_links: Vec<Link> = Vec::new();
         for row in of(&[
             Relation::Inflection,
             Relation::Variant,
@@ -301,27 +432,38 @@ impl Lexicon<'_> {
                 }
                 if referring.iter().all(|e| e.has_definitions()) {
                     referred.push(Hit {
-                        relation: Some(describe(row, content.word())),
+                        relation: Some(describe(row, content.word()).text()),
                         content,
                         role: Role::Lemma,
                         open_group: row.group.clone(),
+                        link: None,
                     });
                     continue;
                 }
             }
+            let link = describe(row, content.word());
             form_rows.push(row);
+            form_links.push(link.clone());
             base.push(Hit {
-                relation: Some(describe(row, content.word())),
+                relation: Some(link.text()),
                 content,
                 role: Role::Lemma,
                 open_group: row.group.clone(),
+                link: Some(link),
             });
         }
-        let form_relation = base.first().and_then(|h| h.relation.clone());
-        let own_role = if form_relation.is_some() {
-            Role::FormOf
-        } else {
-            Role::Query
+        // All base forms in one text; for an entry of the key's own, leaving out those whose
+        // key is its headword in another case (`AIDS` is not the plural of aid, 6.3).
+        let form_relation = |headword: Option<&str>| -> Option<String> {
+            let links: Vec<Link> = form_rows
+                .iter()
+                .zip(&form_links)
+                .filter(|(row, _)| {
+                    headword.is_none_or(|h| spelling(row, &cased(h)) != Spelling::CaseOnly)
+                })
+                .map(|(_, link)| link.clone())
+                .collect();
+            (!links.is_empty()).then(|| merge_links(&links))
         };
 
         // A form note (`went`: "past tense of go") whose base form is shown is not an
@@ -333,11 +475,17 @@ impl Lexicon<'_> {
             {
                 continue;
             }
+            let relation = form_relation(Some(&entry.headword));
             own.push(Hit {
                 content,
-                role: own_role,
-                relation: form_relation.clone(),
+                role: if relation.is_some() {
+                    Role::FormOf
+                } else {
+                    Role::Query
+                },
+                relation,
                 open_group: None,
+                link: None,
             });
         }
         sort_by_case(&mut own, query, options.sentence_start);
@@ -355,19 +503,21 @@ impl Lexicon<'_> {
                 .via
                 .as_deref()
                 .is_some_and(|v| written(v) == written(query));
+            let link = describe(row, content.word());
             whole.push(Hit {
-                relation: Some(describe(row, content.word())),
+                relation: Some(link.text()),
                 content,
                 role: Role::Lemma,
                 open_group: row.group.clone(),
+                link: Some(link),
             });
         }
 
         if !has_headword && !whole_is_own {
             // ECDICT's own entry (not just "xx 的过去式"), with Oxford's form relation, or
             // else ECDICT's own (6.2 step 2).
-            let relation = match &form_relation {
-                Some(r) => Some(r.clone()),
+            let relation = match form_relation(None) {
+                Some(r) => Some(r),
                 None => self.ecdict.exchange_lemma(query)?.map(|i| i.describe_zh()),
             };
             for entry in self.ecdict.entries_for(query, options.sentence_start)? {
@@ -381,6 +531,7 @@ impl Lexicon<'_> {
                         },
                         relation: relation.clone(),
                         open_group: None,
+                        link: None,
                     });
                 }
             }
@@ -391,11 +542,13 @@ impl Lexicon<'_> {
         if own.is_empty() && !whole_is_own {
             for row in of(&[Relation::IdiomPart, Relation::PhrasalPart]) {
                 let content = self.oxford(ext, row.entry_id)?;
+                let link = describe(row, content.word());
                 parts.push(Hit {
-                    relation: Some(describe(row, content.word())),
+                    relation: Some(link.text()),
                     content,
                     role: Role::Lemma,
                     open_group: row.group.clone(),
+                    link: Some(link),
                 });
             }
         }
@@ -426,11 +579,12 @@ impl Lexicon<'_> {
         // Entries the key's own entry refers to come right after it, whatever the marks.
         own.extend(referred);
         let others = base.into_iter().chain(parts);
-        let hits: Vec<Hit> = if own_first {
+        let mut hits: Vec<Hit> = if own_first {
             own.into_iter().chain(others).collect()
         } else {
             others.chain(own).collect()
         };
+        hits.extend(in_other_case);
         if hits.is_empty() {
             return Ok(None);
         }
@@ -513,6 +667,11 @@ fn oxford_rows(ext: &ExtDictionary, query: &str) -> Result<Vec<KeyRow>, DictErro
 /// lowercase, without stress marks, syllable dots and punctuation other than hyphens
 /// (`all ˈin`, `big deal!`); `↔` is a space.
 fn written(text: &str) -> String {
+    cased(text).to_lowercase()
+}
+
+/// [`written`], keeping the case (`Ms.` -> `Ms`).
+fn cased(text: &str) -> String {
     let text: String = text
         .chars()
         .filter_map(|c| match c {
@@ -522,9 +681,85 @@ fn written(text: &str) -> String {
             c if c.is_alphanumeric() || c == '-' || c.is_whitespace() => Some(c),
             _ => None,
         })
-        .flat_map(char::to_lowercase)
         .collect();
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// How a key row is written compared with a text, best first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Spelling {
+    Same,
+    /// Different in case only (`aids`, `AIDS`).
+    CaseOnly,
+    /// Other differences too (spaces, hyphens).
+    Different,
+}
+
+/// How `row` is written compared with `text` (already [`cased`]): its key as the source
+/// wrote it, or for a variant also the variant itself (the source keys `M.S.` as `ms`).
+fn spelling(row: &KeyRow, text: &str) -> Spelling {
+    let compare = |written: &str| {
+        let written = cased(written);
+        if written == text {
+            Spelling::Same
+        } else if written.to_lowercase() == text.to_lowercase() {
+            Spelling::CaseOnly
+        } else {
+            Spelling::Different
+        }
+    };
+    let by_key = compare(&row.key);
+    match (&row.relation, &row.via) {
+        (Relation::Variant, Some(via)) => by_key.min(compare(via)),
+        _ => by_key,
+    }
+}
+
+/// Spec 6.3, case: when some rows are written as selected (at a sentence start also with
+/// a lowercase first letter, D046), rows that differ from it in case only do not count.
+/// Of those, the key's own entries are returned apart, to be shown last; the others are
+/// dropped. Otherwise all rows as they are.
+fn by_case(rows: Vec<KeyRow>, query: &str, sentence_start: bool) -> (Vec<KeyRow>, HashSet<i64>) {
+    let mut wanted = vec![cased(query)];
+    if sentence_start && is_capitalized(query) {
+        let mut chars = query.chars();
+        let first: String = chars
+            .next()
+            .into_iter()
+            .flat_map(char::to_lowercase)
+            .collect();
+        wanted.push(cased(&(first + chars.as_str())));
+    }
+    let best = |row: &KeyRow| {
+        wanted
+            .iter()
+            .map(|w| spelling(row, w))
+            .min()
+            .unwrap_or(Spelling::Different)
+    };
+    if !rows.iter().any(|r| best(r) == Spelling::Same) {
+        return (rows, HashSet::new());
+    }
+    let mut other_case = HashSet::new();
+    let mut kept_own = HashSet::new();
+    let rows: Vec<KeyRow> = rows
+        .into_iter()
+        .filter(|r| {
+            let case_only = best(r) == Spelling::CaseOnly;
+            if r.relation == Relation::Headword {
+                if case_only {
+                    other_case.insert(r.entry_id);
+                } else {
+                    kept_own.insert(r.entry_id);
+                }
+                return true;
+            }
+            !case_only
+        })
+        .collect();
+    // An entry also keyed as selected is the key's own.
+    other_case.retain(|id| !kept_own.contains(id));
+    (rows, other_case)
 }
 
 /// Chinese names of Oxford's kinds of form (`keys.kinds`): ECDICT's codes, then `neg`,
@@ -542,28 +777,25 @@ fn kind_name(code: &str) -> Option<&'static str> {
     })
 }
 
-/// The relation of a key to the entry `headword` of its row, for display (spec 6.1).
-fn describe(row: &KeyRow, headword: &str) -> String {
+/// The relation of a key to the entry `headword` of its row (spec 6.1); only for relations
+/// to another entry, not `headword` or `other`.
+fn describe(row: &KeyRow, headword: &str) -> Link {
     match row.relation {
         Relation::Inflection => {
-            let base = row.via.as_deref().unwrap_or(headword);
-            let mut names: Vec<&str> = Vec::new();
-            for name in row.kinds.iter().filter_map(|k| kind_name(k)) {
-                if !names.contains(&name) {
-                    names.push(name);
-                }
-            }
-            if names.is_empty() {
-                format!("{base} 的变化形式")
-            } else {
-                format!("{base} 的{}", names.join("、"))
-            }
+            let mut kinds: Vec<usize> = row
+                .kinds
+                .iter()
+                .filter_map(|k| KIND_ORDER.iter().position(|o| o == k))
+                .collect();
+            kinds.sort_unstable();
+            kinds.dedup();
+            Link::new(row.via.as_deref().unwrap_or(headword), How::Forms(kinds))
         }
-        Relation::Variant => format!("{headword} 的另一种写法"),
-        Relation::Derivative => format!("{headword} 的派生词"),
-        Relation::Idiom | Relation::IdiomPart => format!("{headword} 词条中的习语"),
-        Relation::Phrasal | Relation::PhrasalPart => format!("{headword} 词条中的短语动词"),
-        Relation::Headword | Relation::Other => String::new(),
+        Relation::Variant => Link::new(headword, How::Variant),
+        Relation::Derivative => Link::new(headword, How::Derivative),
+        Relation::Idiom | Relation::IdiomPart => Link::new(headword, How::Idiom),
+        Relation::Phrasal | Relation::PhrasalPart => Link::new(headword, How::Phrasal),
+        Relation::Headword | Relation::Other => unreachable!("not a relation to another entry"),
     }
 }
 
@@ -605,6 +837,7 @@ fn from_ecdict(found: LookupResult) -> Merged {
                 role,
                 relation,
                 open_group: None,
+                link: None,
             }
         })
         .collect();
