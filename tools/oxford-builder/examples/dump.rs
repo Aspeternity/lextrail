@@ -1,12 +1,19 @@
 //! Development aid: writes the HTML of the entries found under each key to `<out>/<key>.html`.
 //! `cargo run -p lextrail-oxford-builder --example dump -- <mdx> <out dir> <key>...`
 //! A key `grep:<text>` writes the first three entries whose HTML contains `<text>`.
+//! Refuses an output folder inside the repository: the HTML is the dictionary's content.
+
+use std::path::{Path, PathBuf};
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [mdx, out, keys @ ..] = args.as_slice() else {
         anyhow::bail!("usage: dump <mdx> <out dir> <key>...");
     };
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    if inside(&resolve(Path::new(out))?, &resolve(&repo)?) {
+        anyhow::bail!("{out} is inside the repository; choose a folder outside it");
+    }
     let file = mdictlib::MdxFile::open(mdx)?;
     std::fs::create_dir_all(out)?;
     for key in keys {
@@ -54,4 +61,24 @@ fn main() -> anyhow::Result<()> {
         std::fs::write(std::path::Path::new(out).join(format!("{key}.html")), html)?;
     }
     Ok(())
+}
+
+/// `path` with its deepest existing ancestor canonicalized (the folder may not exist yet).
+fn resolve(path: &Path) -> anyhow::Result<PathBuf> {
+    let path = std::path::absolute(path)?;
+    let mut rest = Vec::new();
+    let mut base = path.as_path();
+    while !base.exists() {
+        rest.push(base.file_name().unwrap_or_default().to_owned());
+        base = base.parent().unwrap_or(Path::new("/"));
+    }
+    let mut resolved = base.canonicalize()?;
+    resolved.extend(rest.iter().rev());
+    Ok(resolved)
+}
+
+/// Compares without case: Windows paths are case-insensitive.
+fn inside(path: &Path, dir: &Path) -> bool {
+    let lower = |p: &Path| PathBuf::from(p.to_string_lossy().to_lowercase());
+    lower(path).starts_with(lower(dir))
 }
