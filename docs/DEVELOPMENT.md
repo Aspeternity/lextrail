@@ -9,6 +9,13 @@
 
 - `cargo run -p lextrail-dict-builder --release`：生成词典 `data/build/lextrail-dict-core.db`（格式版本 2）。**编译桌面程序之前必须先生成**（它是 Tauri 资源，缺失时 `tauri-build` 报错）
 - `cargo run -p lextrail-dict --release --example view -- data/build/lextrail-dict-core.db better self-attention`：看某个词在悬浮窗里会显示什么
+- 牛津词典转换（M1.5，先生成上面的 ECDICT 词典；源文件不在仓库里，路径用参数给）：
+
+  ```
+  cargo run -p lextrail-oxford-builder --release -- --mdx <源.mdx> --mdd <源.mdd> --mdd <源.1.mdd> --ecdict data/build/lextrail-dict-core.db --out D:\LexTrailData\dicts [--previous <旧 oalecd10.db>] [--report <报告.json>]
+  ```
+
+  输出 `oalecd10.db`、`oalecd10-audio.db`，约 15 s；LexTrail 正在使用文件时会停下，不写任何文件。说明见 `tools/oxford-builder/README.md`
 - `pnpm check`：格式、lint、类型检查、全部测试（含 release 配置的 clippy）
 - `pnpm --filter @lextrail/desktop test`：只跑前端测试（Vitest + jsdom，配置在 `apps/desktop/vite.config.ts` 的 `test`）。测试文件 `*.test.ts` 和被测组件放在一起；Rust 命令和事件用 `@tauri-apps/api/mocks` 的 `mockIPC(..., { shouldMockEvents: true })` 代替，每个测试后 `clearMocks()`。`pnpm test` 和 CI 都会跑
 - `pnpm --filter @lextrail/desktop tauri build --debug --no-bundle`：带日志的 debug 版（`target\debug\lextrail-desktop.exe`，在终端里运行看日志）
