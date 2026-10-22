@@ -1,7 +1,8 @@
 //! Writing an output file without ever leaving a half-written one
 //! (`docs/specs/m1.5-oxford.md` 3): the data goes to a temporary file in the output folder,
-//! `VACUUM INTO` writes the finished database to a second temporary file, and that one
-//! replaces the target. Temporary files are removed on any failure.
+//! `VACUUM INTO` writes the finished database to a second temporary file, and once every
+//! output file is finished they replace their targets. Temporary files are removed on any
+//! failure.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -108,15 +109,26 @@ fn in_use(_target: &Path) -> bool {
 }
 
 /// Writes the finished database of `conn` to a second temporary file with `VACUUM INTO`,
-/// closes `conn`, and moves the result over `target`.
-pub fn finish(conn: Connection, temps: &mut TempFiles, target: &Path) -> Result<()> {
+/// closes `conn`, and returns that file (still a temporary file: [`replace`] moves it over
+/// the target).
+pub fn compact(conn: Connection, temps: &mut TempFiles, target: &Path) -> Result<PathBuf> {
     let compact = temps.next(target);
     conn.execute("VACUUM INTO ?1", [compact.to_string_lossy()])
         .with_context(|| format!("writing {}", compact.display()))?;
     conn.close().map_err(|(_, e)| e)?;
-    ensure_replaceable(target)?;
-    fs::rename(&compact, target).with_context(|| format!("replacing {}", target.display()))?;
-    temps.keep(&compact);
+    Ok(compact)
+}
+
+/// Moves finished files (from [`compact`]) over their targets, after checking that no
+/// target is in use, so that either all targets are replaced or (when one is in use) none.
+pub fn replace(temps: &mut TempFiles, files: &[(PathBuf, &Path)]) -> Result<()> {
+    for (_, target) in files {
+        ensure_replaceable(target)?;
+    }
+    for (compact, target) in files {
+        fs::rename(compact, target).with_context(|| format!("replacing {}", target.display()))?;
+        temps.keep(compact);
+    }
     Ok(())
 }
 
@@ -139,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    fn finish_replaces_the_target_and_leaves_no_temp_files() {
+    fn replace_moves_the_compacted_file_and_leaves_no_temp_files() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("x.db");
         fs::write(&target, b"old").unwrap();
@@ -148,7 +160,8 @@ mod tests {
         let conn = Connection::open(&work).unwrap();
         conn.execute_batch("CREATE TABLE t (v INTEGER); INSERT INTO t VALUES (7);")
             .unwrap();
-        finish(conn, &mut temps, &target).unwrap();
+        let compact = compact(conn, &mut temps, &target).unwrap();
+        replace(&mut temps, &[(compact, &target)]).unwrap();
         drop(temps);
         let v: i64 = Connection::open(&target)
             .unwrap()

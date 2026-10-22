@@ -54,6 +54,14 @@ pub struct Report {
     pub seconds: f64,
 }
 
+/// A point where a conversion can be stopped ([`run_checked`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Read,
+    Audio,
+    Text,
+}
+
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 /// Called from the Ctrl+C handler: the conversion stops at its next check and removes its
@@ -96,6 +104,16 @@ fn file_name(path: &Path) -> String {
 /// Runs the whole conversion. `built_at` goes to `meta.built_at` (the only value that
 /// differs between two runs on the same input).
 pub fn run(args: &Args, built_at: &str) -> Result<Report> {
+    run_checked(args, built_at, &|_| check_interrupted())
+}
+
+/// [`run`], with `check` called at each point where Ctrl+C stops the conversion (tests use
+/// it to fail at a given step).
+pub fn run_checked(
+    args: &Args,
+    built_at: &str,
+    check: &dyn Fn(Step) -> Result<()>,
+) -> Result<Report> {
     let started = Instant::now();
     std::fs::create_dir_all(&args.out)
         .with_context(|| format!("creating {}", args.out.display()))?;
@@ -108,8 +126,8 @@ pub fn run(args: &Args, built_at: &str) -> Result<Report> {
     let mut temps = TempFiles::default();
 
     let ecdict = ecdict::Ecdict::open(&args.ecdict)?;
-    let source = source::read(&args.mdx, &check_interrupted)?;
-    check_interrupted()?;
+    let source = source::read(&args.mdx, &|| check(Step::Read))?;
+    check(Step::Read)?;
     let prepared = write::prepare(&source.entries, &ecdict);
     let previous_items = match &args.previous {
         Some(p) => Some(previous::read_previous(p)?),
@@ -123,7 +141,8 @@ pub fn run(args: &Args, built_at: &str) -> Result<Report> {
         ..Report::default()
     };
 
-    // Audio first, then the text dictionary (3).
+    // Both files are written to temporary files first and replace the old ones only when
+    // both are finished (3).
     let wanted: BTreeSet<String> = source
         .entries
         .iter()
@@ -131,7 +150,7 @@ pub fn run(args: &Args, built_at: &str) -> Result<Report> {
         .collect();
     let work = temps.next(&audio_target);
     let mut conn = Connection::open(&work)?;
-    report.audio = audio::write(&mut conn, &args.mdds, &wanted, &check_interrupted)?;
+    report.audio = audio::write(&mut conn, &args.mdds, &wanted, &|| check(Step::Audio))?;
     write_meta(
         &conn,
         &[
@@ -144,13 +163,13 @@ pub fn run(args: &Args, built_at: &str) -> Result<Report> {
             ("built_at", built_at.to_owned()),
         ],
     )?;
-    check_interrupted()?;
-    output::finish(conn, &mut temps, &audio_target)?;
+    check(Step::Audio)?;
+    let audio_done = output::compact(conn, &mut temps, &audio_target)?;
 
     let work = temps.next(&text_target);
     let mut conn = Connection::open(&work)?;
     report.counts = write::write(&mut conn, &prepared, &ecdict)?;
-    check_interrupted()?;
+    check(Step::Text)?;
     if let Some(old) = &previous_items {
         let new = previous::read_items(&conn)?;
         let (renames, counts) = previous::renames(old, &new);
@@ -178,8 +197,13 @@ pub fn run(args: &Args, built_at: &str) -> Result<Report> {
             ("built_at", built_at.to_owned()),
         ],
     )?;
-    check_interrupted()?;
-    output::finish(conn, &mut temps, &text_target)?;
+    check(Step::Text)?;
+    let text_done = output::compact(conn, &mut temps, &text_target)?;
+    check(Step::Text)?;
+    output::replace(
+        &mut temps,
+        &[(audio_done, &audio_target), (text_done, &text_target)],
+    )?;
 
     report.seconds = started.elapsed().as_secs_f64();
     Ok(report)
