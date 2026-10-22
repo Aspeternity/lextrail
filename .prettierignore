@@ -6,3 +6,6 @@ target/
 dist/
 coverage/
 apps/desktop/src-tauri/gen/
+
+# Converter fixtures keep the source HTML layout (whitespace is significant)
+tools/oxford-builder/tests/fixtures/

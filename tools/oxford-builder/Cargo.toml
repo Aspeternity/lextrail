@@ -1,0 +1,26 @@
+[package]
+name = "lextrail-oxford-builder"
+description = "Converts the Oxford Advanced Learner's English-Chinese Dictionary (MDX) to a LexTrail extended dictionary (D049)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow = "1"
+ctrlc = "3"
+ego-tree = "0.11"
+lextrail-dict = { path = "../../crates/lextrail-dict" }
+mdictlib = { version = "=0.2.8", default-features = false }
+rusqlite = { version = "0.40", features = ["bundled"] }
+scraper = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
