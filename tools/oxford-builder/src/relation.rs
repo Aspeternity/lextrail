@@ -266,6 +266,87 @@ fn without_verb_kinds(kinds: Vec<String>, table_says_otherwise: bool) -> Option<
     (!kinds.is_empty()).then_some(kinds)
 }
 
+/// A base form a form note points to: "past tense of bid2" gives `bid`, homograph `2`,
+/// kinds `p`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteTarget {
+    pub headword: String,
+    pub homograph: Option<String>,
+    pub kinds: Vec<String>,
+}
+
+/// Kinds of form a "… of" cross-reference names.
+fn note_kinds(xref_kind: &str) -> Option<&'static [&'static str]> {
+    Some(match xref_kind {
+        "ptof" => &["p"],
+        "ppof" => &["d"],
+        "ptppof" => &["p", "d"],
+        "presptof" => &["i"],
+        "thirdpsof" => &["3"],
+        "plof" => &["s"],
+        "singof" => &["sg"],
+        _ => return None,
+    })
+}
+
+/// The targets of a form note (`went`: every sense without a definition, only "past tense
+/// of go" cross-references; `docs/specs/m1.5-oxford.md` 6.3); `None` for other entries.
+pub fn note_targets(entry: &Entry) -> Option<Vec<NoteTarget>> {
+    let senses: Vec<_> = entry.groups.iter().flat_map(|g| &g.senses).collect();
+    let is_note = !senses.is_empty()
+        && senses.iter().all(|s| {
+            s.def_en.is_none()
+                && s.def_zh.is_none()
+                && !s.xrefs.is_empty()
+                && s.xrefs.iter().all(|x| x.is_form_of())
+        });
+    if !is_note {
+        return None;
+    }
+    let mut out = Vec::new();
+    for x in senses.iter().flat_map(|s| &s.xrefs) {
+        let kinds: Vec<String> = note_kinds(&x.kind)
+            .unwrap_or(&[])
+            .iter()
+            .map(|k| (*k).to_owned())
+            .collect();
+        for target in &x.targets {
+            // `bid2` (homograph 2), `abide (2)` (sense 2: dropped)
+            let text = without_parenthesized(target);
+            let text = text.trim();
+            let headword = text.trim_end_matches(|c: char| c.is_ascii_digit()).trim();
+            let homograph = &text[headword.len()..].trim();
+            out.push(NoteTarget {
+                headword: headword.to_owned(),
+                homograph: Some(homograph.to_string()).filter(|h| !h.is_empty()),
+                kinds: kinds.clone(),
+            });
+        }
+    }
+    Some(out)
+}
+
+/// Whether `base` can be what a form note's target means: its homograph number when the
+/// target gives one, and parts of speech that fit the kinds. The verb form table is not
+/// checked: it lists the main forms only (speed: `speeded`, while the note `sped` names
+/// speed), and the cross-reference is explicit (`docs/specs/m1.5-oxford.md` 6.1).
+pub fn note_base_fits(target: &NoteTarget, base: &Entry) -> bool {
+    if fold_for_match(&base.headword) != fold_for_match(&target.headword) {
+        return false;
+    }
+    if let Some(h) = &target.homograph
+        && *h != base.homograph
+    {
+        return false;
+    }
+    let kinds: Vec<FormKind> = target
+        .kinds
+        .iter()
+        .filter_map(|k| FormKind::from_code(k))
+        .collect();
+    kinds.iter().all(|k| fits(*k, &base.pos))
+}
+
 pub fn relate(key: &str, entry: &Entry, ecdict: &Ecdict) -> Relation {
     let k = fold_for_match(key);
     let key_bases = key_bases(key, ecdict);

@@ -6,11 +6,12 @@ use std::collections::{BTreeMap, HashMap};
 use anyhow::Result;
 use lextrail_dict::ext::id::{DupCounter, Group};
 use lextrail_dict::ext::schema::{INDEXES, RELATIONS, SCHEMA};
+use lextrail_dict::ext::text::fold_for_match;
 use lextrail_dict::normalize_query;
 use rusqlite::{Connection, params};
 
 use crate::ecdict::Ecdict;
-use crate::relation::{Relation, relate};
+use crate::relation::{Relation, note_base_fits, note_targets, relate};
 use crate::source::SourceEntry;
 
 /// An entry ready to write: its identity key and the relation of each lookup key.
@@ -73,6 +74,7 @@ pub fn prepare<'a>(entries: &'a [SourceEntry], ecdict: &Ecdict) -> Vec<Prepared<
             }
         })
         .collect();
+    add_note_relations(&mut prepared);
     // Same headword: by homograph number, then source order (6.1).
     let mut by_headword: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, p) in prepared.iter().enumerate() {
@@ -91,6 +93,61 @@ pub fn prepare<'a>(entries: &'a [SourceEntry], ecdict: &Ecdict) -> Vec<Prepared<
         }
     }
     prepared
+}
+
+/// A form note (`sped`: "past tense, past participle of speed") whose key the converter
+/// could not relate to its base form gets that relation from its cross-reference: the key
+/// becomes an inflection of the target entry (`docs/specs/m1.5-oxford.md` 6.1). A row the
+/// key already has with that entry as `other` or part of an idiom is replaced; otherwise a
+/// row is added, so `keys` has rows that are not lookup keys of that entry in the MDX.
+fn add_note_relations(prepared: &mut [Prepared]) {
+    let mut by_headword: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, p) in prepared.iter().enumerate() {
+        by_headword
+            .entry(fold_for_match(&p.item.entry.headword))
+            .or_default()
+            .push(i);
+    }
+    // (base entry, key, relation)
+    let mut wanted: Vec<(usize, String, Relation)> = Vec::new();
+    for (i, p) in prepared.iter().enumerate() {
+        let Some(targets) = note_targets(&p.item.entry) else {
+            continue;
+        };
+        let keys = p.keys.iter().filter(|(_, r)| r.relation == "headword");
+        for (key, _) in keys {
+            for t in &targets {
+                let bases = by_headword
+                    .get(&fold_for_match(&t.headword))
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .filter(|&j| j != i && note_base_fits(t, &prepared[j].item.entry));
+                for j in bases {
+                    wanted.push((
+                        j,
+                        key.clone(),
+                        Relation {
+                            relation: "inflection",
+                            kinds: t.kinds.clone(),
+                            via: Some(prepared[j].item.entry.headword.clone()),
+                            group: None,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+    for (j, key, relation) in wanted {
+        let keys = &mut prepared[j].keys;
+        match keys.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, r)) if matches!(r.relation, "other" | "idiom_part" | "phrasal_part") => {
+                *r = relation;
+            }
+            Some(_) => {}
+            None => keys.push((key, relation)),
+        }
+    }
 }
 
 fn group_text(g: Option<Group>) -> Option<String> {
@@ -339,4 +396,123 @@ fn write_keys(
         ])?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse::{Entry, Form, GroupData, SenseData, Xref};
+
+    fn entry(headword: &str, homograph: &str, pos: &[&str], senses: Vec<SenseData>) -> Entry {
+        Entry {
+            headword: headword.into(),
+            homograph: homograph.into(),
+            pos: pos.iter().map(|p| p.to_string()).collect(),
+            groups: vec![GroupData {
+                group: Group::Main,
+                label: None,
+                label_parts: Vec::new(),
+                pos: Vec::new(),
+                xrefs: Vec::new(),
+                senses,
+            }],
+            ..Entry::default()
+        }
+    }
+
+    fn defined() -> Vec<SenseData> {
+        vec![SenseData {
+            n: 1,
+            def_en: Some("to make a low sound".into()),
+            ..SenseData::default()
+        }]
+    }
+
+    fn note(kind: &str, target: &str) -> Vec<SenseData> {
+        vec![SenseData {
+            n: 1,
+            xrefs: vec![Xref {
+                kind: kind.into(),
+                label: "past tense of".into(),
+                targets: vec![target.into()],
+            }],
+            ..SenseData::default()
+        }]
+    }
+
+    fn form(kind: &str, text: &str) -> Form {
+        Form {
+            group: None,
+            kind: Some(kind.into()),
+            text: text.into(),
+            verb_form: true,
+            sound_gb: None,
+            sound_us: None,
+        }
+    }
+
+    fn rows(prepared: &[Prepared], key: &str) -> Vec<String> {
+        prepared
+            .iter()
+            .flat_map(|p| {
+                p.keys.iter().filter(|(k, _)| k == key).map(move |(_, r)| {
+                    format!(
+                        "{}{} {} {}",
+                        p.item.entry.headword,
+                        p.item.entry.homograph,
+                        r.relation,
+                        r.kinds.join(" ")
+                    )
+                })
+            })
+            .collect()
+    }
+
+    #[test]
+    fn form_notes_relate_their_keys_to_the_target() {
+        let mut snib1 = entry("snib", "1", &["verb"], defined());
+        snib1.forms = vec![form("root", "snib"), form("past", "snibbed")];
+        let snib2 = entry("snib", "2", &["verb"], defined());
+        let snab = entry("snab", "", &["noun"], defined());
+        let entries = [
+            (snib1, vec!["snib"]),
+            (snib2, vec!["snib", "snub"]),
+            (snab, vec!["snab"]),
+            // "past tense of snib2": not snib1.
+            (entry("snub", "", &[], note("ptof", "snib2")), vec!["snub"]),
+            // A plural needs a noun: snab, not the verbs.
+            (entry("snaba", "", &[], note("plof", "snab")), vec!["snaba"]),
+            // The target's table need not list the form; "(2)" is a sense number.
+            (
+                entry("snob", "", &[], note("ptof", "snib (2)")),
+                vec!["snob"],
+            ),
+        ];
+        let source: Vec<SourceEntry> = entries
+            .into_iter()
+            .enumerate()
+            .map(|(i, (mut entry, keys))| {
+                entry.source_entry = i as u32 + 1;
+                SourceEntry {
+                    entry,
+                    keys: keys.into_iter().map(str::to_owned).collect(),
+                }
+            })
+            .collect();
+        let prepared = prepare(&source, &Ecdict::default());
+        // snib2 had `snub` as a lookup key (`other`): replaced.
+        assert_eq!(
+            rows(&prepared, "snub"),
+            ["snib2 inflection p", "snub headword "]
+        );
+        // snab had no `snaba` row: added.
+        assert_eq!(
+            rows(&prepared, "snaba"),
+            ["snab inflection s", "snaba headword "]
+        );
+        assert_eq!(
+            rows(&prepared, "snob"),
+            ["snib1 inflection p", "snib2 inflection p", "snob headword "]
+        );
+    }
 }
