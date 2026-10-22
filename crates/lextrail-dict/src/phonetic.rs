@@ -17,8 +17,9 @@ fn is_vowel(c: char) -> bool {
 /// 2. `'` → `ˈ`, `,` and `.` → `ˌ`, `:` → `ː`, `g` and `^` → `ɡ`, `ɛ` `є` `ε` → `e`;
 /// 3. `əː` → `ɜː`, `ɒː` → `ɔː`;
 /// 4. a short `i` / `u` becomes `ɪ` / `ʊ`, except at the end of a word and before another
-///    vowel (the "happy" vowel); before `ə` it becomes `ɪə` / `ʊə` only in a stressed
-///    syllable (here, tour), not in an unstressed one (media, actual);
+///    vowel (the "happy" vowel), stress marks in between skipped (`riˈækt`); right before
+///    `ə` it becomes `ɪə` / `ʊə` only in a stressed syllable (here, tour), not in an
+///    unstressed one (media, actual);
 /// 5. a short `ɔ` becomes `ɒ`, except before `i` or another vowel (`ɔɪ`); `ɒi` (boy,
 ///    oil in some entries) becomes `ɔɪ` too.
 pub fn normalize_phonetic(raw: &str) -> String {
@@ -44,6 +45,11 @@ pub fn normalize_phonetic(raw: &str) -> String {
     let mut out: Vec<char> = Vec::with_capacity(chars.len());
     for (i, &c) in chars.iter().enumerate() {
         let next = chars.get(i + 1).copied();
+        // The next sound: stress marks belong to syllable boundaries, not to the vowel.
+        let next_sound = chars[i + 1..]
+            .iter()
+            .copied()
+            .find(|&n| n != 'ˈ' && n != 'ˌ');
         let long = next == Some('ː');
         let converted = match c {
             'ɔ' if !long && !next.is_some_and(is_vowel) => 'ɒ',
@@ -57,7 +63,7 @@ pub fn normalize_phonetic(raw: &str) -> String {
                     short
                 } else if next == Some('ə') {
                     if stressed_syllable(&out) { short } else { c }
-                } else if next.is_none_or(|n| n.is_whitespace() || is_vowel(n)) {
+                } else if next_sound.is_none_or(|n| n.is_whitespace() || is_vowel(n)) {
                     c
                 } else {
                     short
@@ -127,6 +133,19 @@ mod tests {
         assert_eq!(n("'hæpi 'deil"), "ˈhæpi ˈdeɪl");
         assert_eq!(n("'bliæk"), "ˈbliæk");
         assert_eq!(n("'influəns"), "ˈɪnfluəns");
+    }
+
+    #[test]
+    fn stress_marks_between_i_or_u_and_the_next_vowel_are_skipped() {
+        assert_eq!(n("ri'ækt"), "riˈækt");
+        assert_eq!(n("ә.bri:vi'eiʃәn"), "əˌbriːviˈeɪʃən");
+        assert_eq!(n(".ækwi'es"), "ˌækwiˈes");
+        assert_eq!(n("'situ'eiʃən"), "ˈsɪtuˈeɪʃən");
+        // a schwa after the stress mark starts a new syllable: still the "happy" vowel
+        assert_eq!(n("ri'əkt"), "riˈəkt");
+        // before a consonant the stress mark changes nothing
+        assert_eq!(n("di'mɑ:nd"), "dɪˈmɑːnd");
+        assert_eq!(n("'hæpi'"), "ˈhæpiˈ");
     }
 
     #[test]
