@@ -201,15 +201,16 @@ try {
   Check ((Get-Content $settingsFile -Raw) -match "record = true") "history again is saved"
 
   # Extended dictionaries (docs/specs/m1.5-oxford.md 2.2, 2.3): the default folder in the
-  # scratch data directory does not exist yet.
+  # scratch data directory does not exist yet, which reads like a missing file.
   Invoke-Id $win "nav-dictionaries"
   $dicts = Join-Path $dataDir "dicts"
   $status = { Text-Of (Find-Id $win "dict-status") }
-  Check ((& $status) -like "*$dicts*") "a missing default folder is named in the status"
+  $noOxford = Text 0x6CA1, 0x6709, 0x627E, 0x5230, 0x725B, 0x6D25, 0x8BCD, 0x5178
+  Check ((& $status) -eq $noOxford) "a missing default folder shows no Oxford dictionary"
+  Check (-not (Test-Path $dicts)) "the default folder is not created"
   New-Item -ItemType Directory $dicts | Out-Null
   Toggle $win "dict-oxford"
   Check ((Get-Content $settingsFile -Raw) -match "oxford = false") "Oxford off is saved"
-  $noOxford = Text 0x6CA1, 0x6709, 0x627E, 0x5230, 0x725B, 0x6D25, 0x8BCD, 0x5178
   Check ((& $status) -like "*$noOxford*") "the status follows the folder (no oalecd10.db)"
   Toggle $win "dict-oxford"
   Check ((Get-Content $settingsFile -Raw) -match "oxford = true") "Oxford on is saved"

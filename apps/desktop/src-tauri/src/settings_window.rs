@@ -140,8 +140,14 @@ fn thousands(n: u64) -> String {
     out
 }
 
-/// The status line of spec 2.3.
-fn status_text(folder: Option<&Path>, status: &ExtStatus, enabled: bool) -> (&'static str, String) {
+/// The status line of spec 2.3. `local_date` turns `meta.built_at` (UTC) into the
+/// user's date.
+fn status_text(
+    folder: Option<&Path>,
+    status: &ExtStatus,
+    enabled: bool,
+    local_date: &dyn Fn(&str) -> Option<String>,
+) -> (&'static str, String) {
     match status {
         ExtStatus::FolderMissing => (
             "missing",
@@ -156,7 +162,8 @@ fn status_text(folder: Option<&Path>, status: &ExtStatus, enabled: bool) -> (&'s
             format!("牛津词典文件无法使用（{why}），查词不用它"),
         ),
         ExtStatus::Ready(info) => {
-            let date = info.built_at.get(..10).unwrap_or(&info.built_at);
+            let date = local_date(&info.built_at)
+                .unwrap_or_else(|| info.built_at.get(..10).unwrap_or(&info.built_at).to_owned());
             let mut text = format!(
                 "{} · {} 个词条（转换于 {date}）",
                 info.title,
@@ -175,7 +182,12 @@ fn dictionaries_view(
     service: &ExtDictionaryService,
 ) -> DictionariesView {
     let (folder, status) = service.status();
-    let (status, status_text) = status_text(folder.as_deref(), &status, settings.oxford);
+    let (status, status_text) = status_text(
+        folder.as_deref(),
+        &status,
+        settings.oxford,
+        &crate::local_date::local_date,
+    );
     DictionariesView {
         folder: folder.map(|f| f.display().to_string()).unwrap_or_default(),
         folder_is_default: settings.folder.is_empty(),
@@ -514,10 +526,15 @@ mod tests {
     #[test]
     fn dictionary_status_lines() {
         let folder = Path::new(r"D:\dicts");
+        // A fixed UTC+8 date, whatever the machine's zone.
+        let utc8 = |utc: &str| (utc == "2026-10-21T23:30:00Z").then(|| "2026-10-22".to_owned());
+        let status_text = |folder: Option<&Path>, status: &ExtStatus, enabled: bool| {
+            status_text(folder, status, enabled, &utc8)
+        };
         let ready = ExtStatus::Ready(ExtInfo {
             title: "牛津高阶英汉双解词典（第 10 版）".into(),
             entries: 49_751,
-            built_at: "2026-10-22T08:33:03Z".into(),
+            built_at: "2026-10-21T23:30:00Z".into(),
         });
         assert_eq!(
             status_text(Some(folder), &ready, true),
@@ -546,6 +563,17 @@ mod tests {
                 "unusable",
                 "牛津词典文件无法使用（文件无法读取），查词不用它".to_owned()
             )
+        );
+        // A date the zone cannot convert falls back to the UTC date.
+        let odd = ExtStatus::Ready(ExtInfo {
+            title: "T".into(),
+            entries: 1,
+            built_at: "2026-10-21T23:31:00Z".into(),
+        });
+        assert!(
+            status_text(Some(folder), &odd, true)
+                .1
+                .ends_with("（转换于 2026-10-21）")
         );
         assert_eq!(thousands(7), "7");
         assert_eq!(thousands(1_000), "1,000");

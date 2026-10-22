@@ -69,6 +69,8 @@ pub struct ExtDictionaryService {
 
 pub struct ExtInner {
     folder: Option<PathBuf>,
+    /// The settings leave the folder empty.
+    folder_is_default: bool,
     enabled: bool,
     dict: Option<ExtDictionary>,
 }
@@ -93,6 +95,7 @@ impl ExtDictionaryService {
             default_folder,
             inner: Mutex::new(ExtInner {
                 folder: None,
+                folder_is_default: true,
                 enabled: false,
                 dict: None,
             }),
@@ -119,6 +122,7 @@ impl ExtDictionaryService {
     pub fn configure(&self, settings: &DictionarySettings) {
         let mut inner = self.lock();
         inner.folder = self.folder_for(settings);
+        inner.folder_is_default = settings.folder.is_empty();
         inner.enabled = settings.oxford;
         inner.dict = None;
     }
@@ -156,7 +160,8 @@ impl ExtDictionaryService {
     }
 
     /// The status for the settings window, whether or not the dictionary is turned on,
-    /// with the folder it is about.
+    /// with the folder it is about. A missing default folder is reported like a missing
+    /// file: nothing has been put there yet (spec 2.3); it is not created.
     pub fn status(&self) -> (Option<PathBuf>, ExtStatus) {
         let inner = self.lock();
         let status = match (&inner.dict, &inner.folder) {
@@ -166,6 +171,10 @@ impl ExtDictionaryService {
             },
             (None, Some(folder)) => oxford_status(folder),
             (None, None) => ExtStatus::FolderMissing,
+        };
+        let status = match status {
+            ExtStatus::FolderMissing if inner.folder_is_default => ExtStatus::FileMissing,
+            other => other,
         };
         (inner.folder.clone(), status)
     }
@@ -202,11 +211,19 @@ mod tests {
         let default = dir.path().join("dicts");
         let service =
             ExtDictionaryService::new(Some(default.clone()), &DictionarySettings::default());
-        // The default folder does not exist yet: no Oxford data, quietly.
+        // The default folder does not exist yet: no Oxford data, quietly, shown like a
+        // missing file, and the folder is not created.
         assert!(service.get().dictionary().is_none());
         assert_eq!(
             service.status(),
-            (Some(default.clone()), ExtStatus::FolderMissing)
+            (Some(default.clone()), ExtStatus::FileMissing)
+        );
+        assert!(!default.exists());
+        assert_eq!(
+            ExtDictionaryService::new(None, &DictionarySettings::default())
+                .status()
+                .1,
+            ExtStatus::FileMissing
         );
 
         std::fs::create_dir(&default).unwrap();
@@ -224,7 +241,8 @@ mod tests {
         assert!(service.get().dictionary().is_none());
         assert!(matches!(service.status().1, ExtStatus::Ready(_)));
 
-        // Another folder, which roamed in from another computer.
+        // Another folder, which roamed in from another computer: a chosen folder that
+        // is missing is named.
         let elsewhere = DictionarySettings {
             folder: dir.path().join("elsewhere").to_string_lossy().into_owned(),
             ..DictionarySettings::default()

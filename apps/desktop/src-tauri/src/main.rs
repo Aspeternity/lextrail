@@ -5,6 +5,7 @@ mod dictionary;
 mod history;
 mod hotkey;
 mod keyboard;
+mod local_date;
 mod main_window;
 mod memory;
 mod notice;
