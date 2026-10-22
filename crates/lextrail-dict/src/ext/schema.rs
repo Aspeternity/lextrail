@@ -168,12 +168,16 @@ pub const AUDIO_SCHEMA: &str = "
 
 /// Relations between a lookup key and an entry, in the order they are tried
 /// (`docs/specs/m1.5-oxford.md` 6.1).
-pub const RELATIONS: [&str; 7] = [
+/// `idiom` / `phrasal`: the key is the whole idiom or phrasal verb; `idiom_part` /
+/// `phrasal_part`: it is only part of one (`snib` in "blorf the snib").
+pub const RELATIONS: [&str; 9] = [
     "headword",
     "inflection",
     "variant",
     "derivative",
     "idiom",
     "phrasal",
+    "idiom_part",
+    "phrasal_part",
     "other",
 ];

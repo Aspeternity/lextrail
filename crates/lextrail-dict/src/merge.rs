@@ -263,38 +263,93 @@ impl Lexicon<'_> {
     ) -> Result<Option<Merged>, DictError> {
         let mut seen = HashSet::new();
         let rows: Vec<&KeyRow> = rows.iter().filter(|r| seen.insert(r.entry_id)).collect();
-        let form_row = rows.iter().find(|r| r.relation.is_form()).copied();
-        let mut base: Vec<Hit> = Vec::new();
-        let mut phrases: Vec<Hit> = Vec::new();
-        let mut form_relation = None;
-        for row in &rows {
-            if row.relation == Relation::Headword || row.relation == Relation::Other {
-                continue;
-            }
-            let content = self.oxford(ext, row.entry_id)?;
-            let relation = describe(row, content.word());
-            if Some(*row) == form_row {
-                form_relation = Some(relation.clone());
-            }
-            let hit = Hit {
-                content,
-                role: Role::Lemma,
-                relation: Some(relation),
-                open_group: row.group.clone(),
-            };
-            if row.relation.is_form() {
-                base.push(hit);
-            } else {
-                phrases.push(hit);
-            }
+        let of = |wanted: &[Relation]| -> Vec<&KeyRow> {
+            rows.iter()
+                .filter(|r| wanted.contains(&r.relation))
+                .copied()
+                .collect()
+        };
+
+        // The key's own Oxford entries.
+        let mut headword_entries: Vec<(ExtEntry, Content)> = Vec::new();
+        for row in of(&[Relation::Headword]) {
+            headword_entries.push(self.oxford_pair(ext, row.entry_id)?);
         }
 
-        let headword_rows: Vec<&&KeyRow> = rows
-            .iter()
-            .filter(|r| r.relation == Relation::Headword)
-            .collect();
+        // Base forms. With an Oxford entry of its own, a key that is also a variant of
+        // another entry is just that entry's word (`break`, `autumn`), unless its own entry
+        // says "= <that entry>" (`gaol`).
+        let mut base: Vec<Hit> = Vec::new();
+        let mut form_rows: Vec<&KeyRow> = Vec::new();
+        for row in of(&[
+            Relation::Inflection,
+            Relation::Variant,
+            Relation::Derivative,
+        ]) {
+            let content = self.oxford(ext, row.entry_id)?;
+            if row.relation == Relation::Variant
+                && !headword_entries.is_empty()
+                && !headword_entries
+                    .iter()
+                    .any(|(e, _)| e.cross_refers_to(content.word()))
+            {
+                continue;
+            }
+            form_rows.push(row);
+            base.push(Hit {
+                relation: Some(describe(row, content.word())),
+                content,
+                role: Role::Lemma,
+                open_group: row.group.clone(),
+            });
+        }
+        let form_relation = base.first().and_then(|h| h.relation.clone());
+        let own_role = if form_relation.is_some() {
+            Role::FormOf
+        } else {
+            Role::Query
+        };
+
+        // A form note (`went`: "past tense of go") whose base form is shown is not an
+        // entry of its own (6.3).
+        let has_headword = !headword_entries.is_empty();
         let mut own: Vec<Hit> = Vec::new();
-        if headword_rows.is_empty() {
+        for (entry, content) in headword_entries {
+            if entry.is_form_note() && base.iter().any(|h| entry.is_form_note_of(h.content.word()))
+            {
+                continue;
+            }
+            own.push(Hit {
+                content,
+                role: own_role,
+                relation: form_relation.clone(),
+                open_group: None,
+            });
+        }
+        sort_by_case(&mut own, query, options.sentence_start);
+
+        // The key as a whole idiom or phrasal verb: shown even next to an entry of its own,
+        // and itself an entry of the key's own (7.3), unless it only cross-refers.
+        let mut whole: Vec<Hit> = Vec::new();
+        let mut whole_written_as_query = false;
+        let mut whole_is_own = false;
+        for row in of(&[Relation::Idiom, Relation::Phrasal]) {
+            let (entry, content) = self.oxford_pair(ext, row.entry_id)?;
+            let group = row.group.as_deref().and_then(|g| entry.group(g));
+            whole_is_own |= group.is_none_or(|g| !g.is_cross_reference_only());
+            whole_written_as_query |= row
+                .via
+                .as_deref()
+                .is_some_and(|v| written(v) == written(query));
+            whole.push(Hit {
+                relation: Some(describe(row, content.word())),
+                content,
+                role: Role::Lemma,
+                open_group: row.group.clone(),
+            });
+        }
+
+        if !has_headword && !whole_is_own {
             // ECDICT's own entry (not just "xx 的过去式"), with Oxford's form relation, or
             // else ECDICT's own (6.2 step 2).
             let relation = match &form_relation {
@@ -315,33 +370,23 @@ impl Lexicon<'_> {
                     });
                 }
             }
-        } else {
-            for row in headword_rows {
+        }
+
+        // An entry of the key's own hides the idioms and phrasal verbs it is part of (6.3).
+        let mut parts: Vec<Hit> = Vec::new();
+        if own.is_empty() && !whole_is_own {
+            for row in of(&[Relation::IdiomPart, Relation::PhrasalPart]) {
                 let content = self.oxford(ext, row.entry_id)?;
-                if let Content::Oxford(o) = &content
-                    && o.entry.is_form_note()
-                    && !base.is_empty()
-                {
-                    continue;
-                }
-                own.push(Hit {
+                parts.push(Hit {
+                    relation: Some(describe(row, content.word())),
                     content,
-                    role: if form_relation.is_some() {
-                        Role::FormOf
-                    } else {
-                        Role::Query
-                    },
-                    relation: form_relation.clone(),
-                    open_group: None,
+                    role: Role::Lemma,
+                    open_group: row.group.clone(),
                 });
             }
-            sort_by_case(&mut own, query, options.sentence_start);
         }
-        // A word's own entry hides the idioms and phrasal verbs it is part of (6.3).
-        if !own.is_empty() {
-            phrases.clear();
-        }
-        let lemma = match form_row {
+
+        let lemma = match form_rows.first() {
             Some(row) => match (row.relation, &row.via) {
                 (Relation::Inflection | Relation::Derivative, Some(via)) => via.clone(),
                 _ => base[0].content.word().to_owned(),
@@ -350,8 +395,21 @@ impl Lexicon<'_> {
                 .first()
                 .map_or_else(|| query.to_owned(), |h| h.content.word().to_owned()),
         };
+        // Both an entry of its own and a whole phrase (`all in`: the idiom, and `all-in`):
+        // the one written as selected first (spaces and hyphens count, case does not), else
+        // the entry.
+        if whole_written_as_query
+            && !own
+                .iter()
+                .any(|h| written(h.content.word()) == written(query))
+        {
+            whole.append(&mut own);
+            own = whole;
+        } else {
+            own.extend(whole);
+        }
         let own_first = own.iter().any(|h| h.content.is_marked());
-        let others = base.into_iter().chain(phrases);
+        let others = base.into_iter().chain(parts);
         let hits: Vec<Hit> = if own_first {
             own.into_iter().chain(others).collect()
         } else {
@@ -365,6 +423,15 @@ impl Lexicon<'_> {
             hits,
             lemma,
         }))
+    }
+
+    /// [`Lexicon::oxford`], keeping a copy of the bare entry for the rules that look into it.
+    fn oxford_pair(&self, ext: &ExtDictionary, id: i64) -> Result<(ExtEntry, Content), DictError> {
+        let content = self.oxford(ext, id)?;
+        let Content::Oxford(o) = &content else {
+            unreachable!("an Oxford entry");
+        };
+        Ok((o.entry.clone(), content))
     }
 
     /// An Oxford entry with ECDICT's additions (6.4).
@@ -382,7 +449,7 @@ impl Lexicon<'_> {
     }
 
     /// An ECDICT result (6.2 step 3) with its base form's entry taken from Oxford when
-    /// Oxford has that headword.
+    /// Oxford has that headword, or has it as a whole idiom or phrasal verb (`gave up`).
     fn with_oxford_lemma(
         &self,
         ext: &ExtDictionary,
@@ -392,16 +459,17 @@ impl Lexicon<'_> {
         let mut hits = Vec::new();
         for hit in std::mem::take(&mut merged.hits) {
             let ids = match hit.role {
-                Role::Lemma => ext.headword_entries(hit.content.word())?,
+                Role::Lemma => ext.lemma_entries(hit.content.word())?,
                 _ => Vec::new(),
             };
             if ids.is_empty() {
                 hits.push(hit);
                 continue;
             }
-            for id in ids {
+            for (id, group) in ids {
                 hits.push(Hit {
                     content: self.oxford(ext, id)?,
+                    open_group: group,
                     ..hit.clone()
                 });
             }
@@ -423,6 +491,24 @@ fn oxford_rows(ext: &ExtDictionary, query: &str) -> Result<Vec<KeyRow>, DictErro
         return Ok(rows);
     }
     ext.rows(&query.replace('-', ""))
+}
+
+/// A headword, idiom or phrasal verb as written, for comparing with the selected text:
+/// lowercase, without stress marks, syllable dots and punctuation other than hyphens
+/// (`all ˈin`, `big deal!`); `↔` is a space.
+fn written(text: &str) -> String {
+    let text: String = text
+        .chars()
+        .filter_map(|c| match c {
+            '↔' => Some(' '),
+            // Stress marks are modifier letters.
+            'ˈ' | 'ˌ' | '·' => None,
+            c if c.is_alphanumeric() || c == '-' || c.is_whitespace() => Some(c),
+            _ => None,
+        })
+        .flat_map(char::to_lowercase)
+        .collect();
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Chinese names of Oxford's kinds of form (`keys.kinds`): ECDICT's codes, then `neg`,
@@ -459,8 +545,8 @@ fn describe(row: &KeyRow, headword: &str) -> String {
         }
         Relation::Variant => format!("{headword} 的另一种写法"),
         Relation::Derivative => format!("{headword} 的派生词"),
-        Relation::Idiom => format!("{headword} 词条中的习语"),
-        Relation::Phrasal => format!("{headword} 词条中的短语动词"),
+        Relation::Idiom | Relation::IdiomPart => format!("{headword} 词条中的习语"),
+        Relation::Phrasal | Relation::PhrasalPart => format!("{headword} 词条中的短语动词"),
         Relation::Headword | Relation::Other => String::new(),
     }
 }

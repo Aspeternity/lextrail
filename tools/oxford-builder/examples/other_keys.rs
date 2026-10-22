@@ -1,6 +1,7 @@
 //! Development aid: where the keys whose Oxford relations are all `other` end up when they
 //! are looked up as "not in Oxford" (`docs/specs/m1.5-oxford.md` 6.2 step 3): ECDICT's own
-//! entry, an ECDICT base form that Oxford has, an ECDICT base form only ECDICT has, or
+//! entry, an ECDICT base form that Oxford has (as a headword, or a whole idiom or phrasal
+//! verb), an ECDICT base form only ECDICT has, or
 //! nothing (only then `Related`). Prints counts and a few keys of each kind.
 //! `cargo run -p lextrail-oxford-builder --release --example other_keys -- <oalecd10.db> <ECDICT .db>`
 
@@ -23,8 +24,10 @@ fn main() -> anyhow::Result<()> {
         )?
         .query_map([], |r| r.get(0))?
         .collect::<Result<_, _>>()?;
-    let mut headword =
-        conn.prepare("SELECT 1 FROM keys WHERE key = ?1 COLLATE NOCASE AND relation = 'headword'")?;
+    let mut headword = conn.prepare(
+        "SELECT 1 FROM keys WHERE key = ?1 COLLATE NOCASE
+         AND relation IN ('headword', 'idiom', 'phrasal')",
+    )?;
     let mut kinds: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for key in &keys {
         let kind = match dict.lookup(key)? {

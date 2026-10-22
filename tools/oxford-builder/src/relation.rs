@@ -247,6 +247,25 @@ struct Base<'a> {
     pos: &'a [String],
 }
 
+/// Kinds of a verb form (third person, past, past participle, present participle).
+const VERB_KINDS: &[&str] = &["3", "p", "d", "i"];
+
+/// Inferred kinds without the verb ones when the base has its own verb form table that
+/// does not list the key: the table lists the verb's forms, and ECDICT (which does not tell
+/// homographs apart) would otherwise make `lay` a past tense of "lie" (to say what is not
+/// true), whose table says `lied`.
+fn without_verb_kinds(kinds: Vec<String>, table_says_otherwise: bool) -> Option<Vec<String>> {
+    let kinds: Vec<String> = if table_says_otherwise {
+        kinds
+            .into_iter()
+            .filter(|k| !VERB_KINDS.contains(&k.as_str()))
+            .collect()
+    } else {
+        kinds
+    };
+    (!kinds.is_empty()).then_some(kinds)
+}
+
 pub fn relate(key: &str, entry: &Entry, ecdict: &Ecdict) -> Relation {
     let k = fold_for_match(key);
     let key_bases = key_bases(key, ecdict);
@@ -336,8 +355,27 @@ pub fn relate(key: &str, entry: &Entry, ecdict: &Ecdict) -> Relation {
             });
         }
     }
+    // The verb form table of `base` (its `root` is the base; a variant's forms are not in
+    // the headword's table) lists other forms, and not the key in another spelling
+    // (`colored` for `coloured`).
+    let k_spelling = spelling(&k);
+    let table_says_otherwise = |group: Option<Group>, base: &str| {
+        let table: Vec<_> = entry
+            .forms
+            .iter()
+            .filter(|f| f.verb_form && f.group == group)
+            .collect();
+        table
+            .iter()
+            .any(|f| f.kind.as_deref() == Some("root") && same(&fold_for_match(base), &f.text))
+            && !table
+                .iter()
+                .any(|f| folds(&f.text).iter().any(|t| spelling(t) == k_spelling))
+    };
     for base in &bases {
-        if let Some(kinds) = form_of(&key_bases, base.text, base.pos) {
+        if let Some(kinds) = form_of(&key_bases, base.text, base.pos)
+            .and_then(|k| without_verb_kinds(k, table_says_otherwise(base.group, base.text)))
+        {
             return rel(
                 "inflection",
                 sorted_kinds(kinds),
@@ -351,7 +389,6 @@ pub fn relate(key: &str, entry: &Entry, ecdict: &Ecdict) -> Relation {
         return rel("variant", Vec::new(), Some(&v.text), v.group);
     }
     // British / American spelling of the headword, or of its regular forms.
-    let k_spelling = spelling(&k);
     for h in &headwords {
         if folds(h)
             .iter()
@@ -366,7 +403,7 @@ pub fn relate(key: &str, entry: &Entry, ecdict: &Ecdict) -> Relation {
             .iter()
             .filter(|b| spelling(&b.folded) == h_spelling)
             .map(|b| b.kinds(&entry.pos))
-            .find(|k| !k.is_empty());
+            .find_map(|k| without_verb_kinds(k, table_says_otherwise(None, h)));
         if let Some(kinds) = kinds {
             return rel("inflection", sorted_kinds(kinds), Some(h), None);
         }
@@ -391,8 +428,8 @@ pub fn relate(key: &str, entry: &Entry, ecdict: &Ecdict) -> Relation {
     // Part of a longer idiom or phrasal verb.
     for g in &entry.groups {
         let relation = match g.group {
-            Group::Idiom(_) => "idiom",
-            Group::PhrasalVerb(_) => "phrasal",
+            Group::Idiom(_) => "idiom_part",
+            Group::PhrasalVerb(_) => "phrasal_part",
             _ => continue,
         };
         if let Some(part) = g.label_parts.iter().find(|p| part_of(key, p)) {
@@ -432,6 +469,14 @@ mod tests {
                 group(Group::PhrasalVerb(1), &["ˌblorf sb ˈout"], &[]),
             ],
             forms: vec![
+                Form {
+                    group: None,
+                    kind: Some("root".into()),
+                    text: "blorf".into(),
+                    verb_form: true,
+                    sound_gb: None,
+                    sound_us: None,
+                },
                 Form {
                     group: None,
                     kind: Some("past".into()),
@@ -502,8 +547,16 @@ mod tests {
         assert_eq!(relate("blorfs", &noun, &ecdict).kinds, ["s"]);
     }
 
+    /// [`r`] on blorf without its verb form table.
+    fn r_untabled(key: &str) -> Relation {
+        let mut e = blorf();
+        e.forms.retain(|f| !f.verb_form);
+        relate(key, &e, &Ecdict::with_forms(&[("blorven", "blorf", "d")]))
+    }
+
     #[test]
     fn regular_forms_of_headword_variant_and_derivative() {
+        let r = r_untabled;
         let s = r("blorfs");
         assert_eq!(
             (s.relation, s.kinds.clone()),
@@ -522,6 +575,17 @@ mod tests {
     }
 
     #[test]
+    fn a_verb_form_table_stops_inferring_verb_forms() {
+        // blorf's table lists its verb forms: `blorfing` is not inferred.
+        assert_eq!(r("blorfing").relation, "other");
+        // The table is blorf's, not its variant's.
+        assert_eq!(r("bloarfed").kinds, ["p", "d"]);
+        assert_eq!(r_untabled("blorfing").kinds, ["i"]);
+        // Plurals of the derivative (no table in its group) still are.
+        assert_eq!(r("blorfers").kinds, ["s"]);
+    }
+
+    #[test]
     fn variants_derivatives_idioms_phrasal_verbs() {
         assert_eq!(r("bloarf").relation, "variant");
         let d = r("blorfer");
@@ -533,7 +597,7 @@ mod tests {
         assert_eq!(r("blorf the snib").relation, "idiom");
         assert_eq!(r("blorf sb out").relation, "phrasal");
         assert_eq!(r("blorfout").relation, "phrasal");
-        assert_eq!(r("snib").relation, "idiom");
+        assert_eq!(r("snib").relation, "idiom_part");
         let p = r("blorf out");
         assert_eq!(
             (p.relation, p.group),
@@ -546,6 +610,7 @@ mod tests {
     fn british_and_american_spellings() {
         let mut e = blorf();
         e.headword = "snibour".into();
+        e.forms.retain(|f| !f.verb_form);
         let ecdict = Ecdict::default();
         assert_eq!(relate("snibor", &e, &ecdict).relation, "variant");
         let s = relate("snibors", &e, &ecdict);

@@ -6,6 +6,7 @@ use std::path::Path;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 use super::schema::{FORMAT, FORMAT_VERSION, Xref};
+use super::text::fold_for_match;
 use crate::DictError;
 
 /// Same page cache as the ECDICT dictionary, no memory mapping (spec 10, D046).
@@ -19,8 +20,14 @@ pub enum Relation {
     Inflection,
     Variant,
     Derivative,
+    /// The key is a whole idiom.
     Idiom,
+    /// The key is a whole phrasal verb.
     Phrasal,
+    /// The key is part of a longer idiom.
+    IdiomPart,
+    /// The key is part of a longer phrasal verb.
+    PhrasalPart,
     Other,
 }
 
@@ -33,6 +40,8 @@ impl Relation {
             "derivative" => Self::Derivative,
             "idiom" => Self::Idiom,
             "phrasal" => Self::Phrasal,
+            "idiom_part" => Self::IdiomPart,
+            "phrasal_part" => Self::PhrasalPart,
             "other" => Self::Other,
             _ => return None,
         })
@@ -106,8 +115,51 @@ impl ExtEntry {
             })
     }
 
+    /// Whether this form note (`went`: "past tense of go") points to the entry `headword`
+    /// (targets may carry a homograph number: `lie1`).
+    pub fn is_form_note_of(&self, headword: &str) -> bool {
+        self.groups
+            .iter()
+            .flat_map(|g| &g.senses)
+            .flat_map(|s| &s.xrefs)
+            .filter(|x| x.is_form_of())
+            .flat_map(|x| &x.targets)
+            .any(|t| names_entry(t, headword))
+    }
+
+    /// Has a sense or group without a definition, only cross-references, one of which
+    /// points to `headword` (`gaol`: "= jail"; `program`: "(NAmE) = programme noun").
+    pub fn cross_refers_to(&self, headword: &str) -> bool {
+        let refers = |xrefs: &[Xref]| {
+            xrefs
+                .iter()
+                .flat_map(|x| &x.targets)
+                .any(|t| names_entry(t, headword))
+        };
+        self.groups.iter().any(|g| {
+            (g.senses.is_empty() && refers(&g.xrefs))
+                || g.senses
+                    .iter()
+                    .any(|s| s.is_cross_reference_only() && refers(&s.xrefs))
+        })
+    }
+
     pub fn group(&self, grp: &str) -> Option<&ExtGroup> {
         self.groups.iter().find(|g| g.grp == grp)
+    }
+}
+
+impl ExtGroup {
+    /// No sense has a definition; there are only cross-references (a phrasal verb that
+    /// says "= another one").
+    pub fn is_cross_reference_only(&self) -> bool {
+        if self.senses.is_empty() {
+            return !self.xrefs.is_empty();
+        }
+        self.senses
+            .iter()
+            .all(|s| s.def_en.is_none() && s.def_zh.is_none())
+            && (!self.xrefs.is_empty() || self.senses.iter().any(|s| !s.xrefs.is_empty()))
     }
 }
 
@@ -142,6 +194,13 @@ pub struct ExtSense {
     pub def_zh: Option<String>,
     pub xrefs: Vec<Xref>,
     pub examples: Vec<ExtExample>,
+}
+
+impl ExtSense {
+    /// No definition, only cross-references.
+    pub fn is_cross_reference_only(&self) -> bool {
+        self.def_en.is_none() && self.def_zh.is_none() && !self.xrefs.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -251,28 +310,33 @@ impl ExtDictionary {
             .collect()
     }
 
+    /// Entries for a base form found by ECDICT (spec 6.2 step 3): those with `word` as
+    /// headword, else those with `word` as a whole idiom or phrasal verb (with the group).
+    pub fn lemma_entries(&self, word: &str) -> Result<Vec<(i64, Option<String>)>, DictError> {
+        let rows = self.rows(word)?;
+        let mut out: Vec<(i64, Option<String>)> = Vec::new();
+        for wanted in [
+            &[Relation::Headword][..],
+            &[Relation::Idiom, Relation::Phrasal][..],
+        ] {
+            for r in rows.iter().filter(|r| wanted.contains(&r.relation)) {
+                if !out.iter().any(|(id, _)| *id == r.entry_id) {
+                    out.push((r.entry_id, r.group.clone()));
+                }
+            }
+            if !out.is_empty() {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
     /// Whether `key` (normalized; any case) is a lookup key, with any relation.
     pub fn has_key(&self, key: &str) -> Result<bool, DictError> {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT 1 FROM keys WHERE key = ?1 LIMIT 1")?;
         Ok(stmt.exists([key])?)
-    }
-
-    /// Entries whose headword is `word` (any case; `headword` rows of the key), in key
-    /// order.
-    pub fn headword_entries(&self, word: &str) -> Result<Vec<i64>, DictError> {
-        Ok(self
-            .rows(word)?
-            .into_iter()
-            .filter(|r| r.relation == Relation::Headword)
-            .map(|r| r.entry_id)
-            .fold(Vec::new(), |mut ids, id| {
-                if !ids.contains(&id) {
-                    ids.push(id);
-                }
-                ids
-            }))
     }
 
     /// The whole entry.
@@ -434,6 +498,47 @@ impl ExtDictionary {
     }
 }
 
+/// Parts of speech that follow a cross-reference target (`programme noun`).
+const TARGET_POS: &[&str] = &[
+    "noun",
+    "verb",
+    "adjective",
+    "adverb",
+    "preposition",
+    "pronoun",
+    "conjunction",
+    "exclamation",
+    "determiner",
+    "prefix",
+    "suffix",
+    "abbreviation",
+    "number",
+    "symbol",
+];
+
+/// Whether a cross-reference target names the entry `headword`: compared folded, without
+/// a homograph number, a parenthesized sense number or a following part of speech.
+fn names_entry(target: &str, headword: &str) -> bool {
+    let mut text = String::new();
+    let mut depth = 0;
+    for c in target.chars() {
+        match c {
+            '(' => depth += 1,
+            ')' if depth > 0 => depth -= 1,
+            c if depth == 0 && !c.is_ascii_digit() => text.push(c),
+            _ => {}
+        }
+    }
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let without_pos = match words.as_slice() {
+        [rest @ .., last] if !rest.is_empty() && TARGET_POS.contains(last) => rest.join(" "),
+        _ => words.join(" "),
+    };
+    let headword = fold_for_match(headword);
+    !headword.is_empty()
+        && (fold_for_match(&text) == headword || fold_for_match(&without_pos) == headword)
+}
+
 /// `noun, verb` → `["noun", "verb"]`.
 fn list(text: Option<String>) -> Vec<String> {
     text.map(|t| t.split(", ").map(str::to_owned).collect())
@@ -444,5 +549,20 @@ fn json<T: serde::de::DeserializeOwned>(text: Option<String>) -> Result<Vec<T>, 
     match text {
         None => Ok(Vec::new()),
         Some(t) => serde_json::from_str(&t).map_err(|e| DictError::Data(e.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cross_reference_targets_name_entries() {
+        assert!(names_entry("jail", "jail"));
+        assert!(names_entry("programme noun", "programme"));
+        assert!(names_entry("record noun (6)", "record"));
+        assert!(names_entry("snib2", "snib"));
+        assert!(!names_entry("hard disk", "disk"));
+        assert!(!names_entry("noun", ""));
     }
 }

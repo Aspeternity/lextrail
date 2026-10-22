@@ -227,8 +227,9 @@ fn converts_the_fixtures() {
         ),
         [
             "1 | root | blorf | -",
-            "2 | past | blorft | audio/blorft__gb_1.ogg",
-            "3 | pastpart | blorft | -",
+            "2 | thirdps | blorfs | -",
+            "3 | past | blorft | audio/blorft__gb_1.ogg",
+            "4 | pastpart | blorft | -",
         ]
     );
     assert_eq!(

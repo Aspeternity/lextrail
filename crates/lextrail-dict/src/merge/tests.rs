@@ -9,7 +9,9 @@ use super::*;
 use crate::dictionary::tests::fixture;
 use crate::ext::schema::{FORMAT, FORMAT_VERSION, INDEXES, SCHEMA};
 
-const PAST_OF_BLORF: &str = r#"[{"kind":"ptof","label":"past tense of","targets":["blorf"]}]"#;
+const PAST_OF_BLORF: &str = r#"[{"kind":"ptof","label":"past tense of","targets":["blorf1"]}]"#;
+const SAME_AS_KOLOR: &str = r#"[{"kind":"eq","label":"=","targets":["kolor noun"]}]"#;
+const SAME_AS_GIVE_UP: &str = r#"[{"kind":"eq","label":"=","targets":["give up"]}]"#;
 
 /// id, headword, pos, CEFR, Oxford 3000 / 5000, British phonetic.
 type EntryRow = (
@@ -38,6 +40,8 @@ const ENTRIES: &[EntryRow] = &[
     (14, "give", "verb", Some("A1"), None, Some("ɡɪv")),
     (15, "snib blorf", "noun", None, None, None),
     (16, "wug", "noun", None, None, Some("wʌɡ")),
+    (17, "gaolf", "noun", None, None, Some("ɡeɪlf")),
+    (18, "blorf-out", "noun", None, None, None),
 ];
 
 /// entry, group, label.
@@ -46,6 +50,7 @@ const GROUPS: &[(i64, &str, Option<&str>)] = &[
     (1, "p1", Some("blorf out")),
     (1, "d1", Some("blorfer")),
     (14, "p1", Some("give sth↔up")),
+    (14, "p2", Some("give large")),
 ];
 
 /// entry, group, sense, English and Chinese definition, cross-references.
@@ -65,6 +70,9 @@ const SENSES: &[SenseRow] = &[
     (1, "p1", 1, Some("to shout"), Some("喊出"), None),
     (2, "s", 1, Some("a low sound"), Some("低鸣声"), None),
     (3, "s", 1, None, None, Some(PAST_OF_BLORF)),
+    (14, "p1", 1, Some("to stop trying"), Some("放弃"), None),
+    (14, "p2", 1, None, None, Some(SAME_AS_GIVE_UP)),
+    (17, "s", 1, None, None, Some(SAME_AS_KOLOR)),
 ];
 
 /// key, entry, relation, kinds, via, group (in `ord` order per key).
@@ -77,6 +85,7 @@ type KeyRowData = (
     Option<&'static str>,
 );
 
+#[rustfmt::skip]
 const KEYS: &[KeyRowData] = &[
     ("blorf", 1, "headword", None, None, None),
     ("blorf", 2, "headword", None, None, None),
@@ -85,60 +94,33 @@ const KEYS: &[KeyRowData] = &[
     ("blorft", 2, "other", None, None, None),
     ("blorfs", 1, "inflection", Some("3"), Some("blorf"), None),
     ("blorfs", 2, "inflection", Some("s"), Some("blorf"), None),
-    (
-        "blorf out",
-        1,
-        "phrasal",
-        None,
-        Some("blorf out"),
-        Some("p1"),
-    ),
-    (
-        "blorf the snib",
-        1,
-        "idiom",
-        None,
-        Some("blorf the snib"),
-        Some("i1"),
-    ),
-    (
-        "blorfer",
-        1,
-        "derivative",
-        None,
-        Some("blorfer"),
-        Some("d1"),
-    ),
+    ("blorf out", 18, "headword", None, None, None),
+    ("blorf out", 1, "phrasal", None, Some("ˌblorf ˈout"), Some("p1")),
+    ("blorfout", 18, "headword", None, None, None),
+    ("blorfout", 1, "phrasal", None, Some("ˌblorf ˈout"), Some("p1")),
+    ("blorf the snib", 1, "idiom", None, Some("blorf the snib"), Some("i1")),
+    ("blorfer", 1, "derivative", None, Some("blorfer"), Some("d1")),
     ("snib", 4, "headword", None, None, None),
     ("snib", 5, "inflection", Some("p"), Some("snab"), None),
-    ("snib", 1, "idiom", None, Some("blorf the snib"), Some("i1")),
+    ("snib", 1, "idiom_part", None, Some("blorf the snib"), Some("i1")),
+    ("the snib", 1, "idiom_part", None, Some("blorf the snib"), Some("i1")),
     ("glomp", 6, "headword", None, None, None),
     ("glomp", 7, "inflection", Some("p"), Some("glimp"), None),
+    ("glomp", 10, "variant", None, Some("glomp"), None),
+    ("gaolf", 17, "headword", None, None, None),
+    ("gaolf", 10, "variant", None, Some("gaolf"), None),
     ("Zorb", 8, "headword", None, None, None),
     ("zorb", 9, "headword", None, None, None),
     ("kolour", 10, "variant", None, Some("kolour"), None),
     ("launch", 11, "headword", None, None, None),
     ("launched", 11, "other", None, None, None),
     ("improve", 12, "headword", None, None, None),
-    (
-        "improving",
-        12,
-        "inflection",
-        Some("i"),
-        Some("improve"),
-        None,
-    ),
+    ("improving", 12, "inflection", Some("i"), Some("improve"), None),
     ("good", 13, "headword", None, None, None),
     ("better", 13, "inflection", Some("r"), Some("good"), None),
     ("give", 14, "headword", None, None, None),
-    (
-        "give up",
-        14,
-        "phrasal",
-        None,
-        Some("give sth↔up"),
-        Some("p1"),
-    ),
+    ("give up", 14, "phrasal", None, Some("give sth↔up"), Some("p1")),
+    ("large", 14, "phrasal", None, Some("give large"), Some("p2")),
     ("snib blorf", 15, "headword", None, None, None),
     ("wug", 16, "headword", None, None, None),
     ("wugs", 16, "other", None, None, None),
@@ -375,16 +357,65 @@ fn variants_derivatives_idioms_and_phrasal_verbs() {
     let m = f.look("blorfer");
     assert_eq!(hits(&m), ["O:blorf verb Lemma (blorf 的派生词) open d1"]);
     assert_eq!(m.notes(), ["blorfer 是 blorf 的派生词"]);
-    let m = f.look("blorf out");
+    let m = f.look("blorf the snib");
     assert_eq!(
         hits(&m),
-        ["O:blorf verb Lemma (blorf 词条中的短语动词) open p1"]
-    );
-    assert_eq!(m.lemma, "blorf out");
-    assert_eq!(
-        hits(&f.look("blorf the snib")),
         ["O:blorf verb Lemma (blorf 词条中的习语) open i1"]
     );
+    assert_eq!(m.notes(), ["blorf the snib 是 blorf 词条中的习语"]);
+    assert_eq!(m.lemma, "blorf the snib");
+    // Only part of an idiom, and no entry of its own: the idiom.
+    assert_eq!(
+        hits(&f.look("the snib")),
+        ["O:blorf verb Lemma (blorf 词条中的习语) open i1"]
+    );
+}
+
+#[test]
+fn a_whole_phrasal_verb_is_shown_next_to_an_entry_of_its_own() {
+    let f = Fixture::new();
+    let m = f.look("blorf out");
+    assert_eq!(m.lemma, "blorf-out");
+    // Written as selected: `blorf out` is the phrasal verb's spelling, not the noun's.
+    assert_eq!(
+        hits(&m),
+        [
+            "O:blorf verb Lemma (blorf 词条中的短语动词) open p1",
+            "O:blorf-out noun Query"
+        ]
+    );
+    // Neither is written `blorfout`: the entry of its own first.
+    assert_eq!(
+        hits(&f.look("blorfout")),
+        [
+            "O:blorf-out noun Query",
+            "O:blorf verb Lemma (blorf 词条中的短语动词) open p1"
+        ]
+    );
+}
+
+#[test]
+fn a_variant_with_an_entry_of_its_own_is_just_that_entry() {
+    let f = Fixture::new();
+    // `glomp` is also a variant of `kolor`: not shown, and not a form of it.
+    let m = f.look("glomp");
+    assert_eq!(
+        hits(&m),
+        [
+            "O:glimp verb Lemma (glimp 的过去式)",
+            "O:glomp noun FormOf (glimp 的过去式)"
+        ]
+    );
+    // Unless its own entry says "= kolor".
+    let m = f.look("gaolf");
+    assert_eq!(
+        hits(&m),
+        [
+            "O:kolor noun Lemma (kolor 的另一种写法)",
+            "O:gaolf noun FormOf (kolor 的另一种写法)"
+        ]
+    );
+    assert_eq!(m.lemma, "kolor");
 }
 
 #[test]
@@ -406,9 +437,21 @@ fn ecdict_own_entry_when_oxford_has_the_key_only_as_a_form() {
             "E:improving FormOf (improve 的现在分词)"
         ]
     );
-    // Oxford has `give up` only as a phrasal verb: ECDICT's entry, and the phrasal verb is
-    // not shown (it is part of an entry of its own).
-    assert_eq!(hits(&f.look("give up")), ["E:give up Query"]);
+    // `give up` is a whole phrasal verb in Oxford: that, and not ECDICT's entry.
+    let m = f.look("give up");
+    assert_eq!(
+        hits(&m),
+        ["O:give verb Lemma (give 词条中的短语动词) open p1"]
+    );
+    assert_eq!(m.notes(), ["give up 是 give 词条中的短语动词"]);
+    // A phrasal verb that only says "= give up": ECDICT's entry too.
+    assert_eq!(
+        hits(&f.look("large")),
+        [
+            "E:large Query",
+            "O:give verb Lemma (give 词条中的短语动词) open p2"
+        ]
+    );
 }
 
 #[test]
@@ -439,7 +482,14 @@ fn words_only_ecdict_has_are_as_in_m1() {
         ecdict: &f.ecdict,
         ext: None,
     };
-    for word in ["transformer", "gave up", "optimizer", "The", "launched"] {
+    for word in [
+        "transformer",
+        "gave up",
+        "give up",
+        "optimizer",
+        "The",
+        "launched",
+    ] {
         let ecdict = f.ecdict.lookup(word).unwrap().map(from_ecdict);
         assert_eq!(
             without.lookup_with(word, LookupOptions::default()).unwrap(),
@@ -448,9 +498,10 @@ fn words_only_ecdict_has_are_as_in_m1() {
         );
     }
     assert_eq!(hits(&f.look("transformer")), ["E:transformer Query"]);
+    // ECDICT reduces `gave up` to `give up`, a whole phrasal verb in Oxford.
     assert_eq!(
         hits(&f.look("gave up")),
-        ["E:give up Lemma (give up 的变化形式)"]
+        ["O:give verb Lemma (give up 的变化形式) open p1"]
     );
     assert_eq!(
         f.lexicon()
@@ -519,7 +570,8 @@ fn whole_entries_are_read() {
     assert!(!e.is_form_note());
     let note = f.oxford.entry(3).unwrap();
     assert!(note.is_form_note());
-    assert_eq!(note.groups[0].senses[0].xrefs[0].targets, ["blorf"]);
+    assert!(note.is_form_note_of("blorf"));
+    assert_eq!(note.groups[0].senses[0].xrefs[0].targets, ["blorf1"]);
 }
 
 #[test]
