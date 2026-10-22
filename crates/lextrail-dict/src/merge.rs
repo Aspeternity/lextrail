@@ -278,8 +278,11 @@ impl Lexicon<'_> {
 
         // Base forms. With an Oxford entry of its own, a key that is also a variant of
         // another entry is just that entry's word (`break`, `autumn`), unless its own entry
-        // says "= <that entry>" (`gaol`).
+        // says "= <that entry>": when that is all it says (`gaol`), it is a form of that
+        // entry; when it also has definitions (`area`: one sense "= penalty area"), that
+        // entry follows its own (6.3).
         let mut base: Vec<Hit> = Vec::new();
+        let mut referred: Vec<Hit> = Vec::new();
         let mut form_rows: Vec<&KeyRow> = Vec::new();
         for row in of(&[
             Relation::Inflection,
@@ -287,13 +290,24 @@ impl Lexicon<'_> {
             Relation::Derivative,
         ]) {
             let content = self.oxford(ext, row.entry_id)?;
-            if row.relation == Relation::Variant
-                && !headword_entries.is_empty()
-                && !headword_entries
+            if row.relation == Relation::Variant && !headword_entries.is_empty() {
+                let referring: Vec<&ExtEntry> = headword_entries
                     .iter()
-                    .any(|(e, _)| e.cross_refers_to(content.word()))
-            {
-                continue;
+                    .map(|(e, _)| e)
+                    .filter(|e| e.cross_refers_to(content.word()))
+                    .collect();
+                if referring.is_empty() {
+                    continue;
+                }
+                if referring.iter().all(|e| e.has_definitions()) {
+                    referred.push(Hit {
+                        relation: Some(describe(row, content.word())),
+                        content,
+                        role: Role::Lemma,
+                        open_group: row.group.clone(),
+                    });
+                    continue;
+                }
             }
             form_rows.push(row);
             base.push(Hit {
@@ -409,6 +423,8 @@ impl Lexicon<'_> {
             own.extend(whole);
         }
         let own_first = own.iter().any(|h| h.content.is_marked());
+        // Entries the key's own entry refers to come right after it, whatever the marks.
+        own.extend(referred);
         let others = base.into_iter().chain(parts);
         let hits: Vec<Hit> = if own_first {
             own.into_iter().chain(others).collect()

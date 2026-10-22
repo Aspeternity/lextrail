@@ -144,6 +144,14 @@ impl ExtEntry {
         })
     }
 
+    /// Some sense has a definition (English or Chinese).
+    pub fn has_definitions(&self) -> bool {
+        self.groups
+            .iter()
+            .flat_map(|g| &g.senses)
+            .any(|s| s.def_en.is_some() || s.def_zh.is_some())
+    }
+
     pub fn group(&self, grp: &str) -> Option<&ExtGroup> {
         self.groups.iter().find(|g| g.grp == grp)
     }

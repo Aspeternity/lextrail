@@ -42,6 +42,7 @@ const ENTRIES: &[EntryRow] = &[
     (16, "wug", "noun", None, None, Some("wʌɡ")),
     (17, "gaolf", "noun", None, None, Some("ɡeɪlf")),
     (18, "blorf-out", "noun", None, None, None),
+    (19, "areb", "noun", None, None, None),
 ];
 
 /// entry, group, label.
@@ -73,6 +74,8 @@ const SENSES: &[SenseRow] = &[
     (14, "p1", 1, Some("to stop trying"), Some("放弃"), None),
     (14, "p2", 1, None, None, Some(SAME_AS_GIVE_UP)),
     (17, "s", 1, None, None, Some(SAME_AS_KOLOR)),
+    (19, "s", 1, Some("a place"), Some("地方"), None),
+    (19, "s", 2, None, None, Some(SAME_AS_KOLOR)),
 ];
 
 /// key, entry, relation, kinds, via, group (in `ord` order per key).
@@ -109,6 +112,8 @@ const KEYS: &[KeyRowData] = &[
     ("glomp", 10, "variant", None, Some("glomp"), None),
     ("gaolf", 17, "headword", None, None, None),
     ("gaolf", 10, "variant", None, Some("gaolf"), None),
+    ("areb", 19, "headword", None, None, None),
+    ("areb", 10, "variant", None, Some("areb"), None),
     ("Zorb", 8, "headword", None, None, None),
     ("zorb", 9, "headword", None, None, None),
     ("kolour", 10, "variant", None, Some("kolour"), None),
@@ -416,6 +421,17 @@ fn a_variant_with_an_entry_of_its_own_is_just_that_entry() {
         ]
     );
     assert_eq!(m.lemma, "kolor");
+    // An entry with definitions and one sense "= kolor": kolor after it, not a form of it.
+    let m = f.look("areb");
+    assert_eq!(
+        hits(&m),
+        [
+            "O:areb noun Query",
+            "O:kolor noun Lemma (kolor 的另一种写法)"
+        ]
+    );
+    assert_eq!(m.lemma, "areb");
+    assert!(m.notes().is_empty());
 }
 
 #[test]
