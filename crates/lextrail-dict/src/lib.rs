@@ -25,6 +25,7 @@ pub use dictionary::{
 pub use exchange::{Exchange, FormKind, parse_exchange};
 pub use phonetic::normalize_phonetic;
 pub use senses::{Sense, split_translation};
+pub use suffix::candidates as suffix_candidates;
 
 /// Version of the dictionary file format (`meta.format_version`). A reader refuses files
 /// with a version it does not know.

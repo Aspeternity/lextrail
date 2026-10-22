@@ -31,11 +31,15 @@ pub fn sense_fingerprint(definition: Option<&str>, english_text: &str) -> String
 }
 
 /// Folds text for matching a lookup key with a headword or form: accents removed,
-/// lowercase, without spaces, hyphens, apostrophes, full stops, slashes, parentheses,
-/// syllable dots and stress marks. `Self-Help`, `self help` and `selfhelp` all fold to
+/// lowercase, without spaces, hyphens, apostrophes and quotation marks, full stops,
+/// slashes, parentheses, syllable dots, stress marks and trademark signs. `Self-Help`, `self help` and `selfhelp` all fold to
 /// `selfhelp`; `café` to `cafe`.
 pub fn fold_for_match(text: &str) -> String {
-    text.nfkd()
+    // Before NFKD, which spells `™` as `TM`.
+    text.chars()
+        .filter(|c| !matches!(c, '™' | '®'))
+        .collect::<String>()
+        .nfkd()
         .filter(|&c| !is_combining_mark(c))
         .filter(|&c| {
             !c.is_whitespace()
@@ -44,7 +48,11 @@ pub fn fold_for_match(text: &str) -> String {
                     '-' | '\u{2010}'
                         | '\u{2011}'
                         | '\''
+                        | '\u{2018}'
                         | '\u{2019}'
+                        | '"'
+                        | '\u{201C}'
+                        | '\u{201D}'
                         | '.'
                         | '/'
                         | '('
@@ -93,6 +101,8 @@ mod tests {
             ("and/or", "andor"),
             ("blorf(e)", "blorfe"),
             ("blor·fing", "blorfing"),
+            ("the royal ‘snib’", "theroyalsnib"),
+            ("Snib-Blorf™", "snibblorf"),
         ] {
             assert_eq!(fold_for_match(a), b, "{a}");
         }
